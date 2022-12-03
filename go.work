@@ -1,0 +1,5 @@
+go 1.19
+
+use .\restservice\
+
+// https://go.dev/doc/tutorial/web-service-gin
