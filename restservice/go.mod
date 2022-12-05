@@ -1,4 +1,4 @@
-module example/web-service-gin
+module open-pages/rest
 
 go 1.18
 
