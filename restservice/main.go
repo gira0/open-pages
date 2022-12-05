@@ -6,86 +6,112 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 
-	//	"github.com/mattn/go-sqlite3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-ini/ini"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// album represents data about a record album.
-type album struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Artist string  `json:"artist"`
-	Price  float64 `json:"price"`
+type Auth struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
 }
 
+var DB *sql.DB
+
 func main() {
-	cfg, err := ini.Load("my.ini")
+	cfg, err := ini.Load("settings.ini")
 	if err != nil {
 		fmt.Printf("Fail to read file: %v", err)
 		os.Exit(1)
 	}
 
-	os.Create("./data.db")
-	// check if os create is needed, if yes then create file and then table structure, otherwhise just use it
-	db, err := sql.Open("sqlite3", "./data.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
 	var port int = cfg.Section("server").Key("port").MustInt(8080)
-	var datapath string = cfg.Section("server").Key("port").MustString()
+	var datapath string = cfg.Section("paths").Key("datapath").MustString("./")
+	var dbpath string = path.Join(datapath, "data.db")
+
+	_, err = os.Stat(dbpath)
+	if err != nil {
+		_, err = os.Create(dbpath)
+		if err != nil {
+			log.Fatal("DB Create Error", err)
+		}
+	}
+
+	fmt.Println("DB found")
+	db, err := sql.Open("sqlite3", dbpath)
+	if err != nil {
+		log.Fatal("DB Open Error", err)
+	}
+	log.Println("Starting with DB: ", dbpath)
+	DB = db
+
+	_, err = DB.Exec("CREATE TABLE IF NOT EXISTS user (userid INTEGER PRIMARY KEY,email varchar(255),password BINARY(60));")
+	if err != nil {
+		log.Fatal("DB Table Create Error", err)
+	}
 
 	fmt.Println("Server Protocol:", cfg.Section("server").Key("protocol").In("http", []string{"http", "https"}))
 
 	router := gin.Default()
-	router.GET("/albums", getAlbums)
-	router.POST("/albums", postAlbums)
-	router.GET("/albums/:id", getAlbumByID)
+
+	router.GET("/ping", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "pong",
+		})
+	})
+
+	router.POST("/user", createUser)
+	router.POST("/user/login", loginUser)
 	router.Run("localhost:" + fmt.Sprintf("%d", port))
 }
 
-// postAlbums adds an album from JSON received in the request body.
-func postAlbums(c *gin.Context) {
-	var newAlbum album
+func createUser(c *gin.Context) {
+	newUser := Auth{}
 
-	// Call BindJSON to bind the received JSON to
-	// newAlbum.
-	if err := c.BindJSON(&newAlbum); err != nil {
+	if err := c.ShouldBindJSON(&newUser); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Add the new album to the slice.
-	albums = append(albums, newAlbum)
-	c.IndentedJSON(http.StatusCreated, newAlbum)
-}
+	DB.Query("SELECT * FROM user WHERE email == ?", newUser.Email)
 
-// albums slice to seed record album data.
-var albums = []album{
-	{ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
-	{ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
-	{ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
-}
-
-// getAlbums responds with the list of all albums as JSON.
-func getAlbums(c *gin.Context) {
-	c.IndentedJSON(http.StatusOK, albums)
-}
-
-// getAlbumByID locates the album whose ID value matches the id
-// parameter sent by the client, then returns that album as a response.
-func getAlbumByID(c *gin.Context) {
-	id := c.Param("id")
-
-	// Loop over the list of albums, looking for
-	// an album whose ID value matches the parameter.
-	for _, a := range albums {
-		if a.ID == id {
-			c.IndentedJSON(http.StatusOK, a)
+	var result string
+	if err := DB.QueryRow("SELECT email FROM user WHERE email=?", newUser.Email).Scan(&result); err != nil {
+		if err == sql.ErrNoRows {
+			hash, err := bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error1": err.Error()})
+				return
+			}
+			_, err = DB.Exec("INSERT INTO user (email, password) VALUES (?,?);", newUser.Email, string(hash))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
+				return
+			}
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error3": err.Error()})
+			return
+		}
+	} else {
+		if newUser.Email == result {
+			c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error4": err.Error()})
 			return
 		}
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+}
+
+func loginUser(c *gin.Context) {
+	login := Auth{}
+
+	if err := c.ShouldBindJSON(&login); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 }
