@@ -87,8 +87,6 @@ func createUser(c *gin.Context) {
 		return
 	}
 
-	DB.Query("SELECT * FROM user WHERE email == ?", newUser.Email)
-
 	var result string
 	if err := DB.QueryRow("SELECT email FROM user WHERE email=?", newUser.Email).Scan(&result); err != nil {
 		if err == sql.ErrNoRows {
@@ -125,4 +123,37 @@ func loginUser(c *gin.Context) {
 		return
 	}
 
+	var result Auth
+	if err := DB.QueryRow("SELECT email,password FROM user WHERE email=?", login.Email).Scan(&result.Email, &result.Password); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusUnauthorized, gin.H{"error1": "Unauthorized"})
+			return
+
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
+			return
+		}
+
+	} else {
+		if login.Email == result.Email {
+			err = bcrypt.CompareHashAndPassword([]byte(result.Password), []byte(login.Password))
+			if err != nil {
+				if err == bcrypt.ErrMismatchedHashAndPassword {
+					c.JSON(http.StatusUnauthorized, gin.H{"error3": "Unauthorized"})
+					return
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error4": err.Error()})
+					return
+				}
+
+			} else {
+				c.JSON(http.StatusOK, gin.H{"status": "Successful login"})
+				return
+			}
+
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error5": "Unauthorized"})
+			return
+		}
+	}
 }
