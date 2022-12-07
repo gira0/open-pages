@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/go-ini/ini"
 	_ "github.com/mattn/go-sqlite3"
@@ -56,6 +58,15 @@ func main() {
 	fmt.Println("Server Protocol:", cfg.Section("server").Key("protocol").In("http", []string{"http", "https"}))
 
 	router := gin.Default()
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"POST, GET, OPTIONS, PUT, DELETE, UPDATE"},
+		AllowHeaders:     []string{"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
