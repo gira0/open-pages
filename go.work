@@ -1,5 +1,3 @@
 go 1.18
 
-use ./restservice/
-
-// https://go.dev/doc/tutorial/web-service-gin
+use ./
