@@ -40,6 +40,9 @@ func init() {
 	port = cfg.Section("server").Key("port").MustInt(8080)
 	datapath = cfg.Section("paths").Key("datapath").MustString("./")
 
+	cookie_secure = cfg.Section("sever").Key("cookie_secure").MustBool(false)
+	cookie_httpOnly = cfg.Section("server").Key("cookie_httpOnly").MustBool(true)
+
 	path, err := filepath.Abs(datapath)
 	if err != nil {
 		log.Fatal("Data Path Error", err)
@@ -131,10 +134,6 @@ func main() {
 	routing(router)
 }
 
-func getUser(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Comming soon"})
-}
-
 func routing(r *gin.Engine) {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -145,18 +144,27 @@ func routing(r *gin.Engine) {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "pong",
-		})
-	})
-
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
-	r.POST("/upload", upload)
+	v1 := r.Group("/v1")
+	{
+		v1.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message": "pong",
+			})
+		})
 
-	r.StaticFS("/more_static", http.Dir("html"))
-	r.GET("/user", getUser)
-	r.POST("/user/register", createUser)
-	r.POST("/user/login", loginUser)
+		v1.StaticFS("/more_static", http.Dir("html"))
+		v1.POST("/user/register", createUser)
+		v1.POST("/user/login", loginUser)
+
+		auth := v1.Group("/auth")
+		{
+			auth.Use(AuthMiddleware)
+			auth.GET("/user", getUser)
+			auth.POST("/upload", upload)
+		}
+
+	}
+
 	r.Run("localhost:" + fmt.Sprintf("%d", port))
 }

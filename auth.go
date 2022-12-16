@@ -18,6 +18,31 @@ type Auth struct {
 	Password string `json:"password" binding:"required,min=8"`
 }
 
+var cookie_secure bool
+var cookie_httpOnly bool
+
+func AuthMiddleware(c *gin.Context) {
+	// Check if auth cookie already set and valid
+	if cookie, err := c.Cookie("auth_cookie"); err == nil {
+
+		var userid int
+		err := DB.QueryRow("SELECT userid FROM session WHERE token=$1 AND expires > $2", cookie, time.Now().Unix()).Scan(&userid)
+		if err == nil {
+			c.Set("userid", userid)
+		} else if err == sql.ErrNoRows {
+			// Delete cookie, it's invalid
+			c.SetCookie("auth_cookie", "", -1, "/", "localhost", cookie_secure, cookie_httpOnly)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthenticated"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"cookie_error": err})
+			return
+		}
+	}
+
+	c.Next()
+}
+
 func GenerateSecureToken(length int) string {
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
@@ -46,7 +71,7 @@ func loginUser(c *gin.Context) {
 			return
 		} else if err == sql.ErrNoRows {
 			// Delete cookie, it's invalid
-			c.SetCookie("auth_cookie", "", -1, "/", "localhost", false, false)
+			c.SetCookie("auth_cookie", "", -1, "/", "localhost", cookie_secure, cookie_httpOnly)
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"cookie_error": err})
 			return
@@ -76,13 +101,13 @@ func loginUser(c *gin.Context) {
 
 		} else {
 			sessionToken := GenerateSecureToken(32)
-			c.SetCookie("auth_cookie", sessionToken, 3600, "/", "localhost", false, false)
+			c.SetCookie("auth_cookie", sessionToken, 3600, "/", "localhost", cookie_secure, cookie_httpOnly)
 			_, err = DB.Exec("INSERT INTO session (userid, token, expires) VALUES (?,?,?);", result.UserID, sessionToken, time.Now().Add(time.Hour*24*7).Unix())
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
 				return // DB Error while inserting
 			}
-			c.JSON(http.StatusOK, gin.H{"sessionToken": "token set"})
+			c.JSON(http.StatusOK, gin.H{"status": "successful login"})
 			return // Login successful
 		}
 
@@ -123,4 +148,9 @@ func createUser(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func getUser(c *gin.Context) {
+	userid := c.MustGet("userid")
+	c.JSON(http.StatusOK, gin.H{"userid": userid})
 }
