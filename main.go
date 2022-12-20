@@ -29,35 +29,53 @@ type LoginResponse struct {
 var DB *sql.DB
 var port int
 var datapath string
+var tmppath string
 
 func init() {
+	// Init for ini settings
 	cfg, err := ini.Load("settings.ini")
 	if err != nil {
 		fmt.Printf("Fail to read file: %v", err)
 		os.Exit(1)
 	}
-
+	// Init readout
 	port = cfg.Section("server").Key("port").MustInt(8080)
 	datapath = cfg.Section("paths").Key("datapath").MustString("./")
-
+	tmppath = cfg.Section("paths").Key("tmppath").MustString("./")
 	cookie_secure = cfg.Section("sever").Key("cookie_secure").MustBool(false)
 	cookie_httpOnly = cfg.Section("server").Key("cookie_httpOnly").MustBool(true)
 
-	path, err := filepath.Abs(datapath)
+	// Setup data path for folders
+	dpath, err := filepath.Abs(datapath)
 	if err != nil {
-		log.Fatal("Data Path Error", err)
+		log.Fatal("Data Path Error: ", err)
 	}
-	datapath = filepath.Join(path, "op_data")
+	datapath = filepath.Join(dpath, "op_data")
 	fmt.Println("Datapath: ", datapath)
+
+	// Setup tmp path for folders
+	tpath, err := filepath.Abs(tmppath)
+	if err != nil {
+		log.Fatal("Tmp Path Error: ", err)
+	}
+	tmppath = filepath.Join(tpath, "tmp")
+	fmt.Println("Tmp Path: ", tmppath)
 
 	if _, err := os.Stat(datapath); os.IsNotExist(err) {
 		err = os.Mkdir(datapath, 0755)
 		if err != nil {
-			log.Fatal("Data Folder creation Error", err)
+			log.Fatal("Data Folder creation Error: ", err)
 		}
 	}
 
-	var dbpath string = filepath.Join(path, "data.db")
+	if _, err := os.Stat(tmppath); os.IsNotExist(err) {
+		err = os.Mkdir(tmppath, 0755)
+		if err != nil {
+			log.Fatal("Tmp Folder creation Error: ", err)
+		}
+	}
+
+	var dbpath string = filepath.Join(dpath, "data.db")
 
 	_, err = os.Stat(dbpath)
 	if err != nil {
@@ -82,6 +100,7 @@ func init() {
 	if err != nil {
 		log.Fatal("DB User Table Create Error", err)
 	}
+
 	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS session
 					(sessionid 	INTEGER PRIMARY KEY,
 					userid 		INTEGER NOT NULL,
@@ -93,12 +112,12 @@ func init() {
 		log.Fatal("DB session Table Create Error", err)
 	}
 
-	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS grouped
+	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS groups
 					(groupid 	INTEGER PRIMARY KEY,
 					name 		VARCHAR(255) NOT NULL
 					);`)
 	if err != nil {
-		log.Fatal("DB grouped Table Create Error", err)
+		log.Fatal("DB groups Table Create Error", err)
 	}
 
 	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS user_group
@@ -106,21 +125,21 @@ func init() {
 					uid 		INTEGER NOT NULL,
 					gid 		INTEGER NOT NULL,
 					FOREIGN KEY (uid) REFERENCES user(userid),
-					FOREIGN KEY (gid) REFERENCES grouped(groupid)
+					FOREIGN KEY (gid) REFERENCES groups(groupid)
 	);`)
 	if err != nil {
-		log.Fatal("DB user_grouped Table Create Error", err)
+		log.Fatal("DB user_groups Table Create Error", err)
 	}
 
 	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS docs
 					(docid 		INTEGER PRIMARY KEY,
 					uowner 		INTEGER NULL,
 					ugroup 		INTEGER NULL,
-					name 		VARCHAR(256) NOT NULL,
+					name 		VARCHAR(256) NOT NULL UNIQUE,
 					description VARCHAR(512) NULL,
-					path 		VARCHAR(256) NOT NULL,
+					path 		VARCHAR(256) NULL UNIQUE,
 					FOREIGN KEY (uowner) REFERENCES user(userid),
-					FOREIGN KEY (ugroup) REFERENCES grouped(groupid)
+					FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 					);`)
 	if err != nil {
 		log.Fatal("DB docs Table Create Error", err)
@@ -161,7 +180,8 @@ func routing(r *gin.Engine) {
 		{
 			auth.Use(AuthMiddleware)
 			auth.GET("/user", getUser)
-			auth.POST("/upload", upload)
+			auth.POST("/docs/create", docCreate)
+			auth.POST("/docs/upload", docUpload)
 		}
 
 	}

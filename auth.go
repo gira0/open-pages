@@ -110,7 +110,6 @@ func loginUser(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "successful login"})
 			return // Login successful
 		}
-
 	}
 }
 

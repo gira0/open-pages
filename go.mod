@@ -7,6 +7,7 @@ require (
 	github.com/gin-gonic/gin v1.8.1
 	github.com/go-ini/ini v1.67.0
 	github.com/mattn/go-sqlite3 v1.14.16
+	github.com/rs/xid v1.4.0
 	golang.org/x/crypto v0.3.0
 )
 
