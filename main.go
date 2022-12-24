@@ -181,7 +181,8 @@ func routing(r *gin.Engine) {
 			auth.Use(AuthMiddleware)
 			auth.GET("/user", getUser)
 			auth.POST("/docs/create", docCreate)
-			auth.POST("/docs/upload", docUpload)
+			auth.POST("/docs/upload", rawDocUpload)
+			auth.POST("/docs/formupload", formDocUpload)
 		}
 
 	}

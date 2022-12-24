@@ -2,14 +2,18 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/xid"
 )
@@ -34,22 +38,25 @@ func docCreate(c *gin.Context) {
 	}
 }
 
-func docUpload(c *gin.Context) {
+func rawDocUpload(c *gin.Context) {
 	// Check header
 	guid := xid.New()
 	path := filepath.Join(datapath, guid.String())
 
-	switch header := c.Request.Header["Content-Type"][0]; header {
-	case "application/x-tar":
-		fmt.Println(header)
-	case "application/gzip":
-		fmt.Println(header)
-		gzipdata, err := c.GetRawData()
-		if err != nil {
-			fmt.Println("error", err)
-		}
-		ungztar(gzipdata, path)
+	data, err := c.GetRawData()
+	if err != nil {
+		fmt.Println("error", err)
+	}
+	mtype := mimetype.Detect(data)
+	fmt.Println("MIME:", mtype)
 
+	switch header := strings.Split(c.Request.Header["Content-Type"][0], ";")[0]; header {
+	case "application/x-tar":
+
+	case "application/gzip":
+		ungztar(data, path)
+	case "application/zip":
+		unzip(data, path)
 	default:
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"error": "Wront Content-Type. Recieved: " + header,
@@ -61,7 +68,89 @@ func docUpload(c *gin.Context) {
 	})
 }
 
-// unzip() {
+type DucUpload struct {
+	File *multipart.File `form:"file" binding:"required"`
+	Name string          `form:"name" binding:"required"`
+}
+
+func formDocUpload(c *gin.Context) {
+	var form DucUpload
+	if err := c.Bind(&form); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	guid := xid.New()
+	path := filepath.Join(datapath, guid.String())
+
+	formfile, _, err := c.Request.FormFile("file")
+	if err != nil {
+		fmt.Println("error", err)
+	}
+	buf := bytes.NewBuffer(nil)
+	_, err = io.Copy(buf, formfile)
+	if err != nil {
+		fmt.Println("error", err)
+	}
+	mtype := mimetype.Detect(buf.Bytes())
+	fmt.Println("MIME:", mtype)
+	unzip(buf.Bytes(), path)
+}
+
+func unzip(data []byte, dest string) error {
+
+	z := bytes.NewReader(data)
+
+	// Create a new gzip reader
+	buff := bytes.NewBuffer([]byte{})
+	size, err := io.Copy(buff, z)
+	if err != nil {
+		return err
+	}
+	reader := bytes.NewReader(buff.Bytes())
+
+	// Open a zip archive for reading.
+	zipReader, err := zip.NewReader(reader, size)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range zipReader.File {
+		filePath := filepath.Join(dest, f.Name)
+		//fmt.Println("unzipping file ", filePath)
+
+		if !strings.HasPrefix(filePath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			//fmt.Println("invalid file path")
+			return err
+		}
+		if f.FileInfo().IsDir() {
+			//fmt.Println("creating directory...")
+			os.MkdirAll(filePath, os.ModePerm)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+			return err
+		}
+
+		dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		fileInArchive, err := f.Open()
+		if err != nil {
+			return err
+		}
+
+		if _, err := io.Copy(dstFile, fileInArchive); err != nil {
+			return err
+		}
+
+		dstFile.Close()
+		fileInArchive.Close()
+	}
+	return nil
+}
 
 func ungztar(data []byte, dest string) error {
 	// Convert the byte array to an io.Reader
