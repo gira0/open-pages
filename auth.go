@@ -14,8 +14,8 @@ import (
 )
 
 type Auth struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
+	Email    string `form:"email" binding:"required,email"`
+	Password string `form:"password" binding:"required,min=8"`
 }
 
 var cookie_secure bool
@@ -55,7 +55,7 @@ func loginUser(c *gin.Context) {
 	login := Auth{}
 
 	// Get the expected POST Data
-	if err := c.ShouldBindJSON(&login); err != nil {
+	if err := c.ShouldBind(&login); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

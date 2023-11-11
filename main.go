@@ -163,6 +163,13 @@ func routing(r *gin.Engine) {
 		MaxAge:           12 * time.Hour,
 	}))
 
+	r.LoadHTMLGlob("templates/**")
+	r.GET("/index", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"title": "Posts",
+		})
+	})
+
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 	v1 := r.Group("/v1")
 	{

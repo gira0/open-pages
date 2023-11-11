@@ -61,6 +61,7 @@ func rawDocUpload(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"error": "Wront Content-Type. Recieved: " + header,
 		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -69,14 +70,14 @@ func rawDocUpload(c *gin.Context) {
 }
 
 type DucUpload struct {
-	File *multipart.File `form:"file" binding:"required"`
-	Name string          `form:"name" binding:"required"`
+	File *multipart.FileHeader `form:"file" binding:"required"`
+	Name string                `form:"name" binding:"required"`
 }
 
 func formDocUpload(c *gin.Context) {
 	var form DucUpload
 	if err := c.Bind(&form); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error1": err.Error()})
 		return
 	}
 	guid := xid.New()
@@ -84,16 +85,19 @@ func formDocUpload(c *gin.Context) {
 
 	formfile, _, err := c.Request.FormFile("file")
 	if err != nil {
-		fmt.Println("error", err)
+		fmt.Println("error2", err)
 	}
 	buf := bytes.NewBuffer(nil)
 	_, err = io.Copy(buf, formfile)
 	if err != nil {
-		fmt.Println("error", err)
+		fmt.Println("error3", err)
 	}
 	mtype := mimetype.Detect(buf.Bytes())
 	fmt.Println("MIME:", mtype)
 	unzip(buf.Bytes(), path)
+	c.JSON(http.StatusOK, gin.H{
+		"status": "File uploaded",
+	})
 }
 
 func unzip(data []byte, dest string) error {
