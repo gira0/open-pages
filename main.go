@@ -48,7 +48,9 @@ func run(configPath string) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		httpSrv.Shutdown(shutdownCtx)
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("shutdown", "err", err)
+		}
 	}()
 
 	slog.Info("listening", "addr", cfg.Listen, "data", srv.sites)

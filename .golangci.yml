@@ -1,0 +1,34 @@
+version: "2"
+
+linters:
+  # The defaults (errcheck, govet, ineffassign, staticcheck, unused) plus:
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests may ignore errors from writers into in-memory buffers.
+      - path: _test\.go
+        linters: [errcheck, gosec, noctx]
+      # HTTP handlers have a fixed signature, so unused parameters are expected.
+      - linters: [revive]
+        text: unused-parameter
+      # Site files are world-readable on purpose so a reverse proxy can serve them.
+      - linters: [gosec]
+        text: "G30[12]:"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

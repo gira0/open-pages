@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,20 +41,32 @@ func newClient(t *testing.T) *http.Client {
 	return &http.Client{Jar: jar}
 }
 
-func post(t *testing.T, c *http.Client, url, ctype string, body []byte) *http.Response {
+// post sends a request and returns its status code.
+func post(t *testing.T, c *http.Client, url, ctype string, body []byte) int {
 	t.Helper()
 	resp, err := c.Post(url, ctype, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	return resp
+	return resp.StatusCode
 }
 
-func expectStatus(t *testing.T, resp *http.Response, want int) {
+// get sends a request and returns its status code.
+func get(t *testing.T, c *http.Client, url string) int {
 	t.Helper()
-	if resp.StatusCode != want {
-		t.Fatalf("%s %s: got status %d, want %d", resp.Request.Method, resp.Request.URL.Path, resp.StatusCode, want)
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func expectStatus(t *testing.T, got, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("got status %d, want %d", got, want)
 	}
 }
 
@@ -81,12 +94,16 @@ func zipArchive(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func tarGzArchive(t *testing.T, files map[string]string) []byte {
+func tarGzArchive(files map[string]string) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for name, body := range files {
-		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
+		if strings.HasSuffix(name, "/") {
+			hdr.Typeflag, hdr.Mode = tar.TypeDir, 0o755
+		}
+		tw.WriteHeader(hdr)
 		tw.Write([]byte(body))
 	}
 	tw.Close()
@@ -111,11 +128,7 @@ func TestAuthRequired(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := newClient(t)
 
-	resp, err := c.Get(ts.URL + "/v1/auth/user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectStatus(t, resp, http.StatusUnauthorized)
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusUnauthorized)
 
 	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/zip",
 		zipArchive(t, map[string]string{"index.html": "hi"})), http.StatusUnauthorized)
@@ -123,23 +136,16 @@ func TestAuthRequired(t *testing.T) {
 		t.Fatalf("unauthenticated upload wrote %v", dirs)
 	}
 
-	c.Jar.SetCookies(resp.Request.URL, []*http.Cookie{{Name: sessionCookie, Value: "bogus"}})
-	resp, err = c.Get(ts.URL + "/v1/auth/user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectStatus(t, resp, http.StatusUnauthorized)
+	u, _ := url.Parse(ts.URL)
+	c.Jar.SetCookies(u, []*http.Cookie{{Name: sessionCookie, Value: "bogus"}})
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusUnauthorized)
 }
 
 func TestRegisterLoginLogout(t *testing.T) {
 	ts, _ := newTestServer(t)
 	c := loggedInClient(t, ts)
 
-	resp, err := c.Get(ts.URL + "/v1/auth/user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectStatus(t, resp, http.StatusOK)
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusOK)
 
 	creds := []byte(`{"email":"a@example.com","password":"correct horse"}`)
 	expectStatus(t, post(t, c, ts.URL+"/v1/user/register", "application/json", creds), http.StatusConflict)
@@ -151,11 +157,7 @@ func TestRegisterLoginLogout(t *testing.T) {
 	expectStatus(t, post(t, other, ts.URL+"/v1/user/login", "application/x-www-form-urlencoded", form), http.StatusOK)
 
 	expectStatus(t, post(t, c, ts.URL+"/v1/auth/logout", "", nil), http.StatusOK)
-	resp, err = c.Get(ts.URL + "/v1/auth/user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectStatus(t, resp, http.StatusUnauthorized)
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusUnauthorized)
 }
 
 func TestRegisterValidation(t *testing.T) {
@@ -173,10 +175,10 @@ func TestRegisterValidation(t *testing.T) {
 func TestUploadFormats(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
-	files := map[string]string{"index.html": "<h1>hi</h1>", "css/site.css": "body{}"}
+	files := map[string]string{"index.html": "<h1>hi</h1>", "css/": "", "css/site.css": "body{}"}
 
 	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/zip", zipArchive(t, files)), http.StatusOK)
-	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/gzip", tarGzArchive(t, files)), http.StatusOK)
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/gzip", tarGzArchive(files)), http.StatusOK)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -208,8 +210,8 @@ func TestUploadRejectsBadArchives(t *testing.T) {
 		want int
 	}{
 		"zip traversal":   {zipArchive(t, map[string]string{"../escape.txt": "x"}), http.StatusBadRequest},
-		"tar traversal":   {tarGzArchive(t, map[string]string{"../../escape.txt": "x"}), http.StatusBadRequest},
-		"absolute path":   {tarGzArchive(t, map[string]string{"/tmp/escape.txt": "x"}), http.StatusBadRequest},
+		"tar traversal":   {tarGzArchive(map[string]string{"../../escape.txt": "x"}), http.StatusBadRequest},
+		"absolute path":   {tarGzArchive(map[string]string{"/tmp/escape.txt": "x"}), http.StatusBadRequest},
 		"not an archive":  {[]byte("hello world"), http.StatusBadRequest},
 		"too large":       {bytes.Repeat([]byte("x"), 2<<20), http.StatusRequestEntityTooLarge},
 		"expands too far": {zipArchive(t, map[string]string{"big.txt": strings.Repeat("x", 2<<20)}), http.StatusBadRequest},
@@ -257,4 +259,9 @@ func TestCORS(t *testing.T) {
 			t.Errorf("origin %s: Allow-Origin = %q, want %q", origin, got, want)
 		}
 	}
+}
+
+func TestIndexPage(t *testing.T) {
+	ts, _ := newTestServer(t)
+	expectStatus(t, get(t, newClient(t), ts.URL+"/index"), http.StatusOK)
 }

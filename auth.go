@@ -73,8 +73,11 @@ func generateToken() (string, error) {
 // sessionUser returns the user id for a valid session cookie, or 0 if there is none.
 func (s *Server) sessionUser(r *http.Request) (int64, error) {
 	c, err := r.Cookie(sessionCookie)
-	if err != nil {
+	if errors.Is(err, http.ErrNoCookie) {
 		return 0, nil
+	}
+	if err != nil {
+		return 0, err
 	}
 	var uid int64
 	err = s.db.QueryRowContext(r.Context(),
@@ -86,7 +89,8 @@ func (s *Server) sessionUser(r *http.Request) (int64, error) {
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
+	// Secure is configurable so the service also works over plain HTTP on internal networks.
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: see above
 		Name:     sessionCookie,
 		Value:    token,
 		Path:     "/",

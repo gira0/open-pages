@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -57,8 +58,8 @@ func openDB(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 	return db, nil

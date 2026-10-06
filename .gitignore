@@ -16,3 +16,4 @@
 # vendor/
 html/*
 op_data/*
+coverage.html
