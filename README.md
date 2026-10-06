@@ -48,4 +48,5 @@ go mod tidy -diff      # go.mod/go.sum must be tidy
 CI runs on every pull request: tidy check, golangci-lint (gofmt, goimports, vet,
 staticcheck, gosec, …), race-enabled tests with a 70% coverage floor (report in the job
 summary and as an artifact), and govulncheck. Dependabot opens weekly grouped updates for
-Go modules and GitHub Actions.
+Go modules and GitHub Actions. CodeQL scans the Go code and workflows on every pull
+request and weekly; results show under the repository's Security tab.
