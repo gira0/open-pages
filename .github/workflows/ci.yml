@@ -45,9 +45,8 @@ jobs:
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
-          awk -v t="$total" -v min="$COVERAGE_MIN" 'BEGIN { if (t + 0 < min) { printf "Coverage %s%% is below the %s%% minimum\n", t, min; exit 1 } }'
-        env:
-          COVERAGE_MIN: 70
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+        id: coverage
       - name: Render HTML coverage report
         run: go tool cover -html=coverage.out -o coverage.html
       - uses: actions/upload-artifact@v4
@@ -56,6 +55,13 @@ jobs:
           path: |
             coverage.out
             coverage.html
+      # Runs last so the summary and report above are available when it fails.
+      - name: Enforce coverage minimum
+        run: |
+          awk -v t="$TOTAL" -v min="$COVERAGE_MIN" 'BEGIN { if (t + 0 < min) { printf "Coverage %s%% is below the %s%% minimum\n", t, min; exit 1 } }'
+        env:
+          TOTAL: ${{ steps.coverage.outputs.total }}
+          COVERAGE_MIN: 70
 
   vulncheck:
     runs-on: ubuntu-latest
