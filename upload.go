@@ -1,226 +1,115 @@
 package main
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 
-	"github.com/gabriel-vasile/mimetype"
-	"github.com/gin-gonic/gin"
 	"github.com/rs/xid"
 )
 
-type DocCreate struct {
-	Name        string `json:"name" binding:"required,alphanum"`
-	Description string `json:"description" binding:"alphanumunicode"`
+var docNameRe = regexp.MustCompile(`^[A-Za-z0-9]{1,256}$`)
+
+type docCreate struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
-func docCreate(c *gin.Context) {
-	newDoc := DocCreate{}
-	if err := c.ShouldBindJSON(&newDoc); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
+	var d docCreate
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	userid := c.MustGet("userid")
-
-	_, err := DB.Exec("INSERT INTO docs (uowner, name, description) VALUES (?,?,?);", userid, newDoc.Name, newDoc.Description)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
-		return // DB Error while inserting
+	if !docNameRe.MatchString(d.Name) {
+		writeError(w, http.StatusBadRequest, "name must be 1 to 256 letters or digits")
+		return
 	}
+	if len(d.Description) > 512 {
+		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
+		return
+	}
+	res, err := s.db.ExecContext(r.Context(),
+		"INSERT INTO docs (uowner, name, description) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING",
+		userID(r), d.Name, d.Description)
+	if err != nil {
+		internalError(w, "insert doc", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, http.StatusConflict, "a doc with that name already exists")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "doc created"})
 }
 
-func rawDocUpload(c *gin.Context) {
-	// Check header
-	guid := xid.New()
-	path := filepath.Join(datapath, guid.String())
+// handleRawUpload accepts an archive as the raw request body.
+func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
+	s.storeUpload(w, body)
+}
 
-	data, err := c.GetRawData()
+// handleFormUpload accepts an archive in the multipart field "file".
+func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1<<20)
+	f, _, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println("error", err)
+		writeError(w, http.StatusBadRequest, "missing or invalid file field")
+		return
 	}
-	mtype := mimetype.Detect(data)
-	fmt.Println("MIME:", mtype)
+	defer f.Close()
+	defer r.MultipartForm.RemoveAll()
+	s.storeUpload(w, f)
+}
 
-	switch header := strings.Split(c.Request.Header["Content-Type"][0], ";")[0]; header {
-	case "application/x-tar":
+// storeUpload spools the archive to disk, extracts it into a staging directory and
+// moves it into place only when extraction fully succeeded.
+func (s *Server) storeUpload(w http.ResponseWriter, src io.Reader) {
+	spool, err := os.CreateTemp(s.tmp, "upload-*")
+	if err != nil {
+		internalError(w, "create spool file", err)
+		return
+	}
+	defer os.Remove(spool.Name())
+	defer spool.Close()
 
-	case "application/gzip":
-		ungztar(data, path)
-	case "application/zip":
-		unzip(data, path)
-	default:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error": "Wront Content-Type. Recieved: " + header,
-		})
+	if _, err := io.Copy(spool, src); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("upload exceeds %d MiB", s.cfg.MaxUploadBytes>>20))
+			return
+		}
+		writeError(w, http.StatusBadRequest, "failed to read upload")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "File uploaded",
-	})
-}
-
-type DucUpload struct {
-	File *multipart.FileHeader `form:"file" binding:"required"`
-	Name string                `form:"name" binding:"required"`
-}
-
-func formDocUpload(c *gin.Context) {
-	var form DucUpload
-	if err := c.Bind(&form); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error1": err.Error()})
+	// Stage next to the final location so the rename stays on one filesystem.
+	staging, err := os.MkdirTemp(s.sites, ".staging-*")
+	if err != nil {
+		internalError(w, "create staging dir", err)
 		return
 	}
-	guid := xid.New()
-	path := filepath.Join(datapath, guid.String())
+	defer os.RemoveAll(staging)
 
-	formfile, _, err := c.Request.FormFile("file")
-	if err != nil {
-		fmt.Println("error2", err)
-	}
-	buf := bytes.NewBuffer(nil)
-	_, err = io.Copy(buf, formfile)
-	if err != nil {
-		fmt.Println("error3", err)
-	}
-	mtype := mimetype.Detect(buf.Bytes())
-	fmt.Println("MIME:", mtype)
-	unzip(buf.Bytes(), path)
-	c.JSON(http.StatusOK, gin.H{
-		"status": "File uploaded",
-	})
-}
-
-func unzip(data []byte, dest string) error {
-
-	z := bytes.NewReader(data)
-
-	// Create a new gzip reader
-	buff := bytes.NewBuffer([]byte{})
-	size, err := io.Copy(buff, z)
-	if err != nil {
-		return err
-	}
-	reader := bytes.NewReader(buff.Bytes())
-
-	// Open a zip archive for reading.
-	zipReader, err := zip.NewReader(reader, size)
-	if err != nil {
-		return err
+	limits := extractLimits{maxBytes: s.cfg.MaxExtractSize, maxFiles: s.cfg.MaxExtractFile}
+	if err := extractArchive(spool, staging, limits); err != nil {
+		slog.Info("rejected upload", "err", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	for _, f := range zipReader.File {
-		filePath := filepath.Join(dest, f.Name)
-		//fmt.Println("unzipping file ", filePath)
-
-		if !strings.HasPrefix(filePath, filepath.Clean(dest)+string(os.PathSeparator)) {
-			//fmt.Println("invalid file path")
-			return err
-		}
-		if f.FileInfo().IsDir() {
-			//fmt.Println("creating directory...")
-			os.MkdirAll(filePath, os.ModePerm)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-			return err
-		}
-
-		dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		fileInArchive, err := f.Open()
-		if err != nil {
-			return err
-		}
-
-		if _, err := io.Copy(dstFile, fileInArchive); err != nil {
-			return err
-		}
-
-		dstFile.Close()
-		fileInArchive.Close()
+	id := xid.New().String()
+	if err := os.Rename(staging, filepath.Join(s.sites, id)); err != nil {
+		internalError(w, "move upload into place", err)
+		return
 	}
-	return nil
-}
-
-func ungztar(data []byte, dest string) error {
-	// Convert the byte array to an io.Reader
-	r := bytes.NewReader(data)
-
-	// Create a new gzip reader
-	gzr, err := gzip.NewReader(r)
-	if err != nil {
-		return err
-	}
-	defer gzr.Close()
-
-	// Create a new tar reader
-	tr := tar.NewReader(gzr)
-
-	for {
-		header, err := tr.Next()
-
-		switch {
-
-		// if no more files are found return
-		case err == io.EOF:
-			return nil
-
-		// return any other error
-		case err != nil:
-			return err
-
-		// if the header is nil, just skip it (not sure how this happens)
-		case header == nil:
-			continue
-		}
-
-		// the target location where the dir/file should be created
-		target := filepath.Join(dest, header.Name)
-
-		// the following switch could also be done using fi.Mode(), not sure if there
-		// a benefit of using one vs. the other.
-		// fi := header.FileInfo()
-
-		// check the file type
-		switch header.Typeflag {
-
-		// if its a dir and it doesn't exist create it
-		case tar.TypeDir:
-			if _, err := os.Stat(target); err != nil {
-				if err := os.MkdirAll(target, 0755); err != nil {
-					return err
-				}
-			}
-
-		// if it's a file create it
-		case tar.TypeReg:
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
-			if err != nil {
-				return err
-			}
-
-			// copy over contents
-			if _, err := io.Copy(f, tr); err != nil {
-				return err
-			}
-
-			// manually close here after each file operation; defering would cause each file close
-			// to wait until all operations have completed.
-			f.Close()
-		}
-	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "id": id})
 }

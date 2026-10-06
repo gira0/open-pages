@@ -1,155 +1,203 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
+	"encoding/json"
+	"errors"
+	"mime"
 	"net/http"
+	"net/mail"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Auth struct {
-	Email    string `form:"email" binding:"required,email"`
-	Password string `form:"password" binding:"required,min=8"`
+const (
+	sessionCookie   = "auth_cookie"
+	sessionLifetime = 7 * 24 * time.Hour
+	minPasswordLen  = 8
+	maxPasswordLen  = 72 // bcrypt ignores anything past 72 bytes
+)
+
+type ctxKey int
+
+const userIDKey ctxKey = 0
+
+type credentials struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
-var cookie_secure bool
-var cookie_httpOnly bool
-
-func AuthMiddleware(c *gin.Context) {
-	// Check if auth cookie already set and valid
-	if cookie, err := c.Cookie("auth_cookie"); err == nil {
-
-		var userid int
-		err := DB.QueryRow("SELECT userid FROM session WHERE token=$1 AND expires > $2", cookie, time.Now().Unix()).Scan(&userid)
-		if err == nil {
-			c.Set("userid", userid)
-		} else if err == sql.ErrNoRows {
-			// Delete cookie, it's invalid
-			c.SetCookie("auth_cookie", "", -1, "/", "localhost", cookie_secure, cookie_httpOnly)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthenticated"})
-			return
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"cookie_error": err})
-			return
-		}
+func (c credentials) validate() error {
+	addr, err := mail.ParseAddress(c.Email)
+	if err != nil || addr.Address != c.Email {
+		return errors.New("invalid email")
 	}
-
-	c.Next()
+	if len(c.Password) < minPasswordLen || len(c.Password) > maxPasswordLen {
+		return errors.New("password must be 8 to 72 characters")
+	}
+	return nil
 }
 
-func GenerateSecureToken(length int) string {
-	b := make([]byte, length)
+// readCredentials accepts either a JSON body or an HTML form.
+func readCredentials(r *http.Request) (credentials, error) {
+	var c credentials
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<16)
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if ct == "application/json" {
+		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+			return c, errors.New("invalid JSON body")
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			return c, errors.New("invalid form body")
+		}
+		c.Email, c.Password = r.PostForm.Get("email"), r.PostForm.Get("password")
+	}
+	c.Email = strings.TrimSpace(c.Email)
+	return c, c.validate()
+}
+
+func generateToken() (string, error) {
+	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return ""
+		return "", err
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
-func loginUser(c *gin.Context) {
-	login := Auth{}
-
-	// Get the expected POST Data
-	if err := c.ShouldBind(&login); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+// sessionUser returns the user id for a valid session cookie, or 0 if there is none.
+func (s *Server) sessionUser(r *http.Request) (int64, error) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return 0, nil
 	}
-
-	// Check if auth cookie already set and valid
-	if cookie, err := c.Cookie("auth_cookie"); err == nil {
-		// fmt.Println("Cookie value: ", cookie)
-		fmt.Println(cookie)
-		var user int
-		err := DB.QueryRow("SELECT userid FROM session WHERE token=$1 AND expires > $2", cookie, time.Now().Unix()).Scan(&user)
-		if err == nil {
-			c.JSON(http.StatusOK, gin.H{"error": "Already logged in"})
-			return
-		} else if err == sql.ErrNoRows {
-			// Delete cookie, it's invalid
-			c.SetCookie("auth_cookie", "", -1, "/", "localhost", cookie_secure, cookie_httpOnly)
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"cookie_error": err})
-			return
-		}
-
+	var uid int64
+	err = s.db.QueryRowContext(r.Context(),
+		"SELECT userid FROM session WHERE token = ? AND expires > ?", c.Value, time.Now().Unix()).Scan(&uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
 	}
+	return uid, err
+}
 
-	var result UserEntry
-	if err := DB.QueryRow("SELECT userid,email,password FROM user WHERE email=?", login.Email).Scan(&result.UserID, &result.Email, &result.Password); err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusUnauthorized, gin.H{"error1": "Unauthorized"})
-			return // Wrong user, email not found
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
-			return // Unknown Error, not the not found error
-		}
-	} else {
-		err = bcrypt.CompareHashAndPassword([]byte(result.Password), []byte(login.Password))
+func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		Secure:   s.cfg.CookieSecure,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// requireAuth rejects requests without a valid session and passes the user id on in the context.
+func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid, err := s.sessionUser(r)
 		if err != nil {
-			if err == bcrypt.ErrMismatchedHashAndPassword {
-				c.JSON(http.StatusUnauthorized, gin.H{"error3": "Unauthorized"})
-				return // Password wrong
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error4": err.Error()})
-				return // Unknown Error, not the not wrong password error
-			}
-
-		} else {
-			sessionToken := GenerateSecureToken(32)
-			c.SetCookie("auth_cookie", sessionToken, 3600, "/", "localhost", cookie_secure, cookie_httpOnly)
-			_, err = DB.Exec("INSERT INTO session (userid, token, expires) VALUES (?,?,?);", result.UserID, sessionToken, time.Now().Add(time.Hour*24*7).Unix())
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
-				return // DB Error while inserting
-			}
-			c.JSON(http.StatusOK, gin.H{"status": "successful login"})
-			return // Login successful
+			internalError(w, "session lookup", err)
+			return
 		}
-	}
+		if uid == 0 {
+			if _, err := r.Cookie(sessionCookie); err == nil {
+				s.setSessionCookie(w, "", -1)
+			}
+			writeError(w, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), userIDKey, uid)))
+	})
 }
 
-func createUser(c *gin.Context) {
-	newUser := Auth{}
+func userID(r *http.Request) int64 {
+	return r.Context().Value(userIDKey).(int64)
+}
 
-	if err := c.ShouldBindJSON(&newUser); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	c, err := readCredentials(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
+	if err != nil {
+		internalError(w, "hash password", err)
+		return
+	}
+	res, err := s.db.ExecContext(r.Context(),
+		"INSERT INTO user (email, password) VALUES (?, ?) ON CONFLICT (email) DO NOTHING", c.Email, string(hash))
+	if err != nil {
+		internalError(w, "insert user", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, http.StatusConflict, "user already exists")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "user created"})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	c, err := readCredentials(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var result string
-	if err := DB.QueryRow("SELECT email FROM user WHERE email=?", newUser.Email).Scan(&result); err != nil {
-		if err == sql.ErrNoRows {
-			hash, err := bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error1": err.Error()})
-				return
-			}
-			_, err = DB.Exec("INSERT INTO user (email, password) VALUES (?,?);", newUser.Email, string(hash))
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error2": err.Error()})
-				return
-			}
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error3": err.Error()})
-			return
-		}
-	} else {
-		if newUser.Email == result {
-			c.JSON(http.StatusOK, gin.H{"error": "User already exists"})
-			return
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error4": err})
-			return
-		}
+	var uid int64
+	var hash string
+	err = s.db.QueryRowContext(r.Context(),
+		"SELECT userid, password FROM user WHERE email = ?", c.Email).Scan(&uid, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		return
 	}
+	if err != nil {
+		internalError(w, "lookup user", err)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(c.Password)); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+
+	token, err := generateToken()
+	if err != nil {
+		internalError(w, "generate token", err)
+		return
+	}
+	now := time.Now()
+	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM session WHERE expires <= ?", now.Unix()); err != nil {
+		internalError(w, "prune sessions", err)
+		return
+	}
+	if _, err := s.db.ExecContext(r.Context(),
+		"INSERT INTO session (userid, token, expires) VALUES (?, ?, ?)",
+		uid, token, now.Add(sessionLifetime).Unix()); err != nil {
+		internalError(w, "insert session", err)
+		return
+	}
+	s.setSessionCookie(w, token, int(sessionLifetime.Seconds()))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "successful login"})
 }
 
-func getUser(c *gin.Context) {
-	userid := c.MustGet("userid")
-	c.JSON(http.StatusOK, gin.H{"userid": userid})
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	c, _ := r.Cookie(sessionCookie)
+	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM session WHERE token = ?", c.Value); err != nil {
+		internalError(w, "delete session", err)
+		return
+	}
+	s.setSessionCookie(w, "", -1)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+}
+
+func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]int64{"userid": userID(r)})
 }
