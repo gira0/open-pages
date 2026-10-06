@@ -80,14 +80,14 @@ func (e *extractor) file(name string, r io.Reader) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // G304: path checked by target()
 	if err != nil {
 		return err
 	}
 	remaining := e.limits.maxBytes - e.written
 	n, err := io.CopyN(f, r, remaining+1)
 	e.written += n
-	if cerr := f.Close(); err == nil || err == io.EOF {
+	if cerr := f.Close(); err == nil || errors.Is(err, io.EOF) {
 		err = cerr
 	}
 	if err != nil {
@@ -114,7 +114,7 @@ func extractZip(src io.ReaderAt, size int64, dest string, limits extractLimits) 
 			var rc io.ReadCloser
 			if rc, err = f.Open(); err == nil {
 				err = e.file(f.Name, rc)
-				rc.Close()
+				_ = rc.Close()
 			}
 		}
 		if err != nil {
@@ -129,7 +129,7 @@ func extractTar(src io.Reader, dest string, limits extractLimits) error {
 	e := &extractor{dest: dest, limits: limits}
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -151,7 +151,7 @@ func extractTar(src io.Reader, dest string, limits extractLimits) error {
 func extractArchive(src *os.File, dest string, limits extractLimits) error {
 	head := make([]byte, 512)
 	n, err := src.ReadAt(head, 0)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	st, err := src.Stat()

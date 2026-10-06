@@ -44,15 +44,28 @@ func run(configPath string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	serveErr := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		httpSrv.Shutdown(shutdownCtx)
+		slog.Info("listening", "addr", cfg.Listen, "data", srv.sites)
+		serveErr <- httpSrv.ListenAndServe()
 	}()
 
-	slog.Info("listening", "addr", cfg.Listen, "data", srv.sites)
-	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	// Stop accepting connections and wait for in-flight requests before the
+	// deferred database close runs.
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -65,10 +78,12 @@ func newServer(cfg Config) (*Server, error) {
 		sites: filepath.Join(cfg.DataPath, "op_data"),
 		tmp:   filepath.Join(cfg.TmpPath, "tmp"),
 	}
-	for _, dir := range []string{s.sites, s.tmp} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create %s: %w", dir, err)
-		}
+	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
+	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
+		return nil, fmt.Errorf("create %s: %w", s.sites, err)
+	}
+	if err := os.MkdirAll(s.tmp, 0o700); err != nil {
+		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
 
 	tmpl, err := template.ParseGlob("templates/*.html")

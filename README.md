@@ -39,6 +39,14 @@ Uploads are limited in size, file count and uncompressed size (see `[limits]` in
 ## Development
 
 ```sh
-go vet ./...
 go test -race ./...
+golangci-lint run      # lint + format check, config in .golangci.yml
+golangci-lint fmt      # apply gofmt/goimports
+go mod tidy -diff      # go.mod/go.sum must be tidy
 ```
+
+CI runs on every pull request: tidy check, golangci-lint (gofmt, goimports, vet,
+staticcheck, gosec, …), race-enabled tests with a 70% coverage floor (report in the job
+summary and as an artifact), and govulncheck. Dependabot opens weekly grouped updates for
+Go modules and GitHub Actions. CodeQL scans the Go code and workflows on every pull
+request and weekly; results show under the repository's Security tab.

@@ -65,7 +65,7 @@ func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	defer r.MultipartForm.RemoveAll()
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
 	s.storeUpload(w, f)
 }
 
