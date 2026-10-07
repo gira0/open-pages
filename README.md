@@ -2,8 +2,8 @@
 
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
 
-> Status: early prototype. Users can register, log in and upload a site archive, which is
-> extracted on the server. Serving the uploaded sites is the next milestone.
+> Status: early prototype. Users can register, log in, upload a site archive and have it
+> served. Per-site access control is not in yet: every deployed site is public.
 
 ## Requirements
 
@@ -40,6 +40,41 @@ are kept; older ones are deleted.
 
 Uploads are limited in size, file count and uncompressed size (see `[limits]` in
 `settings.ini`). Entries that would land outside the site directory are rejected.
+
+## Serving sites
+
+A deployed site is served from its live version (`op_data/<site>/current`). How a request
+names its site is one setting in `settings.ini`:
+
+```ini
+[sites]
+url_mode = path        # path (default)
+base_domain = pages.corp
+```
+
+**Path mode** (`url_mode = path`): `https://pages.corp/<site>/...`. It needs one DNS name and
+one certificate and nothing else. The API and UI live on the same host, so the names `v1`
+and `index` are reserved and can't be used for sites.
+
+Caveats of path mode:
+
+- A site lives under `/<site>/`, so **root-absolute links break**: `<link href="/css/app.css">`
+  asks for `/css/app.css`, which is not part of the site. Build sites with a base path
+  (Hugo `baseURL = "https://pages.corp/<site>/"`, Vite `base: "/<site>/"`, Jekyll `baseurl`, ...)
+  or use relative links.
+- All sites share one origin, so they share cookies and local storage and can script each
+  other. Don't host untrusted content in this mode.
+
+What gets served:
+
+- `index.html` for a directory (`/<site>/docs` redirects to `/<site>/docs/`); there are no
+  directory listings.
+- The site's own `404.html`, sent with status 404, or a plain 404 page.
+- Content types from the file extension, `ETag` and `Last-Modified` with conditional and
+  range requests, and `Cache-Control: no-cache` so browsers always revalidate (cheap with
+  the ETag) and a new deploy or rollback shows up at once. `HEAD` works.
+- Requests can't leave the site: `..` segments are cleaned, and the files are opened
+  through `os.Root`, which also refuses symlinks inside a site that point outside it.
 
 ## Development
 

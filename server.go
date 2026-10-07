@@ -37,6 +37,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	mux.Handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
 
+	s.registerSiteRoutes(mux)
+
 	return logRequests(s.cors(mux))
 }
 

@@ -27,6 +27,10 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 			"name must be a DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending with a hyphen")
 		return
 	}
+	if reservedSiteName(d.Name) {
+		writeError(w, http.StatusBadRequest, "that site name is reserved")
+		return
+	}
 	if len(d.Description) > 512 {
 		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
 		return
