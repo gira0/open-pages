@@ -27,6 +27,9 @@ COPY deploy/settings.ini /etc/open-pages/settings.ini
 
 WORKDIR /app
 USER 65532:65532
+# The image has no /tmp; Go's multipart uploads spill to TMPDIR, so keep it on the volume
+# (the app creates /data/tmp from tmppath at startup).
+ENV TMPDIR=/data/tmp
 VOLUME /data
 EXPOSE 8080
 ENTRYPOINT ["/app/open-pages"]

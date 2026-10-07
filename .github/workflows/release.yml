@@ -57,6 +57,8 @@ jobs:
           gh release create "$TAG" dist/* "${flags[@]}"
 
   image:
+    # Publish the image only once the release (tests, archives) has succeeded.
+    needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

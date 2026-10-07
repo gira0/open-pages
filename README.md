@@ -35,7 +35,8 @@ docker run -p 8080:8080 -v open-pages-data:/data open-pages
 
 Defaults come from [`deploy/settings.ini`](deploy/settings.ini) inside the image. To change
 them, mount your own file over `/etc/open-pages/settings.ini` (keep `datapath` and `tmppath`
-under `/data`). There are no environment variables: configuration is the settings file plus
+under `/data`). The image sets `TMPDIR=/data/tmp` because it has no `/tmp`, so large
+uploads are spooled on the volume. There are no environment variables: configuration is the settings file plus
 the `-config` flag. A bind-mounted data directory must be writable by uid 65532.
 
 Pushing a `v*` tag runs the release workflow: it publishes a GitHub release with
