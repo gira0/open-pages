@@ -55,7 +55,7 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
-		slog.Error("look up site", "site", site, "err", err)
+		slog.Error("look up site", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -92,9 +92,6 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		err = fs.ErrNotExist // "/file.html/" is not "/file.html"
 	}
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
-			slog.Debug("open site file", "site", site, "path", filePath, "err", err)
-		}
 		s.serveNotFound(w, r, root)
 		return
 	}
