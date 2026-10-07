@@ -51,7 +51,7 @@ Groups: any logged-in user can create one and owns it. Only the owner can delete
 or add and remove other members; any member can leave, and the owner can't be removed (delete
 the group instead). Non-members get 403 on a group's details, unknown groups 404. A group
 that is still the `group` of a site can't be deleted (409), so a site never silently loses
-its group; move or delete the sites first. Group names are unique ignoring case. Groups
+its group; move or delete the sites first. Group names are unique ignoring case (Unicode simple case folding, so `Ä` and `ä` clash). Groups
 created before owners existed have no owner and can't be changed through the API.
 
 Redeploying is just uploading again: each upload becomes a new version and goes live. Roll

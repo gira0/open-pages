@@ -64,6 +64,21 @@ func validGroupName(name string) (string, bool) {
 	return name, true
 }
 
+// groupNameKey maps a name to the key that must be unique: every rune is replaced by the
+// smallest member of its Unicode simple case-folding orbit, so "Ä" and "ä" (and "K" and
+// the Kelvin sign) share a key. The stored name keeps its original spelling.
+func groupNameKey(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		low := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			low = min(low, f)
+		}
+		b.WriteRune(low)
+	}
+	return b.String()
+}
+
 // userInGroup reports whether the user is a member of the group.
 func (s *Server) userInGroup(ctx context.Context, userID, groupID int64) (bool, error) {
 	var ok bool
@@ -144,14 +159,16 @@ func (s *Server) groupMembers(ctx context.Context, groupID int64) ([]memberInfo,
 }
 
 // createGroup makes a group owned by owner, who is also its first member. The name must
-// already be validated. It returns errGroupExists if the name is taken (ignoring case).
+// already be validated. It returns errGroupExists if the name is taken (ignoring Unicode case).
 func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Group, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Group{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after Commit
-	res, err := tx.ExecContext(ctx, "INSERT INTO groups (name, owner) VALUES (?, ?) ON CONFLICT DO NOTHING", name, owner)
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO groups (name, name_key, owner) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+		name, groupNameKey(name), owner)
 	if err != nil {
 		return Group{}, fmt.Errorf("insert group: %w", err)
 	}

@@ -374,25 +374,36 @@ func TestConcurrentDeleteVersusSiteAssign(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var wg sync.WaitGroup
-		wg.Add(2)
+		var (
+			wg                     sync.WaitGroup
+			delErr, updErr, crtErr error
+		)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			_ = s.deleteGroup(t.Context(), 1, g.ID)
+			delErr = s.deleteGroup(t.Context(), 1, g.ID)
 		}()
 		go func() {
 			defer wg.Done()
-			_, _, _ = s.updateSite(t.Context(), site.ID, nil, &g.ID)
+			_, _, updErr = s.updateSite(t.Context(), site.ID, nil, &g.ID)
+		}()
+		go func() {
+			defer wg.Done()
+			_, crtErr = s.createSite(t.Context(), fmt.Sprintf("n%d", i), "", 1, g.ID)
 		}()
 		wg.Wait()
 
-		got, err := s.getSite(t.Context(), site.Name)
-		if err != nil {
-			t.Fatal(err)
+		// The delete wins only if both site writes saw the group gone; otherwise the
+		// delete must have been refused. No other error is acceptable.
+		if delErr != nil && !errors.Is(delErr, errGroupInUse) {
+			t.Fatalf("round %d: deleteGroup: %v", i, delErr)
 		}
-		if got.GroupID != 0 {
-			if _, err := s.getGroup(t.Context(), got.GroupID); err != nil {
-				t.Fatalf("round %d: site refers to a deleted group: %v", i, err)
+		for _, err := range []error{updErr, crtErr} {
+			if err != nil && !errors.Is(err, errGroupNotFound) {
+				t.Fatalf("round %d: site write: %v", i, err)
+			}
+			if (err == nil) == (delErr == nil) {
+				t.Fatalf("round %d: delete=%v but site write=%v", i, delErr, err)
 			}
 		}
 	}
@@ -409,5 +420,92 @@ func TestUserInfoShowsGroupOwner(t *testing.T) {
 	}
 	if g, _ := groups[0].(map[string]any); g["owner_id"] != float64(1) || g["name"] != "eng" {
 		t.Fatalf("group = %v", groups[0])
+	}
+}
+
+func TestGroupNameUnicodeCase(t *testing.T) {
+	ts, _ := newTestServer(t)
+	a := loggedInClient(t, ts)
+	url := ts.URL + "/v1/auth/groups"
+	code, _ := doJSON(t, a, http.MethodPost, url, `{"name":"Ärzte"}`)
+	expectStatus(t, code, http.StatusCreated)
+	code, _ = doJSON(t, a, http.MethodPost, url, `{"name":"ärzte"}`)
+	expectStatus(t, code, http.StatusConflict)
+	code, _ = doJSON(t, a, http.MethodPost, url, `{"name":"Ärzte2"}`)
+	expectStatus(t, code, http.StatusCreated)
+}
+
+func TestSiteWithMissingGroupIsBadRequest(t *testing.T) {
+	ts, _ := newTestServer(t)
+	a := loggedInClient(t, ts)
+	code, _ := doJSON(t, a, http.MethodPost, ts.URL+"/v1/auth/sites", `{"name":"blog","group":42}`)
+	expectStatus(t, code, http.StatusBadRequest)
+}
+
+func TestMigrateDuplicateGroupNames(t *testing.T) {
+	path := t.TempDir() + "/old.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("x", maxGroupNameLen)
+	old := []string{
+		"CREATE TABLE user (userid INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL, password BINARY(60) NOT NULL)",
+		"CREATE TABLE groups (groupid INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL)",
+		"CREATE TABLE user_group (ugid INTEGER PRIMARY KEY, uid INTEGER NOT NULL, gid INTEGER NOT NULL)",
+		"INSERT INTO groups (groupid, name) VALUES (1, 'eng'), (2, 'ENG'), (3, 'Ärzte'), (4, 'ärzte'), (5, '" + long + "'), (6, '" +
+			strings.ToUpper(long) + "'), (7, 'ENG-2')",
+	}
+	for _, q := range old {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	var first []string
+	for round := range 2 { // the second start must change nothing
+		db, err = openDB(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := db.Query("SELECT name FROM groups ORDER BY groupid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, n)
+		}
+		rows.Close()
+		db.Close()
+		if round == 0 {
+			first = names
+			continue
+		}
+		if strings.Join(names, "|") != strings.Join(first, "|") {
+			t.Fatalf("second migration changed names: %v -> %v", first, names)
+		}
+	}
+	if first[0] != "eng" || first[2] != "Ärzte" || first[4] != long {
+		t.Fatalf("lowest ids must keep their names: %v", first)
+	}
+	if first[1] != "ENG-2" || first[3] != "ärzte-4" || first[6] != "ENG-2-7" {
+		t.Fatalf("duplicates not renamed as expected: %q %q %q", first[1], first[3], first[6])
+	}
+	if !strings.HasSuffix(first[5], "-6") || len([]rune(first[5])) > maxGroupNameLen {
+		t.Fatalf("long duplicate = %q (%d runes)", first[5], len([]rune(first[5])))
+	}
+	seen := map[string]bool{}
+	for _, n := range first {
+		if k := groupNameKey(n); seen[k] {
+			t.Fatalf("names still clash: %v", first)
+		} else {
+			seen[k] = true
+		}
 	}
 }
