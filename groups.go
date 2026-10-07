@@ -150,7 +150,7 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 	if err != nil {
 		return Group{}, fmt.Errorf("begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx, "INSERT INTO groups (name, owner) VALUES (?, ?) ON CONFLICT DO NOTHING", name, owner)
 	if err != nil {
 		return Group{}, fmt.Errorf("insert group: %w", err)
@@ -182,7 +182,7 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_group WHERE gid = ?"+guard, id, id, actor, id); err != nil {
 		return fmt.Errorf("delete memberships: %w", err)
 	}
