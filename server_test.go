@@ -80,6 +80,12 @@ func loggedInClient(t *testing.T, ts *httptest.Server) *http.Client {
 	return c
 }
 
+// createSiteVia creates a site through the API.
+func createSiteVia(t *testing.T, ts *httptest.Server, c *http.Client, name string) {
+	t.Helper()
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites", "application/json", []byte(`{"name":"`+name+`"}`)), http.StatusCreated)
+}
+
 func zipArchive(t *testing.T, files map[string]string) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -111,29 +117,16 @@ func tarGzArchive(files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// siteDirs lists the extracted uploads, ignoring staging leftovers.
-func siteDirs(t *testing.T, s *Server) []string {
-	entries, err := os.ReadDir(s.sites)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
 func TestAuthRequired(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := newClient(t)
 
 	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusUnauthorized)
 
-	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/zip",
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/upload", "application/zip",
 		zipArchive(t, map[string]string{"index.html": "hi"})), http.StatusUnauthorized)
-	if dirs := siteDirs(t, s); len(dirs) != 0 {
-		t.Fatalf("unauthenticated upload wrote %v", dirs)
+	if entries, _ := os.ReadDir(s.sites); len(entries) != 0 {
+		t.Fatalf("unauthenticated upload wrote %v", entries)
 	}
 
 	u, _ := url.Parse(ts.URL)
@@ -175,35 +168,40 @@ func TestRegisterValidation(t *testing.T) {
 func TestUploadFormats(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
+	createSiteVia(t, ts, c, "blog")
 	files := map[string]string{"index.html": "<h1>hi</h1>", "css/": "", "css/site.css": "body{}"}
 
-	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/zip", zipArchive(t, files)), http.StatusOK)
-	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/upload", "application/gzip", tarGzArchive(files)), http.StatusOK)
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/upload", "application/zip", zipArchive(t, files)), http.StatusOK)
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/upload", "application/gzip", tarGzArchive(files)), http.StatusOK)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	mw.WriteField("name", "site")
 	fw, _ := mw.CreateFormFile("file", "site.zip")
 	fw.Write(zipArchive(t, files))
 	mw.Close()
-	expectStatus(t, post(t, c, ts.URL+"/v1/auth/docs/formupload", mw.FormDataContentType(), body.Bytes()), http.StatusOK)
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/formupload", mw.FormDataContentType(), body.Bytes()), http.StatusOK)
 
-	dirs := siteDirs(t, s)
-	if len(dirs) != 3 {
-		t.Fatalf("got site dirs %v, want 3", dirs)
+	versions, err := s.Versions("blog")
+	if err != nil || len(versions) != 3 {
+		t.Fatalf("got versions %v, %v; want 3", versions, err)
 	}
-	for _, d := range dirs {
-		got, err := os.ReadFile(filepath.Join(s.sites, d, "css", "site.css"))
+	for _, v := range versions {
+		got, err := os.ReadFile(filepath.Join(s.SiteDir("blog"), "versions", v, "css", "site.css"))
 		if err != nil || string(got) != "body{}" {
-			t.Fatalf("%s: css/site.css = %q, %v", d, got, err)
+			t.Fatalf("%s: css/site.css = %q, %v", v, got, err)
 		}
+	}
+	got, err := os.ReadFile(filepath.Join(s.CurrentDir("blog"), "index.html"))
+	if err != nil || string(got) != "<h1>hi</h1>" {
+		t.Fatalf("current/index.html = %q, %v", got, err)
 	}
 }
 
 func TestUploadRejectsBadArchives(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
-	url := ts.URL + "/v1/auth/docs/upload"
+	createSiteVia(t, ts, c, "blog")
+	url := ts.URL + "/v1/auth/sites/blog/upload"
 
 	cases := map[string]struct {
 		body []byte
@@ -222,22 +220,18 @@ func TestUploadRejectsBadArchives(t *testing.T) {
 		})
 	}
 
-	if dirs := siteDirs(t, s); len(dirs) != 0 {
-		t.Fatalf("rejected uploads left %v behind", dirs)
+	if versions, _ := s.Versions("blog"); len(versions) != 0 {
+		t.Fatalf("rejected uploads left %v behind", versions)
+	}
+	if _, err := os.Lstat(s.CurrentDir("blog")); err == nil {
+		t.Fatal("rejected uploads created a current link")
+	}
+	if left, _ := filepath.Glob(filepath.Join(s.SiteDir("blog"), ".staging-*")); len(left) != 0 {
+		t.Fatalf("staging leftovers: %v", left)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(s.sites), "escape.txt")); err == nil {
 		t.Fatal("archive wrote outside the data dir")
 	}
-}
-
-func TestDocCreate(t *testing.T) {
-	ts, _ := newTestServer(t)
-	c := loggedInClient(t, ts)
-	url := ts.URL + "/v1/auth/docs/create"
-
-	expectStatus(t, post(t, c, url, "application/json", []byte(`{"name":"handbook","description":"Team handbook"}`)), http.StatusCreated)
-	expectStatus(t, post(t, c, url, "application/json", []byte(`{"name":"handbook"}`)), http.StatusConflict)
-	expectStatus(t, post(t, c, url, "application/json", []byte(`{"name":"../bad"}`)), http.StatusBadRequest)
 }
 
 func TestCORS(t *testing.T) {

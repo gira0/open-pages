@@ -2,8 +2,8 @@
 
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
 
-> Status: early prototype. Users can register, log in and upload a site archive, which is
-> extracted on the server. Serving the uploaded sites is the next milestone.
+> Status: early prototype. Users can register, log in, upload a site archive and have it
+> served. Per-site access control is not in yet: every deployed site is public.
 
 ## Requirements
 
@@ -29,12 +29,67 @@ are created under `datapath`.
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
 | GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
 | POST | `/v1/auth/logout` | ✓ | End the session |
-| POST | `/v1/auth/docs/create` | ✓ | Create a doc record (`name`, `description`) |
-| POST | `/v1/auth/docs/upload` | ✓ | Upload a `.zip`, `.tar.gz` or `.tar` as the raw body |
-| POST | `/v1/auth/docs/formupload` | ✓ | Upload an archive in the multipart field `file` |
+| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, `description`); the name must be a DNS label |
+| POST | `/v1/auth/sites/{name}/upload` | ✓ | Deploy a `.zip`, `.tar.gz` or `.tar` (raw body) as a new version; owner only |
+| POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
+
+Each upload is extracted into `op_data/<site>/versions/<id>/` and the
+`op_data/<site>/current` symlink is switched to it with an atomic rename, so a site is never
+half-deployed. The newest `keep_versions` versions (default 5, `[sites]` in `settings.ini`)
+are kept; older ones are deleted.
 
 Uploads are limited in size, file count and uncompressed size (see `[limits]` in
 `settings.ini`). Entries that would land outside the site directory are rejected.
+
+## Serving sites
+
+A deployed site is served from its live version (`op_data/<site>/current`). How a request
+names its site is one setting in `settings.ini`:
+
+```ini
+[sites]
+url_mode = path        # path (default) or subdomain
+base_domain = pages.corp
+```
+
+The API and UI stay on the bare `base_domain` in both modes. Site names that could collide
+with the API, the UI or service hosts are reserved in both modes and can't be created
+(`v1`, `index`, `api`, `www`, `admin`, `ui`, `static`, `assets`, `health`, `metrics`, `login`
+and a few similar ones; the full list is `reservedSiteNames` in `resolve.go`). Site names are DNS labels, so
+switching modes needs no data migration.
+
+**Path mode** (`url_mode = path`): `https://pages.corp/<site>/...`. It needs one DNS name and
+one certificate and nothing else. The API and UI live on the same host, which is why those
+names are reserved.
+
+Caveats of path mode:
+
+- A site lives under `/<site>/`, so **root-absolute links break**: `<link href="/css/app.css">`
+  asks for `/css/app.css`, which is not part of the site. Build sites with a base path
+  (Hugo `baseURL = "https://pages.corp/<site>/"`, Vite `base: "/<site>/"`, Jekyll `baseurl`, ...)
+  or use relative links.
+- All sites share one origin, so they share cookies and local storage and can script each
+  other. Don't host untrusted content in this mode.
+
+**Subdomain mode** (`url_mode = subdomain`): `https://<site>.pages.corp/...`. `base_domain` is
+required and must be a bare host name without a port. It needs wildcard DNS (`*.pages.corp`
+and `pages.corp` both pointing at this server) and a wildcard certificate. Root-absolute
+links just work, and every site gets its own origin (own cookies and local storage), which
+is the safer choice for content you don't trust. Requests for any host that is not
+`base_domain` or a single-label subdomain of it get a 404. Behind a reverse proxy, pass the
+original `Host` header through. The session cookie is host-only, so sites on subdomains
+never see it.
+
+What gets served (both modes):
+
+- `index.html` for a directory (`/<site>/docs` redirects to `/<site>/docs/`); there are no
+  directory listings.
+- The site's own `404.html`, sent with status 404, or a plain 404 page.
+- Content types from the file extension, `ETag` and `Last-Modified` with conditional and
+  range requests, and `Cache-Control: no-cache` so browsers always revalidate (cheap with
+  the ETag) and a new deploy or rollback shows up at once. `HEAD` works.
+- Requests can't leave the site: `..` segments are cleaned, and the files are opened
+  through `os.Root`, which also refuses symlinks inside a site that point outside it.
 
 ## Development
 
