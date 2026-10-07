@@ -27,7 +27,7 @@ are created under `datapath`.
 | GET | `/v1/ping` | | Health check |
 | POST | `/v1/user/register` | | Create a user (JSON or form: `email`, `password`) |
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
-| GET | `/v1/auth/user` | ✓ | Current user id |
+| GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
 | POST | `/v1/auth/logout` | ✓ | End the session |
 | POST | `/v1/auth/docs/create` | ✓ | Create a doc record (`name`, `description`) |
 | POST | `/v1/auth/docs/upload` | ✓ | Upload a `.zip`, `.tar.gz` or `.tar` as the raw body |
