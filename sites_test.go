@@ -13,6 +13,7 @@ func TestConcurrentDeploysKeepOne(t *testing.T) {
 	_, s := newTestServer(t)
 	s.cfg.KeepVersions = 1
 
+	ensureSite(t, s, "blog")
 	const n = 8
 	archives := make([]*os.File, n)
 	for i := range archives {
@@ -33,7 +34,7 @@ func TestConcurrentDeploysKeepOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = s.deploy("blog", f)
+			_, errs[i] = deployNamed(t, s, "blog", f)
 		}()
 	}
 	wg.Wait()
@@ -114,7 +115,8 @@ func deployFiles(t *testing.T, s *Server, site string, files map[string]string) 
 	if _, err := f.Write(zipArchive(t, files)); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.deploy(site, f)
+	ensureSite(t, s, site)
+	v, err := deployNamed(t, s, site, f)
 	if err != nil {
 		t.Fatal(err)
 	}

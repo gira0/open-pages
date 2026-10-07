@@ -52,7 +52,7 @@ func deploySite(t *testing.T, s *Server, site string, files map[string]string) {
 	if created.Name != site {
 		t.Fatalf("created %q, want %q", created.Name, site)
 	}
-	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
+	if _, err := deployNamed(t, s, site, writeZip(t, files)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,7 +64,7 @@ func deployReserved(t *testing.T, s *Server, site string, files map[string]strin
 	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO docs (name) VALUES (?)", site); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
+	if _, err := deployNamed(t, s, site, writeZip(t, files)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -216,7 +216,7 @@ func TestSiteFollowsCurrentVersion(t *testing.T) {
 	old, _ := s.CurrentVersion("blog")
 	tag1 := do(s, "GET", "", "/blog/").Header().Get("ETag")
 
-	if _, err := s.deploy("blog", writeZip(t, map[string]string{"index.html": "v2"})); err != nil {
+	if _, err := deployNamed(t, s, "blog", writeZip(t, map[string]string{"index.html": "v2"})); err != nil {
 		t.Fatal(err)
 	}
 	w := do(s, "GET", "", "/blog/", "If-None-Match", tag1)

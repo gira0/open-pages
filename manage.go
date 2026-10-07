@@ -25,26 +25,24 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if d.Description != nil {
-		if len(*d.Description) > 512 {
-			writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
-			return
-		}
-		site.Description = *d.Description
+	if d.Description != nil && len(*d.Description) > 512 {
+		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
+		return
 	}
-	if d.Group != nil {
-		site.GroupID = *d.Group
-	}
-	err := s.updateSite(r.Context(), site)
+	description, group, err := s.updateSite(r.Context(), site.ID, d.Description, d.Group)
 	if errors.Is(err, errGroupNotFound) {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, errSiteNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if err != nil {
 		internalError(w, "update site", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": site.Name, "description": site.Description, "group": site.GroupID})
+	writeJSON(w, http.StatusOK, map[string]any{"name": site.Name, "description": description, "group": group})
 }
 
 // handleSiteDelete removes a site, its versions and its database row. Owner only.
@@ -53,7 +51,12 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.deleteSite(r.Context(), site); err != nil {
+	err := s.deleteSite(r.Context(), site)
+	if errors.Is(err, errSiteNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
 		internalError(w, "delete site", err)
 		return
 	}
@@ -66,14 +69,9 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	versions, err := s.Versions(site.Name)
+	versions, current, err := s.versionsAndCurrent(site.Name)
 	if err != nil {
 		internalError(w, "list versions", err)
-		return
-	}
-	current, err := s.CurrentVersion(site.Name)
-	if err != nil {
-		internalError(w, "read current version", err)
 		return
 	}
 	out := make([]string, 0, len(versions))

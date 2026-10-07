@@ -83,7 +83,7 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
-	s.storeUpload(w, site, body)
+	s.storeUpload(w, r, site, body)
 }
 
 // handleFormUpload accepts an archive in the multipart field "file".
@@ -100,11 +100,11 @@ func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	defer func() { _ = r.MultipartForm.RemoveAll() }()
-	s.storeUpload(w, site, f)
+	s.storeUpload(w, r, site, f)
 }
 
 // storeUpload spools the archive to disk and deploys it as a new version of site.
-func (s *Server) storeUpload(w http.ResponseWriter, site Site, src io.Reader) {
+func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, src io.Reader) {
 	spool, err := os.CreateTemp(s.tmp, "upload-*")
 	if err != nil {
 		internalError(w, "create spool file", err)
@@ -124,7 +124,11 @@ func (s *Server) storeUpload(w http.ResponseWriter, site Site, src io.Reader) {
 		return
 	}
 
-	version, err := s.deploy(site.Name, spool)
+	version, err := s.deploy(r.Context(), site, spool)
+	if errors.Is(err, errSiteNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	var bad *badArchiveError
 	if errors.As(err, &bad) {
 		slog.Info("rejected upload", "site", site.Name, "err", err)
