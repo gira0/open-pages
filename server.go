@@ -19,6 +19,7 @@ type Server struct {
 
 	deployMu sync.Mutex // serializes switching and pruning versions
 	metrics  *metrics
+	health   healthProbe
 }
 
 func (s *Server) routes() http.Handler {
@@ -50,7 +51,7 @@ func (s *Server) routes() http.Handler {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", map[string]string{"title": "Posts"}); err != nil {
-		slog.Error("render index", "err", err)
+		ctxLogger(r.Context()).Error("render index", "err", err)
 	}
 }
 
@@ -64,6 +65,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origin)
 			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Add("Vary", "Origin")
+			h.Set("Access-Control-Expose-Headers", requestIDHeader)
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Authorization, X-CSRF-Token")
@@ -80,7 +82,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Warn("write response", "err", err)
+		slog.Warn("write response", "err", err, "request_id", requestIDOf(w))
 	}
 }
 

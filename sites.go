@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -275,7 +274,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		return "", err
 	}
 	if err := s.pruneVersions(site.Name); err != nil {
-		slog.Warn("prune old versions", "site", site.Name, "err", err)
+		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
 	return version, nil
 }

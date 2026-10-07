@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 )
@@ -133,7 +132,7 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 	var bad *badArchiveError
 	if errors.As(err, &bad) {
 		s.metrics.recordDeploy(deployRejected)
-		slog.Info("rejected upload", "site", site.Name, "err", err)
+		ctxLogger(r.Context()).Info("rejected upload", "site", site.Name, "err", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

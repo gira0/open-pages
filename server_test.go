@@ -242,6 +242,10 @@ func TestCORS(t *testing.T) {
 		"https://allowed.example": "https://allowed.example",
 		"https://evil.example":    "",
 	} {
+		wantExpose := ""
+		if want != "" {
+			wantExpose = requestIDHeader
+		}
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/ping", nil)
 		req.Header.Set("Origin", origin)
 		resp, err := http.DefaultClient.Do(req)
@@ -251,6 +255,9 @@ func TestCORS(t *testing.T) {
 		resp.Body.Close()
 		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != want {
 			t.Errorf("origin %s: Allow-Origin = %q, want %q", origin, got, want)
+		}
+		if got := resp.Header.Get("Access-Control-Expose-Headers"); got != wantExpose {
+			t.Errorf("origin %s: Expose-Headers = %q, want %q", origin, got, wantExpose)
 		}
 	}
 }

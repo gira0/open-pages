@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,11 +25,17 @@ const requestIDHeader = "X-Request-Id"
 
 // parseLogLevel reads a [log] level: debug, info, warn or error (case-insensitive).
 func parseLogLevel(s string) (slog.Level, error) {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(s)); err != nil {
-		return l, fmt.Errorf("log.level %q: must be debug, info, warn or error", s)
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
 	}
-	return l, nil
+	return slog.LevelInfo, fmt.Errorf("log.level %q: must be debug, info, warn or error", s)
 }
 
 // newLogger builds the process logger from the [log] settings, writing to w.
@@ -38,6 +45,17 @@ func newLogger(w io.Writer, cfg Config) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(w, opts))
 	}
 	return slog.New(slog.NewTextHandler(w, opts))
+}
+
+type requestIDKey struct{}
+
+// ctxLogger returns the default logger tagged with the ID of the request ctx belongs to,
+// for log lines written deep in a handler. The ID is the generated one, never client input.
+func ctxLogger(ctx context.Context) *slog.Logger {
+	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
+		return slog.Default().With("request_id", id)
+	}
+	return slog.Default()
 }
 
 // requestIDOf returns the ID assigned to the request that w answers, for log lines
@@ -70,6 +88,9 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		id := xid.New().String()
 		w.Header().Set(requestIDHeader, id)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		// The mux records the matched pattern on the request it receives, so keep using
+		// this one after the handler returns.
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
 		next.ServeHTTP(rec, r)
 
 		elapsed := time.Since(start)

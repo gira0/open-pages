@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,7 +14,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const testMetricsToken = "0123456789abcdef-token"
@@ -386,5 +389,90 @@ func TestOpsNamesAreReserved(t *testing.T) {
 		if got := post(t, c, ts.URL+"/v1/auth/sites", "application/json", body); got == http.StatusCreated {
 			t.Errorf("site %q was created", name)
 		}
+	}
+}
+
+func TestHealthProbeSingleFlight(t *testing.T) {
+	var p healthProbe
+	var calls atomic.Int32
+	release := make(chan struct{})
+	slow := func() error {
+		calls.Add(1)
+		<-release
+		return nil
+	}
+
+	// A stuck check times out the request instead of hanging it.
+	for range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		err := p.run(ctx, slow)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want deadline exceeded", err)
+		}
+	}
+	// Repeated probes shared the one blocked check rather than starting more.
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("check started %d times while stuck, want 1", n)
+	}
+
+	// Once the filesystem answers again, the next probe starts afresh and succeeds.
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		err := p.run(ctx, func() error { return nil })
+		cancel()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("probe never recovered: %v", err)
+		}
+	}
+}
+
+func TestLogLevelStrict(t *testing.T) {
+	for _, ok := range []string{"debug", "INFO", " Warn ", "error"} {
+		if _, err := parseLogLevel(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"INFO+1", "WARN-2", "", "trace"} {
+		if _, err := parseLogLevel(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	for _, level := range []string{"INFO+1", "WARN-2"} {
+		path := filepath.Join(t.TempDir(), "settings.ini")
+		if err := os.WriteFile(path, []byte("[log]\nlevel = "+level+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadConfig(path); err == nil {
+			t.Errorf("config accepted level %s", level)
+		}
+	}
+}
+
+func TestHandlerLogLinesCarryRequestID(t *testing.T) {
+	var logs lockedBuffer
+	old := slog.Default()
+	slog.SetDefault(newLogger(&logs, defaultConfig()))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	s := &Server{cfg: defaultConfig(), metrics: newMetrics()}
+	h := s.observe(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctxLogger(r.Context()).Info("from handler")
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	id := rec.Header().Get(requestIDHeader)
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if !strings.Contains(line, "request_id="+id) {
+			t.Errorf("line without request ID: %q", line)
+		}
+	}
+	if !strings.Contains(logs.String(), "from handler") {
+		t.Error("handler line missing")
 	}
 }
