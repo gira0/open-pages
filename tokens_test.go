@@ -210,3 +210,25 @@ func TestTokenLimit(t *testing.T) {
 	}
 	mintToken(t, ts, c, `{"name":"fits now"}`)
 }
+
+func TestBareBearerSchemeNeverFallsBackToCookie(t *testing.T) {
+	ts, _ := newTestServer(t)
+	c := loggedInClient(t, ts) // holds a valid session cookie
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusOK)
+
+	for _, header := range []string{"Bearer", "Bearer ", "bearer  ", "BEARER\t"} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/auth/user", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", header)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		expectStatus(t, resp.StatusCode, http.StatusUnauthorized)
+	}
+	// The rejected requests didn't log the session out.
+	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusOK)
+}

@@ -85,7 +85,11 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 	}()
 
 	c := &deployClient{
-		http:  &http.Client{Timeout: deployTimeout},
+		http: &http.Client{
+			Timeout: deployTimeout,
+			// Never follow redirects: they could carry the bearer token to another origin.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		base:  strings.TrimRight(base.String(), "/"),
 		token: token,
 	}
@@ -248,6 +252,9 @@ func (c *deployClient) post(ctx context.Context, path, ctype string, body io.Rea
 		return reply{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return reply{}, fmt.Errorf("the server redirected the request (HTTP %d); redirects are not followed so the token is never forwarded, use the final URL with -server", resp.StatusCode)
+	}
 	rep := reply{status: resp.StatusCode}
 	// A body that isn't the expected JSON just leaves the fields empty.
 	_ = json.NewDecoder(io.LimitReader(resp.Body, maxReplyBytes)).Decode(&rep)

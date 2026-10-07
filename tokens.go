@@ -37,8 +37,10 @@ func hashToken(token string) string {
 
 // bearerToken extracts the token of an "Authorization: Bearer <token>" header.
 func bearerToken(r *http.Request) (string, bool) {
-	scheme, rest, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
+	// The scheme alone marks token auth, even with no credential after it ("Bearer", "Bearer "),
+	// so such a request is rejected rather than falling back to the session cookie.
+	scheme, rest, _ := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
+	if !strings.EqualFold(scheme, "Bearer") {
 		return "", false
 	}
 	return strings.TrimSpace(rest), true

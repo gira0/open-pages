@@ -11,8 +11,33 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+func TestDeployDoesNotFollowRedirects(t *testing.T) {
+	var leaked atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			leaked.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+
+	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	err := deployCommand(context.Background(), []string{"blog", dir}, env("opt_secret", origin.URL), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("got error %v, want a redirect failure", err)
+	}
+	if n := leaked.Load(); n != 0 {
+		t.Fatalf("the redirect target received %d requests carrying the token", n)
+	}
+}
 
 func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
