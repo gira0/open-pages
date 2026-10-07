@@ -13,6 +13,7 @@ import (
 type siteCreate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Group       int64  `json:"group"` // optional group id; 0 or absent for none
 }
 
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +32,11 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
 		return
 	}
-	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r))
+	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group)
+	if errors.Is(err, errGroupNotFound) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if errors.Is(err, errSiteExists) {
 		writeError(w, http.StatusConflict, err.Error())
 		return

@@ -34,6 +34,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleGetUser))
 	mux.Handle("POST /v1/auth/logout", s.requireAuth(s.handleLogout))
 	mux.Handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
+	mux.Handle("PUT /v1/auth/sites/{name}", s.requireAuth(s.handleSiteUpdate))
+	mux.Handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
+	mux.Handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))
+	mux.Handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(s.handleRollback))
 	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	mux.Handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
 

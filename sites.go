@@ -37,6 +37,7 @@ var (
 	errSiteExists    = errors.New("a site with that name already exists")
 	errSiteNotFound  = errors.New("site not found")
 	errVersionAbsent = errors.New("version not found")
+	errGroupNotFound = errors.New("group not found")
 )
 
 // badArchiveError marks a deploy failure caused by the uploaded archive itself.
@@ -45,12 +46,13 @@ type badArchiveError struct{ err error }
 func (e *badArchiveError) Error() string { return e.err.Error() }
 func (e *badArchiveError) Unwrap() error { return e.err }
 
-// Site is a hosted site. OwnerID is 0 when the site has no owner.
+// Site is a hosted site. OwnerID and GroupID are 0 when the site has no owner or group.
 type Site struct {
 	ID          int64
 	Name        string
 	Description string
 	OwnerID     int64
+	GroupID     int64
 }
 
 // validSiteName reports whether name is usable as a site name (a DNS label).
@@ -74,14 +76,42 @@ func (s *Server) CurrentDir(site string) string {
 	return filepath.Join(dir, currentLink)
 }
 
-// createSite registers a new site owned by owner. It returns errSiteExists on a name clash.
-func (s *Server) createSite(ctx context.Context, name, description string, owner int64) (Site, error) {
+// nullableID maps the "none" value 0 to SQL NULL.
+func nullableID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
+// checkGroup returns errGroupNotFound unless group is 0 (none) or an existing group.
+func (s *Server) checkGroup(ctx context.Context, group int64) error {
+	if group == 0 {
+		return nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM groups WHERE groupid = ?", group).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errGroupNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("query group: %w", err)
+	}
+	return nil
+}
+
+// createSite registers a new site owned by owner, optionally in group (0 for none).
+// It returns errSiteExists on a name clash and errGroupNotFound for an unknown group.
+func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64) (Site, error) {
 	if !validSiteName(name) {
 		return Site{}, fmt.Errorf("invalid site name %q", name)
 	}
+	if err := s.checkGroup(ctx, group); err != nil {
+		return Site{}, err
+	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO docs (uowner, name, description) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING",
-		owner, name, description)
+		"INSERT INTO docs (uowner, ugroup, name, description) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
+		owner, nullableID(group), name, description)
 	if err != nil {
 		return Site{}, fmt.Errorf("insert site: %w", err)
 	}
@@ -89,7 +119,7 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
-	return Site{ID: id, Name: name, Description: description, OwnerID: owner}, nil
+	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group}, nil
 }
 
 // getSite loads a site by name. It returns errSiteNotFound if there is none.
@@ -98,17 +128,51 @@ func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 		site  = Site{Name: name}
 		desc  sql.NullString
 		owner sql.NullInt64
+		group sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		"SELECT docid, description, uowner FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner)
+		"SELECT docid, description, uowner, ugroup FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
 	if err != nil {
 		return Site{}, fmt.Errorf("query site: %w", err)
 	}
-	site.Description, site.OwnerID = desc.String, owner.Int64
+	site.Description, site.OwnerID, site.GroupID = desc.String, owner.Int64, group.Int64
 	return site, nil
+}
+
+// updateSite stores the description and group (0 for none) of a site.
+// It returns errGroupNotFound for an unknown group.
+func (s *Server) updateSite(ctx context.Context, site Site) error {
+	if err := s.checkGroup(ctx, site.GroupID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, "UPDATE docs SET description = ?, ugroup = ? WHERE docid = ?",
+		site.Description, nullableID(site.GroupID), site.ID)
+	if err != nil {
+		return fmt.Errorf("update site: %w", err)
+	}
+	return nil
+}
+
+// deleteSite removes a site's files and then its database row. A failure removing the
+// files leaves the row, so the delete can be retried.
+func (s *Server) deleteSite(ctx context.Context, site Site) error {
+	dir := s.SiteDir(site.Name)
+	if dir == "" {
+		return fmt.Errorf("invalid site name %q", site.Name)
+	}
+	s.deployMu.Lock()
+	err := os.RemoveAll(dir)
+	s.deployMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("remove site files: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM docs WHERE docid = ?", site.ID); err != nil {
+		return fmt.Errorf("delete site: %w", err)
+	}
+	return nil
 }
 
 // deploy extracts the archive in src into a new version of site and makes it current.
