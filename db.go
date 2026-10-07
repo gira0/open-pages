@@ -27,6 +27,19 @@ CREATE TABLE IF NOT EXISTS session (
 	FOREIGN KEY (userid) REFERENCES user(userid)
 );
 
+CREATE TABLE IF NOT EXISTS api_token (
+	tokenid INTEGER PRIMARY KEY,
+	userid  INTEGER NOT NULL,
+	name    VARCHAR(64) NOT NULL,
+	prefix  VARCHAR(16) NOT NULL,
+	hash    CHAR(64) NOT NULL UNIQUE,
+	created BIGINT NOT NULL,
+	expires BIGINT NULL,
+	FOREIGN KEY (userid) REFERENCES user(userid)
+);
+
+CREATE INDEX IF NOT EXISTS api_token_user ON api_token (userid);
+
 CREATE TABLE IF NOT EXISTS groups (
 	groupid INTEGER PRIMARY KEY,
 	name    VARCHAR(255) NOT NULL
