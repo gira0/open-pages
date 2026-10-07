@@ -5,8 +5,51 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestConcurrentDeploysKeepOne(t *testing.T) {
+	_, s := newTestServer(t)
+	s.cfg.KeepVersions = 1
+
+	const n = 8
+	archives := make([]*os.File, n)
+	for i := range archives {
+		f, err := os.CreateTemp(t.TempDir(), "a-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.Write(zipArchive(t, map[string]string{"index.html": "x"})); err != nil {
+			t.Fatal(err)
+		}
+		archives[i] = f
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i, f := range archives {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = s.deploy("blog", f)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("deploy %d: %v", i, err)
+		}
+	}
+	versions, err := s.Versions("blog")
+	if err != nil || len(versions) != 1 {
+		t.Fatalf("versions = %v, %v; want exactly 1", versions, err)
+	}
+	if cur, _ := s.CurrentVersion("blog"); cur != versions[0] {
+		t.Fatalf("current = %q, versions = %v", cur, versions)
+	}
+}
 
 func TestValidSiteName(t *testing.T) {
 	good := []string{"a", "blog", "my-site", "a1", "0day", strings.Repeat("a", 63)}

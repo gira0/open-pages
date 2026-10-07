@@ -205,13 +205,15 @@ func (s *Server) deploy(site string, src *os.File) (string, error) {
 		return "", err
 	}
 
+	// Publishing, switching and pruning happen under one lock, so a concurrent deploy's
+	// prune can never remove a version that this deploy has published but not yet made
+	// current. Extraction above stays outside the lock.
+	s.deployMu.Lock()
+	defer s.deployMu.Unlock()
 	version := xid.New().String() // time-sortable, so lexical order is deploy order
 	if err := os.Rename(staging, filepath.Join(dir, versionsDir, version)); err != nil {
 		return "", err
 	}
-
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
 	if err := s.switchCurrent(site, version); err != nil {
 		return "", err
 	}
