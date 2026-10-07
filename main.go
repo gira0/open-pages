@@ -30,6 +30,7 @@ func run(configPath string) error {
 	if err != nil {
 		return err
 	}
+	slog.SetDefault(newLogger(os.Stderr, cfg))
 	srv, err := newServer(cfg)
 	if err != nil {
 		return err
@@ -45,7 +46,16 @@ func run(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	serveErr := make(chan error, 1)
+	serveErr := make(chan error, 2)
+	if ms := srv.metricsServer(); ms != nil {
+		defer ms.Close()
+		go func() {
+			slog.Info("metrics listening", "addr", ms.Addr)
+			if err := ms.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				serveErr <- err
+			}
+		}()
+	}
 	go func() {
 		slog.Info("listening", "addr", cfg.Listen, "data", srv.sites)
 		serveErr <- httpSrv.ListenAndServe()
@@ -77,6 +87,8 @@ func newServer(cfg Config) (*Server, error) {
 		cfg:   cfg,
 		sites: filepath.Join(cfg.DataPath, "op_data"),
 		tmp:   filepath.Join(cfg.TmpPath, "tmp"),
+
+		metrics: newMetrics(),
 	}
 	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
 	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content

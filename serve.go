@@ -55,7 +55,7 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
-		slog.Error("look up site", "err", err)
+		slog.Error("look up site", "err", err, "request_id", requestIDOf(w))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
