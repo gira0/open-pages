@@ -47,6 +47,19 @@ go mod tidy -diff      # go.mod/go.sum must be tidy
 
 CI runs on every pull request: tidy check, golangci-lint (gofmt, goimports, vet,
 staticcheck, gosec, …), race-enabled tests with a 70% coverage floor (report in the job
-summary and as an artifact), and govulncheck. Dependabot opens weekly grouped updates for
-Go modules and GitHub Actions. CodeQL scans the Go code and workflows on every pull
-request and weekly; results show under the repository's Security tab.
+summary and as an artifact), govulncheck, and dependency review (blocking newly
+introduced dependencies with known moderate-or-higher vulnerabilities). The build,
+lint, tests, and vulnerability checks also run weekly and can be triggered manually.
+govulncheck deliberately uses the latest scanner and vulnerability database.
+Dependabot opens weekly grouped updates for Go modules and GitHub Actions, including
+updates to SHA-pinned actions; automated security updates are enabled.
+CodeQL scans the Go code and workflows on every pull request and weekly; results show
+under the repository's Security tab.
+
+The default-branch ruleset requires the CI and both CodeQL analysis jobs, blocks
+CodeQL security alerts rated high or critical and error-level quality alerts, and
+requires resolved review conversations and signed commits. Pull requests use squash
+merges; no independent approval is required while the project has a solo maintainer.
+Actions have read-only default permissions and cannot approve pull requests.
+Secret scanning and push protection are enabled. See [SECURITY.md](SECURITY.md) for
+supported versions and private vulnerability reporting.
