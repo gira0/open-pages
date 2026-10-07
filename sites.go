@@ -106,6 +106,9 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	if !validSiteName(name) {
 		return Site{}, fmt.Errorf("invalid site name %q", name)
 	}
+	if reservedSiteName(name) {
+		return Site{}, fmt.Errorf("site name %q is reserved", name)
+	}
 	if err := s.checkGroup(ctx, group); err != nil {
 		return Site{}, err
 	}

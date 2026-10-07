@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// do sends a request with an optional JSON body and returns the status and decoded JSON.
-func do(t *testing.T, c *http.Client, method, url, body string) (int, map[string]any) {
+// doJSON sends a request with an optional JSON body and returns the status and decoded JSON.
+func doJSON(t *testing.T, c *http.Client, method, url, body string) (int, map[string]any) {
 	t.Helper()
 	req, err := http.NewRequest(method, url, bytes.NewReader([]byte(body)))
 	if err != nil {
@@ -72,18 +72,18 @@ func TestRedeployRollbackAndVersions(t *testing.T) {
 		t.Fatalf("redeploy not live: %q", read())
 	}
 
-	code, out := do(t, c, http.MethodGet, base+"/versions", "")
+	code, out := doJSON(t, c, http.MethodGet, base+"/versions", "")
 	versions, _ := out["versions"].([]any)
 	if code != http.StatusOK || out["current"] != v2 || len(versions) != 2 || versions[0] != v2 || versions[1] != v1 {
 		t.Fatalf("versions = %d %v", code, out)
 	}
 
-	code, _ = do(t, c, http.MethodPost, base+"/rollback", `{"version":"`+v1+`"}`)
+	code, _ = doJSON(t, c, http.MethodPost, base+"/rollback", `{"version":"`+v1+`"}`)
 	if code != http.StatusOK || read() != "one" {
 		t.Fatalf("rollback: status %d, current %q", code, read())
 	}
 	// Rolling back to the version that is already live is a no-op success.
-	code, _ = do(t, c, http.MethodPost, base+"/rollback", `{"version":"`+v1+`"}`)
+	code, _ = doJSON(t, c, http.MethodPost, base+"/rollback", `{"version":"`+v1+`"}`)
 	expectStatus(t, code, http.StatusOK)
 
 	for body, want := range map[string]int{
@@ -92,7 +92,7 @@ func TestRedeployRollbackAndVersions(t *testing.T) {
 		`{"version":""}`:                     http.StatusBadRequest,
 		`not json`:                           http.StatusBadRequest,
 	} {
-		code, _ := do(t, c, http.MethodPost, base+"/rollback", body)
+		code, _ := doJSON(t, c, http.MethodPost, base+"/rollback", body)
 		if code != want {
 			t.Errorf("rollback %s: status %d, want %d", body, code, want)
 		}
@@ -109,7 +109,7 @@ func TestDeleteSite(t *testing.T) {
 	uploadVia(t, ts, c, "wiki", "one")
 	base := ts.URL + "/v1/auth/sites/wiki"
 
-	code, _ := do(t, c, http.MethodDelete, base, "")
+	code, _ := doJSON(t, c, http.MethodDelete, base, "")
 	expectStatus(t, code, http.StatusOK)
 	if _, err := os.Stat(s.SiteDir("wiki")); !os.IsNotExist(err) {
 		t.Fatalf("site files remain: %v", err)
@@ -117,7 +117,7 @@ func TestDeleteSite(t *testing.T) {
 	if _, err := s.getSite(t.Context(), "wiki"); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("db row remains: %v", err)
 	}
-	code, _ = do(t, c, http.MethodDelete, base, "")
+	code, _ = doJSON(t, c, http.MethodDelete, base, "")
 	expectStatus(t, code, http.StatusNotFound)
 
 	// The name can be reused and starts empty.
@@ -144,14 +144,14 @@ func TestOwnerOnlyMutations(t *testing.T) {
 		{http.MethodPost, "/rollback", `{"version":"` + v1 + `"}`},
 	}
 	for _, tc := range cases {
-		if code, _ := do(t, other, tc.method, base+tc.path, tc.body); code != http.StatusForbidden {
+		if code, _ := doJSON(t, other, tc.method, base+tc.path, tc.body); code != http.StatusForbidden {
 			t.Errorf("non-owner %s %s: status %d, want 403", tc.method, tc.path, code)
 		}
-		if code, _ := do(t, anon, tc.method, base+tc.path, tc.body); code != http.StatusUnauthorized {
+		if code, _ := doJSON(t, anon, tc.method, base+tc.path, tc.body); code != http.StatusUnauthorized {
 			t.Errorf("anonymous %s %s: status %d, want 401", tc.method, tc.path, code)
 		}
 		missing := ts.URL + "/v1/auth/sites/nope" + tc.path
-		if code, _ := do(t, other, tc.method, missing, tc.body); code != http.StatusNotFound {
+		if code, _ := doJSON(t, other, tc.method, missing, tc.body); code != http.StatusNotFound {
 			t.Errorf("unknown site %s %s: status %d, want 404", tc.method, tc.path, code)
 		}
 	}
@@ -174,9 +174,9 @@ func TestSiteGroup(t *testing.T) {
 	sites := ts.URL + "/v1/auth/sites"
 
 	// Set on create; unknown groups are rejected.
-	code, _ := do(t, c, http.MethodPost, sites, `{"name":"blog","group":7}`)
+	code, _ := doJSON(t, c, http.MethodPost, sites, `{"name":"blog","group":7}`)
 	expectStatus(t, code, http.StatusCreated)
-	code, _ = do(t, c, http.MethodPost, sites, `{"name":"wiki","group":99}`)
+	code, _ = doJSON(t, c, http.MethodPost, sites, `{"name":"wiki","group":99}`)
 	expectStatus(t, code, http.StatusBadRequest)
 	if _, err := s.getSite(t.Context(), "wiki"); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("site with bad group was created: %v", err)
@@ -186,18 +186,18 @@ func TestSiteGroup(t *testing.T) {
 	}
 
 	// Update: absent fields stay, 0 clears the group, unknown groups are rejected.
-	code, _ = do(t, c, http.MethodPut, sites+"/blog", `{"description":"Team blog"}`)
+	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `{"description":"Team blog"}`)
 	expectStatus(t, code, http.StatusOK)
 	if site, _ := s.getSite(t.Context(), "blog"); site.Description != "Team blog" || site.GroupID != 7 {
 		t.Fatalf("after description update: %+v", site)
 	}
-	code, _ = do(t, c, http.MethodPut, sites+"/blog", `{"group":99}`)
+	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `{"group":99}`)
 	expectStatus(t, code, http.StatusBadRequest)
-	code, _ = do(t, c, http.MethodPut, sites+"/blog", `{"group":0}`)
+	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `{"group":0}`)
 	expectStatus(t, code, http.StatusOK)
 	if site, _ := s.getSite(t.Context(), "blog"); site.GroupID != 0 || site.Description != "Team blog" {
 		t.Fatalf("after clearing group: %+v", site)
 	}
-	code, _ = do(t, c, http.MethodPut, sites+"/blog", `not json`)
+	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `not json`)
 	expectStatus(t, code, http.StatusBadRequest)
 }
