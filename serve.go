@@ -13,9 +13,28 @@ import (
 	"strings"
 )
 
-// registerSiteRoutes makes the mux serve sites for requests no API route claims.
-func (s *Server) registerSiteRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{path...}", s.handleSite)
+// withSites adds site serving around the API mux.
+//
+// Path mode: the mux serves sites for the paths no API route claims.
+// Subdomain mode: requests for <site>.<base_domain> go to the site handler; everything
+// else (the bare base_domain) goes to the mux, so the API and UI stay there.
+func (s *Server) withSites(mux *http.ServeMux) http.Handler {
+	if s.cfg.URLMode != urlModeSubdomain {
+		mux.HandleFunc("GET /{path...}", s.handleSite)
+		return mux
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, under := s.subdomainOf(r.Host); !under {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleSite(w, r)
+	})
 }
 
 // handleSite serves a file of a site. HEAD requests are routed here too.

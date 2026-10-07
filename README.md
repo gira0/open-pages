@@ -48,9 +48,12 @@ names its site is one setting in `settings.ini`:
 
 ```ini
 [sites]
-url_mode = path        # path (default)
+url_mode = path        # path (default) or subdomain
 base_domain = pages.corp
 ```
+
+The API and UI stay on the bare `base_domain` in both modes. Site names are DNS labels, so
+switching modes needs no data migration.
 
 **Path mode** (`url_mode = path`): `https://pages.corp/<site>/...`. It needs one DNS name and
 one certificate and nothing else. The API and UI live on the same host, so the names `v1`
@@ -65,7 +68,16 @@ Caveats of path mode:
 - All sites share one origin, so they share cookies and local storage and can script each
   other. Don't host untrusted content in this mode.
 
-What gets served:
+**Subdomain mode** (`url_mode = subdomain`): `https://<site>.pages.corp/...`. `base_domain` is
+required and must be a bare host name without a port. It needs wildcard DNS (`*.pages.corp`
+and `pages.corp` both pointing at this server) and a wildcard certificate. Root-absolute
+links just work, and every site gets its own origin (own cookies and local storage), which
+is the safer choice for content you don't trust. Requests for any host that is not
+`base_domain` or a single-label subdomain of it get a 404. Behind a reverse proxy, pass the
+original `Host` header through. The session cookie is host-only, so sites on subdomains
+never see it.
+
+What gets served (both modes):
 
 - `index.html` for a directory (`/<site>/docs` redirects to `/<site>/docs/`); there are no
   directory listings.

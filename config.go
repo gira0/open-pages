@@ -25,7 +25,8 @@ type Config struct {
 
 // URL modes for [sites] url_mode.
 const (
-	urlModePath = "path" // <base_domain>/<site>/...
+	urlModePath      = "path"      // <base_domain>/<site>/...
+	urlModeSubdomain = "subdomain" // <site>.<base_domain>/...
 )
 
 func defaultConfig() Config {
@@ -75,8 +76,11 @@ func loadConfig(path string) (Config, error) {
 	sites := f.Section("sites")
 	cfg.URLMode = strings.ToLower(sites.Key("url_mode").MustString(cfg.URLMode))
 	cfg.BaseDomain = strings.ToLower(strings.TrimSuffix(sites.Key("base_domain").String(), "."))
-	if cfg.URLMode != urlModePath {
-		return cfg, fmt.Errorf("sites.url_mode %q: must be %q", cfg.URLMode, urlModePath)
+	if cfg.URLMode != urlModePath && cfg.URLMode != urlModeSubdomain {
+		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, urlModePath, urlModeSubdomain)
+	}
+	if cfg.URLMode == urlModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
+		return cfg, fmt.Errorf("sites.base_domain %q: subdomain mode needs a bare host name, for example pages.corp", cfg.BaseDomain)
 	}
 
 	if cfg.DataPath, err = filepath.Abs(cfg.DataPath); err != nil {
