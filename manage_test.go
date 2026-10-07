@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,24 +105,24 @@ func TestRedeployRollbackAndVersions(t *testing.T) {
 func TestDeleteSite(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
-	createSiteVia(t, ts, c, "blog")
-	uploadVia(t, ts, c, "blog", "one")
-	base := ts.URL + "/v1/auth/sites/blog"
+	createSiteVia(t, ts, c, "wiki")
+	uploadVia(t, ts, c, "wiki", "one")
+	base := ts.URL + "/v1/auth/sites/wiki"
 
 	code, _ := do(t, c, http.MethodDelete, base, "")
 	expectStatus(t, code, http.StatusOK)
-	if _, err := os.Stat(s.SiteDir("blog")); !os.IsNotExist(err) {
+	if _, err := os.Stat(s.SiteDir("wiki")); !os.IsNotExist(err) {
 		t.Fatalf("site files remain: %v", err)
 	}
-	if _, err := s.getSite(t.Context(), "blog"); err != errSiteNotFound {
+	if _, err := s.getSite(t.Context(), "wiki"); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("db row remains: %v", err)
 	}
 	code, _ = do(t, c, http.MethodDelete, base, "")
 	expectStatus(t, code, http.StatusNotFound)
 
 	// The name can be reused and starts empty.
-	createSiteVia(t, ts, c, "blog")
-	if v, _ := s.Versions("blog"); len(v) != 0 {
+	createSiteVia(t, ts, c, "wiki")
+	if v, _ := s.Versions("wiki"); len(v) != 0 {
 		t.Fatalf("recreated site has versions %v", v)
 	}
 }
@@ -177,7 +178,7 @@ func TestSiteGroup(t *testing.T) {
 	expectStatus(t, code, http.StatusCreated)
 	code, _ = do(t, c, http.MethodPost, sites, `{"name":"wiki","group":99}`)
 	expectStatus(t, code, http.StatusBadRequest)
-	if _, err := s.getSite(t.Context(), "wiki"); err != errSiteNotFound {
+	if _, err := s.getSite(t.Context(), "wiki"); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("site with bad group was created: %v", err)
 	}
 	if site, _ := s.getSite(t.Context(), "blog"); site.GroupID != 7 {
