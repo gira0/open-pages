@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// ensureSite registers site, owned by the test owner, unless it already exists.
-func ensureSite(t *testing.T, s *Server, site string) {
+// ensureBlogSite registers the site "blog", owned by the test owner, unless it already exists.
+func ensureBlogSite(t *testing.T, s *Server) {
 	t.Helper()
-	if _, err := s.getSite(t.Context(), site); err == nil {
+	if _, err := s.getSite(t.Context(), "blog"); err == nil {
 		return
 	}
-	if _, err := s.createSite(t.Context(), site, "", testOwner(t, s), 0); err != nil {
+	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -30,12 +30,12 @@ func deployNamed(t *testing.T, s *Server, name string, src *os.File) (string, er
 // if the name is registered again by someone else.
 func TestDeployAfterDeleteIsRejected(t *testing.T) {
 	_, s := newTestServer(t)
-	ensureSite(t, s, "blog")
+	ensureBlogSite(t, s)
 	stale, err := s.getSite(t.Context(), "blog")
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployFiles(t, s, "blog", map[string]string{"index.html": "mine"})
+	deployFiles(t, s, map[string]string{"index.html": "mine"})
 
 	if err := s.deleteSite(t.Context(), stale); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestUpdateSiteWritesOnlyGivenColumns(t *testing.T) {
 	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO groups (groupid, name) VALUES (7, 'eng')"); err != nil {
 		t.Fatal(err)
 	}
-	ensureSite(t, s, "blog")
+	ensureBlogSite(t, s)
 	site, err := s.getSite(t.Context(), "blog")
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestUpdateSiteWritesOnlyGivenColumns(t *testing.T) {
 
 func TestVersionsAndCurrentSnapshot(t *testing.T) {
 	_, s := newTestServer(t)
-	v1 := deployFiles(t, s, "blog", map[string]string{"index.html": "1"})
+	v1 := deployFiles(t, s, map[string]string{"index.html": "1"})
 	versions, current, err := s.versionsAndCurrent("blog")
 	if err != nil || current != v1 || len(versions) != 1 || versions[0] != v1 {
 		t.Fatalf("snapshot = %v %q %v", versions, current, err)

@@ -13,7 +13,7 @@ func TestConcurrentDeploysKeepOne(t *testing.T) {
 	_, s := newTestServer(t)
 	s.cfg.KeepVersions = 1
 
-	ensureSite(t, s, "blog")
+	ensureBlogSite(t, s)
 	const n = 8
 	archives := make([]*os.File, n)
 	for i := range archives {
@@ -105,7 +105,7 @@ func TestUploadSiteChecks(t *testing.T) {
 	}
 }
 
-func deployFiles(t *testing.T, s *Server, site string, files map[string]string) string {
+func deployFiles(t *testing.T, s *Server, files map[string]string) string {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "a-*")
 	if err != nil {
@@ -115,8 +115,8 @@ func deployFiles(t *testing.T, s *Server, site string, files map[string]string) 
 	if _, err := f.Write(zipArchive(t, files)); err != nil {
 		t.Fatal(err)
 	}
-	ensureSite(t, s, site)
-	v, err := deployNamed(t, s, site, f)
+	ensureBlogSite(t, s)
+	v, err := deployNamed(t, s, "blog", f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestDeployVersionsAndPrune(t *testing.T) {
 
 	var made []string
 	for _, body := range []string{"v1", "v2", "v3", "v4", "v5"} {
-		v := deployFiles(t, s, "blog", map[string]string{"index.html": body})
+		v := deployFiles(t, s, map[string]string{"index.html": body})
 		made = append(made, v)
 
 		got, err := os.ReadFile(filepath.Join(s.CurrentDir("blog"), "index.html"))
@@ -181,7 +181,7 @@ func TestDeployVersionsAndPrune(t *testing.T) {
 
 func TestCurrentNeverMissingDuringDeploy(t *testing.T) {
 	_, s := newTestServer(t)
-	deployFiles(t, s, "blog", map[string]string{"index.html": "first"})
+	deployFiles(t, s, map[string]string{"index.html": "first"})
 
 	done := make(chan struct{})
 	errs := make(chan error, 1)
@@ -195,7 +195,7 @@ func TestCurrentNeverMissingDuringDeploy(t *testing.T) {
 			}
 		}
 	}()
-	deployFiles(t, s, "blog", map[string]string{"index.html": "second"})
+	deployFiles(t, s, map[string]string{"index.html": "second"})
 	<-done
 	select {
 	case err := <-errs:
