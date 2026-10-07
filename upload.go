@@ -8,56 +8,81 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
-	"regexp"
-
-	"github.com/rs/xid"
 )
 
-var docNameRe = regexp.MustCompile(`^[A-Za-z0-9]{1,256}$`)
-
-type docCreate struct {
+type siteCreate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
-	var d docCreate
+func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
+	var d siteCreate
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !docNameRe.MatchString(d.Name) {
-		writeError(w, http.StatusBadRequest, "name must be 1 to 256 letters or digits")
+	if !validSiteName(d.Name) {
+		writeError(w, http.StatusBadRequest,
+			"name must be a DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending with a hyphen")
 		return
 	}
 	if len(d.Description) > 512 {
 		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(),
-		"INSERT INTO docs (uowner, name, description) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING",
-		userID(r), d.Name, d.Description)
+	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r))
+	if errors.Is(err, errSiteExists) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
-		internalError(w, "insert doc", err)
+		internalError(w, "create site", err)
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		writeError(w, http.StatusConflict, "a doc with that name already exists")
-		return
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name})
+}
+
+// authorizeSite loads the site named in the URL and checks the caller owns it,
+// writing the error response itself when it returns false.
+func (s *Server) authorizeSite(w http.ResponseWriter, r *http.Request) (Site, bool) {
+	name := r.PathValue("name")
+	if !validSiteName(name) {
+		writeError(w, http.StatusNotFound, errSiteNotFound.Error())
+		return Site{}, false
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "doc created"})
+	site, err := s.getSite(r.Context(), name)
+	if errors.Is(err, errSiteNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return Site{}, false
+	}
+	if err != nil {
+		internalError(w, "load site", err)
+		return Site{}, false
+	}
+	if site.OwnerID != userID(r) {
+		writeError(w, http.StatusForbidden, "you do not own this site")
+		return Site{}, false
+	}
+	return site, true
 }
 
 // handleRawUpload accepts an archive as the raw request body.
 func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request) {
+	site, ok := s.authorizeSite(w, r)
+	if !ok {
+		return
+	}
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
-	s.storeUpload(w, body)
+	s.storeUpload(w, site, body)
 }
 
 // handleFormUpload accepts an archive in the multipart field "file".
 func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
+	site, ok := s.authorizeSite(w, r)
+	if !ok {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1<<20)
 	f, _, err := r.FormFile("file")
 	if err != nil {
@@ -66,12 +91,11 @@ func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	defer func() { _ = r.MultipartForm.RemoveAll() }()
-	s.storeUpload(w, f)
+	s.storeUpload(w, site, f)
 }
 
-// storeUpload spools the archive to disk, extracts it into a staging directory and
-// moves it into place only when extraction fully succeeded.
-func (s *Server) storeUpload(w http.ResponseWriter, src io.Reader) {
+// storeUpload spools the archive to disk and deploys it as a new version of site.
+func (s *Server) storeUpload(w http.ResponseWriter, site Site, src io.Reader) {
 	spool, err := os.CreateTemp(s.tmp, "upload-*")
 	if err != nil {
 		internalError(w, "create spool file", err)
@@ -91,25 +115,16 @@ func (s *Server) storeUpload(w http.ResponseWriter, src io.Reader) {
 		return
 	}
 
-	// Stage next to the final location so the rename stays on one filesystem.
-	staging, err := os.MkdirTemp(s.sites, ".staging-*")
-	if err != nil {
-		internalError(w, "create staging dir", err)
-		return
-	}
-	defer os.RemoveAll(staging)
-
-	limits := extractLimits{maxBytes: s.cfg.MaxExtractSize, maxFiles: s.cfg.MaxExtractFile}
-	if err := extractArchive(spool, staging, limits); err != nil {
-		slog.Info("rejected upload", "err", err)
+	version, err := s.deploy(site.Name, spool)
+	var bad *badArchiveError
+	if errors.As(err, &bad) {
+		slog.Info("rejected upload", "site", site.Name, "err", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	id := xid.New().String()
-	if err := os.Rename(staging, filepath.Join(s.sites, id)); err != nil {
-		internalError(w, "move upload into place", err)
+	if err != nil {
+		internalError(w, "deploy site", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "id": id})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "site": site.Name, "version": version})
 }

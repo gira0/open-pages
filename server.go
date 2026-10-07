@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type Server struct {
 	tmpl  *template.Template
 	sites string // directory holding extracted uploads
 	tmp   string // staging directory for extraction
+
+	deployMu sync.Mutex // serializes switching and pruning versions
 }
 
 func (s *Server) routes() http.Handler {
@@ -30,9 +33,9 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleGetUser))
 	mux.Handle("POST /v1/auth/logout", s.requireAuth(s.handleLogout))
-	mux.Handle("POST /v1/auth/docs/create", s.requireAuth(s.handleDocCreate))
-	mux.Handle("POST /v1/auth/docs/upload", s.requireAuth(s.handleRawUpload))
-	mux.Handle("POST /v1/auth/docs/formupload", s.requireAuth(s.handleFormUpload))
+	mux.Handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
+	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
+	mux.Handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
 
 	return logRequests(s.cors(mux))
 }

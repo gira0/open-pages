@@ -29,9 +29,14 @@ are created under `datapath`.
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
 | GET | `/v1/auth/user` | ✓ | Current user id |
 | POST | `/v1/auth/logout` | ✓ | End the session |
-| POST | `/v1/auth/docs/create` | ✓ | Create a doc record (`name`, `description`) |
-| POST | `/v1/auth/docs/upload` | ✓ | Upload a `.zip`, `.tar.gz` or `.tar` as the raw body |
-| POST | `/v1/auth/docs/formupload` | ✓ | Upload an archive in the multipart field `file` |
+| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, `description`); the name must be a DNS label |
+| POST | `/v1/auth/sites/{name}/upload` | ✓ | Deploy a `.zip`, `.tar.gz` or `.tar` (raw body) as a new version; owner only |
+| POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
+
+Each upload is extracted into `op_data/<site>/versions/<id>/` and the
+`op_data/<site>/current` symlink is switched to it with an atomic rename, so a site is never
+half-deployed. The newest `keep_versions` versions (default 5, `[sites]` in `settings.ini`)
+are kept; older ones are deleted.
 
 Uploads are limited in size, file count and uncompressed size (see `[limits]` in
 `settings.ini`). Entries that would land outside the site directory are rejected.

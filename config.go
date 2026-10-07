@@ -17,6 +17,7 @@ type Config struct {
 	MaxUploadBytes int64    // max size of an uploaded archive
 	MaxExtractSize int64    // max total uncompressed size of an archive
 	MaxExtractFile int      // max number of entries in an archive
+	KeepVersions   int      // versions kept on disk per site, including the current one
 	CORSOrigins    []string // allowed cross-origin callers; empty means same-origin only
 }
 
@@ -28,6 +29,7 @@ func defaultConfig() Config {
 		MaxUploadBytes: 100 << 20,
 		MaxExtractSize: 500 << 20,
 		MaxExtractFile: 10000,
+		KeepVersions:   5,
 	}
 }
 
@@ -59,6 +61,8 @@ func loadConfig(path string) (Config, error) {
 	cfg.MaxUploadBytes = limits.Key("max_upload_mb").MustInt64(cfg.MaxUploadBytes>>20) << 20
 	cfg.MaxExtractSize = limits.Key("max_extract_mb").MustInt64(cfg.MaxExtractSize>>20) << 20
 	cfg.MaxExtractFile = limits.Key("max_extract_files").MustInt(cfg.MaxExtractFile)
+
+	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
 	if cfg.DataPath, err = filepath.Abs(cfg.DataPath); err != nil {
 		return cfg, fmt.Errorf("datapath: %w", err)
