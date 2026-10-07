@@ -37,7 +37,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	mux.Handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
 
-	return logRequests(s.cors(mux))
+	return logRequests(s.cors(s.withSites(mux)))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

@@ -19,7 +19,15 @@ type Config struct {
 	MaxExtractFile int      // max number of entries in an archive
 	KeepVersions   int      // versions kept on disk per site, including the current one
 	CORSOrigins    []string // allowed cross-origin callers; empty means same-origin only
+	URLMode        string   // how a request names its site: urlModePath or urlModeSubdomain
+	BaseDomain     string   // bare host (no port) of the API and UI; also the parent of site subdomains
 }
+
+// URL modes for [sites] url_mode.
+const (
+	urlModePath      = "path"      // <base_domain>/<site>/...
+	urlModeSubdomain = "subdomain" // <site>.<base_domain>/...
+)
 
 func defaultConfig() Config {
 	return Config{
@@ -30,6 +38,7 @@ func defaultConfig() Config {
 		MaxExtractSize: 500 << 20,
 		MaxExtractFile: 10000,
 		KeepVersions:   5,
+		URLMode:        urlModePath,
 	}
 }
 
@@ -63,6 +72,16 @@ func loadConfig(path string) (Config, error) {
 	cfg.MaxExtractFile = limits.Key("max_extract_files").MustInt(cfg.MaxExtractFile)
 
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
+
+	sites := f.Section("sites")
+	cfg.URLMode = strings.ToLower(sites.Key("url_mode").MustString(cfg.URLMode))
+	cfg.BaseDomain = strings.ToLower(strings.TrimSuffix(sites.Key("base_domain").String(), "."))
+	if cfg.URLMode != urlModePath && cfg.URLMode != urlModeSubdomain {
+		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, urlModePath, urlModeSubdomain)
+	}
+	if cfg.URLMode == urlModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
+		return cfg, fmt.Errorf("sites.base_domain %q: subdomain mode needs a bare host name, for example pages.corp", cfg.BaseDomain)
+	}
 
 	if cfg.DataPath, err = filepath.Abs(cfg.DataPath); err != nil {
 		return cfg, fmt.Errorf("datapath: %w", err)
