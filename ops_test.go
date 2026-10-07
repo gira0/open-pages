@@ -36,8 +36,14 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
+// fetched is what the tests need from a response, so no body is left open.
+type fetched struct {
+	StatusCode int
+	Header     http.Header
+}
+
 // fetch sends a GET with optional headers and returns the response and its body.
-func fetch(t *testing.T, url string, header http.Header) (*http.Response, string) {
+func fetch(t *testing.T, url string, header http.Header) (fetched, string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
@@ -55,7 +61,7 @@ func fetch(t *testing.T, url string, header http.Header) (*http.Response, string
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp, string(body)
+	return fetched{resp.StatusCode, resp.Header}, string(body)
 }
 
 // metricsTestServer is a test server with /metrics enabled on the main listener.
