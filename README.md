@@ -29,9 +29,21 @@ are created under `datapath`.
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
 | GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
 | POST | `/v1/auth/logout` | ✓ | End the session |
-| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, `description`); the name must be a DNS label |
+| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description` and `group` id); the name must be a DNS label |
+| PUT | `/v1/auth/sites/{name}` | ✓ | Change `description` and/or `group` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
+| DELETE | `/v1/auth/sites/{name}` | ✓ | Delete the site, all its versions and its database row; owner only |
 | POST | `/v1/auth/sites/{name}/upload` | ✓ | Deploy a `.zip`, `.tar.gz` or `.tar` (raw body) as a new version; owner only |
 | POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
+| GET | `/v1/auth/sites/{name}/versions` | ✓ | List kept versions (newest first) and the `current` one; owner only |
+| POST | `/v1/auth/sites/{name}/rollback` | ✓ | Make a kept version live: `{"version": "<id>"}`; owner only |
+
+Whoever creates a site owns it. Only the owner can update, delete, redeploy, list versions
+of or roll back a site: other users get 403, unknown sites 404. A `group` must be the id of
+an existing group, otherwise the request fails with 400.
+
+Redeploying is just uploading again: each upload becomes a new version and goes live. Roll
+back with the version id from the upload response or the versions list. Versions older
+than `keep_versions` are deleted and can no longer be rolled back to.
 
 Each upload is extracted into `op_data/<site>/versions/<id>/` and the
 `op_data/<site>/current` symlink is switched to it with an atomic rename, so a site is never

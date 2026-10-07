@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/rs/xid"
 )
@@ -37,6 +38,7 @@ var (
 	errSiteExists    = errors.New("a site with that name already exists")
 	errSiteNotFound  = errors.New("site not found")
 	errVersionAbsent = errors.New("version not found")
+	errGroupNotFound = errors.New("group not found")
 )
 
 // badArchiveError marks a deploy failure caused by the uploaded archive itself.
@@ -45,12 +47,13 @@ type badArchiveError struct{ err error }
 func (e *badArchiveError) Error() string { return e.err.Error() }
 func (e *badArchiveError) Unwrap() error { return e.err }
 
-// Site is a hosted site. OwnerID is 0 when the site has no owner.
+// Site is a hosted site. OwnerID and GroupID are 0 when the site has no owner or group.
 type Site struct {
 	ID          int64
 	Name        string
 	Description string
 	OwnerID     int64
+	GroupID     int64
 }
 
 // validSiteName reports whether name is usable as a site name (a DNS label).
@@ -74,17 +77,45 @@ func (s *Server) CurrentDir(site string) string {
 	return filepath.Join(dir, currentLink)
 }
 
-// createSite registers a new site owned by owner. It returns errSiteExists on a name clash.
-func (s *Server) createSite(ctx context.Context, name, description string, owner int64) (Site, error) {
+// nullableID maps the "none" value 0 to SQL NULL.
+func nullableID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
+// checkGroup returns errGroupNotFound unless group is 0 (none) or an existing group.
+func (s *Server) checkGroup(ctx context.Context, group int64) error {
+	if group == 0 {
+		return nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM groups WHERE groupid = ?", group).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errGroupNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("query group: %w", err)
+	}
+	return nil
+}
+
+// createSite registers a new site owned by owner, optionally in group (0 for none).
+// It returns errSiteExists on a name clash and errGroupNotFound for an unknown group.
+func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64) (Site, error) {
 	if !validSiteName(name) {
 		return Site{}, fmt.Errorf("invalid site name %q", name)
 	}
 	if reservedSiteName(name) {
 		return Site{}, fmt.Errorf("site name %q is reserved", name)
 	}
+	if err := s.checkGroup(ctx, group); err != nil {
+		return Site{}, err
+	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO docs (uowner, name, description) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING",
-		owner, name, description)
+		"INSERT INTO docs (uowner, ugroup, name, description) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
+		owner, nullableID(group), name, description)
 	if err != nil {
 		return Site{}, fmt.Errorf("insert site: %w", err)
 	}
@@ -92,7 +123,7 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
-	return Site{ID: id, Name: name, Description: description, OwnerID: owner}, nil
+	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group}, nil
 }
 
 // getSite loads a site by name. It returns errSiteNotFound if there is none.
@@ -101,33 +132,117 @@ func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 		site  = Site{Name: name}
 		desc  sql.NullString
 		owner sql.NullInt64
+		group sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		"SELECT docid, description, uowner FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner)
+		"SELECT docid, description, uowner, ugroup FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
 	if err != nil {
 		return Site{}, fmt.Errorf("query site: %w", err)
 	}
-	site.Description, site.OwnerID = desc.String, owner.Int64
+	site.Description, site.OwnerID, site.GroupID = desc.String, owner.Int64, group.Int64
 	return site, nil
+}
+
+// updateSite changes the description and/or group (0 for none) of the site with the
+// given id, writing only the columns whose argument is non-nil, in a single statement.
+// It returns the stored values, errGroupNotFound for an unknown group and errSiteNotFound
+// if the site has been deleted meanwhile.
+func (s *Server) updateSite(ctx context.Context, id int64, description *string, group *int64) (string, int64, error) {
+	var (
+		sets []string
+		args []any
+	)
+	if description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, *description)
+	}
+	if group != nil {
+		if err := s.checkGroup(ctx, *group); err != nil {
+			return "", 0, err
+		}
+		sets = append(sets, "ugroup = ?")
+		args = append(args, nullableID(*group))
+	}
+	if len(sets) == 0 {
+		sets = append(sets, "docid = docid") // no-op write, so RETURNING reads the row
+	}
+	args = append(args, id)
+	var (
+		desc sql.NullString
+		grp  sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx,
+		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? RETURNING description, ugroup",
+		args...).Scan(&desc, &grp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, errSiteNotFound
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("update site: %w", err)
+	}
+	return desc.String, grp.Int64, nil
+}
+
+// checkSiteLive returns errSiteNotFound unless the database still has this exact site:
+// same id, name and owner. The caller holds deployMu, which deleteSite also takes, so
+// the answer stays true until the caller releases it.
+func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT 1 FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errSiteNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check site: %w", err)
+	}
+	return nil
+}
+
+// deleteSite removes a site's files and then its database row, under deployMu so it
+// cannot interleave with a deploy's publish step. It returns errSiteNotFound if the
+// site was already deleted or replaced by another with the same name. A failure removing
+// the files leaves the row, so the delete can be retried.
+func (s *Server) deleteSite(ctx context.Context, site Site) error {
+	dir := s.SiteDir(site.Name)
+	if dir == "" {
+		return fmt.Errorf("invalid site name %q", site.Name)
+	}
+	s.deployMu.Lock()
+	defer s.deployMu.Unlock()
+	if err := s.checkSiteLive(ctx, site); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove site files: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM docs WHERE docid = ?", site.ID); err != nil {
+		return fmt.Errorf("delete site: %w", err)
+	}
+	return nil
 }
 
 // deploy extracts the archive in src into a new version of site and makes it current.
 // Archive problems come back as *badArchiveError. Old versions beyond cfg.KeepVersions
-// are pruned afterwards. The site must already exist.
-func (s *Server) deploy(site string, src *os.File) (string, error) {
-	dir := s.SiteDir(site)
+// are pruned afterwards. The site must already exist; deploy returns errSiteNotFound if
+// it was deleted (or replaced by a different site of the same name) before publishing.
+func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, error) {
+	dir := s.SiteDir(site.Name)
 	if dir == "" {
-		return "", fmt.Errorf("invalid site name %q", site)
+		return "", fmt.Errorf("invalid site name %q", site.Name)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o755); err != nil { //nolint:gosec // G301: public site content
+	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
 		return "", err
 	}
 
-	// Stage next to the final location so the rename stays on one filesystem.
-	staging, err := os.MkdirTemp(dir, ".staging-*")
+	// Stage in the sites root, not in the site's own directory, so that nothing here can
+	// recreate a site directory that deleteSite removed. Site names never start with a
+	// dot, and the rename into place stays on one filesystem.
+	staging, err := os.MkdirTemp(s.sites, ".staging-*")
 	if err != nil {
 		return "", err
 	}
@@ -146,15 +261,21 @@ func (s *Server) deploy(site string, src *os.File) (string, error) {
 	// current. Extraction above stays outside the lock.
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
+	if err := s.checkSiteLive(ctx, site); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o755); err != nil { //nolint:gosec // G301: public site content
+		return "", err
+	}
 	version := xid.New().String() // time-sortable, so lexical order is deploy order
 	if err := os.Rename(staging, filepath.Join(dir, versionsDir, version)); err != nil {
 		return "", err
 	}
-	if err := s.switchCurrent(site, version); err != nil {
+	if err := s.switchCurrent(site.Name, version); err != nil {
 		return "", err
 	}
-	if err := s.pruneVersions(site); err != nil {
-		slog.Warn("prune old versions", "site", site, "err", err)
+	if err := s.pruneVersions(site.Name); err != nil {
+		slog.Warn("prune old versions", "site", site.Name, "err", err)
 	}
 	return version, nil
 }
@@ -189,6 +310,20 @@ func (s *Server) switchCurrent(site, version string) error {
 		return err
 	}
 	return nil
+}
+
+// versionsAndCurrent reads the version list and the live version as one snapshot,
+// under deployMu so no deploy or rollback can land between the two reads.
+func (s *Server) versionsAndCurrent(site string) (versions []string, current string, err error) {
+	s.deployMu.Lock()
+	defer s.deployMu.Unlock()
+	if versions, err = s.Versions(site); err != nil {
+		return nil, "", err
+	}
+	if current, err = s.CurrentVersion(site); err != nil {
+		return nil, "", err
+	}
+	return versions, current, nil
 }
 
 // Versions lists the site's versions on disk, oldest first.

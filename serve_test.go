@@ -45,14 +45,14 @@ func writeZip(t *testing.T, files map[string]string) *os.File {
 // deploySite registers site and deploys files as its live version.
 func deploySite(t *testing.T, s *Server, site string, files map[string]string) {
 	t.Helper()
-	created, err := s.createSite(t.Context(), site, "", testOwner(t, s))
+	created, err := s.createSite(t.Context(), site, "", testOwner(t, s), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.Name != site {
 		t.Fatalf("created %q, want %q", created.Name, site)
 	}
-	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
+	if _, err := deployNamed(t, s, site, writeZip(t, files)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,7 +64,7 @@ func deployReserved(t *testing.T, s *Server, site string, files map[string]strin
 	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO docs (name) VALUES (?)", site); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
+	if _, err := deployNamed(t, s, site, writeZip(t, files)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -158,7 +158,7 @@ func TestSitePlain404WithoutCustomPage(t *testing.T) {
 
 func TestSiteNotDeployed(t *testing.T) {
 	s := newServeTestServer(t, nil)
-	if _, err := s.createSite(t.Context(), "empty", "", testOwner(t, s)); err != nil {
+	if _, err := s.createSite(t.Context(), "empty", "", testOwner(t, s), 0); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, do(s, "GET", "", "/empty/").Code, http.StatusNotFound)
@@ -216,7 +216,7 @@ func TestSiteFollowsCurrentVersion(t *testing.T) {
 	old, _ := s.CurrentVersion("blog")
 	tag1 := do(s, "GET", "", "/blog/").Header().Get("ETag")
 
-	if _, err := s.deploy("blog", writeZip(t, map[string]string{"index.html": "v2"})); err != nil {
+	if _, err := deployNamed(t, s, "blog", writeZip(t, map[string]string{"index.html": "v2"})); err != nil {
 		t.Fatal(err)
 	}
 	w := do(s, "GET", "", "/blog/", "If-None-Match", tag1)
@@ -249,11 +249,11 @@ func TestPathModeDoesNotShadowAPI(t *testing.T) {
 func TestCreateSiteRejectsReserved(t *testing.T) {
 	s := newServeTestServer(t, nil)
 	for _, name := range []string{"www", "api", "v1"} {
-		if _, err := s.createSite(t.Context(), name, "", testOwner(t, s)); err == nil {
+		if _, err := s.createSite(t.Context(), name, "", testOwner(t, s), 0); err == nil {
 			t.Errorf("createSite(%q) succeeded", name)
 		}
 	}
-	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s)); err != nil {
+	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0); err != nil {
 		t.Errorf("createSite(blog): %v", err)
 	}
 }
