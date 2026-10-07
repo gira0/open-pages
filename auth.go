@@ -201,7 +201,3 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, "", -1)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
-
-func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]int64{"userid": userID(r)})
-}

@@ -31,7 +31,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/user/register", s.handleRegister)
 	mux.HandleFunc("POST /v1/user/login", s.handleLogin)
 
-	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleGetUser))
+	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
 	mux.Handle("POST /v1/auth/logout", s.requireAuth(s.handleLogout))
 	mux.Handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
 	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
