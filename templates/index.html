@@ -1,6 +1,5 @@
 <html>
 	<head>
-		<script src="https://unpkg.com/htmx.org@1.9.8"></script>
 	</head>
 	<h1>
 		{{ .title }}
@@ -11,21 +10,48 @@
 		<label for="password">password:</label>
 		<input type="password" id="password" name="password"><br><br>
 		<input type="submit" value="Submit">
-	  </form> 
+	  </form>
 
 	  <br><br>
-	  <form id='form' hx-encoding='multipart/form-data' hx-post='/v1/auth/docs/formupload'>
-		<label for="name">name:</label>
-		<input type="text" id="name" name="name"><br><br>
-        <input type='file' name='file'  accept=".zip,.tar.gz">
+	  <form id='form'>
+		<label for="name">site name:</label>
+		<input type="text" id="name" name="name" required><br><br>
+        <input type='file' name='file' accept=".zip,.tar.gz" required>
         <button>
             Upload
         </button>
         <progress id='progress' value='0' max='100'></progress>
+        <pre id='result'></pre>
     </form>
     <script>
-        htmx.on('#form', 'htmx:xhr:progress', function(evt) {
-          htmx.find('#progress').setAttribute('value', evt.detail.loaded/evt.detail.total * 100)
+        // Creates the site (an existing one is fine) and then uploads the archive to it.
+        document.getElementById('form').addEventListener('submit', async function (evt) {
+          evt.preventDefault();
+          const result = document.getElementById('result');
+          const progress = document.getElementById('progress');
+          const name = this.elements['name'].value;
+          const file = this.elements['file'].files[0];
+          progress.value = 0;
+          result.textContent = '';
+          const created = await fetch('/v1/auth/sites', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+          });
+          if (!created.ok && created.status !== 409) {
+            result.textContent = 'create site failed: ' + await created.text();
+            return;
+          }
+          const data = new FormData();
+          data.append('file', file);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/v1/auth/sites/' + encodeURIComponent(name) + '/formupload');
+          xhr.upload.onprogress = function (e) {
+            if (e.lengthComputable) { progress.value = e.loaded / e.total * 100; }
+          };
+          xhr.onload = function () { result.textContent = xhr.status + ' ' + xhr.responseText; };
+          xhr.onerror = function () { result.textContent = 'upload failed'; };
+          xhr.send(data);
         });
     </script>
 </html>
