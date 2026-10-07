@@ -45,7 +45,23 @@ func writeZip(t *testing.T, files map[string]string) *os.File {
 // deploySite registers site and deploys files as its live version.
 func deploySite(t *testing.T, s *Server, site string, files map[string]string) {
 	t.Helper()
-	if _, err := s.createSite(t.Context(), site, "", testOwner(t, s)); err != nil {
+	created, err := s.createSite(t.Context(), site, "", testOwner(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != site {
+		t.Fatalf("created %q, want %q", created.Name, site)
+	}
+	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// deployReserved deploys a site whose name createSite refuses, by inserting its row
+// directly, to prove the resolver doesn't let such a site shadow anything.
+func deployReserved(t *testing.T, s *Server, site string, files map[string]string) {
+	t.Helper()
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO docs (name) VALUES (?)", site); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.deploy(site, writeZip(t, files)); err != nil {
@@ -113,14 +129,14 @@ func TestPathModeServing(t *testing.T) {
 	missing := "<h1>custom missing</h1>"
 	runServeCases(t, s, "", []serveCase{
 		{"site root", "/blog/", 200, "<h1>blog</h1>", "text/html", ""},
-		{"root without slash redirects", "/blog", 301, "", "", "/blog/"},
+		{"root without slash redirects", "/blog", 301, "", "", "./blog/"},
 		{"explicit index", "/blog/index.html", 200, "<h1>blog</h1>", "text/html", ""},
 		{"css", "/blog/app.css", 200, "body{}", "text/css", ""},
 		{"json", "/blog/data.json", 200, `{"a":1}`, "application/json", ""},
 		{"nested file", "/blog/nested/deep/x.txt", 200, "x", "text/plain", ""},
 		{"directory index", "/blog/docs/", 200, "<h1>docs</h1>", "text/html", ""},
-		{"directory redirects", "/blog/docs", 301, "", "", "/blog/docs/"},
-		{"redirect keeps query", "/blog/docs?a=b", 301, "", "", "/blog/docs/?a=b"},
+		{"directory redirects", "/blog/docs", 301, "", "", "./docs/"},
+		{"redirect keeps query", "/blog/docs?a=b", 301, "", "", "./docs/?a=b"},
 		{"no listing", "/blog/nested/", 404, missing, "text/html", ""},
 		{"no listing without index", "/blog/empty/", 404, missing, "text/html", ""},
 		{"custom 404", "/blog/nope.html", 404, missing, "text/html", ""},
@@ -221,7 +237,7 @@ func TestPathModeDoesNotShadowAPI(t *testing.T) {
 	expectStatus(t, do(s, "GET", "", "/v1/ping").Code, http.StatusOK)
 	expectStatus(t, do(s, "GET", "", "/index").Code, http.StatusOK)
 	// Even if a site called v1 exists (created behind the API's back), the API wins.
-	deploySite(t, s, "v1", map[string]string{"ping": "evil"})
+	deployReserved(t, s, "v1", map[string]string{"ping": "evil"})
 	if got := do(s, "GET", "", "/v1/ping").Body.String(); !strings.Contains(got, "pong") {
 		t.Errorf("/v1/ping = %q", got)
 	}
@@ -230,10 +246,22 @@ func TestPathModeDoesNotShadowAPI(t *testing.T) {
 	}
 }
 
+func TestCreateSiteRejectsReserved(t *testing.T) {
+	s := newServeTestServer(t, nil)
+	for _, name := range []string{"www", "api", "v1"} {
+		if _, err := s.createSite(t.Context(), name, "", testOwner(t, s)); err == nil {
+			t.Errorf("createSite(%q) succeeded", name)
+		}
+	}
+	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s)); err != nil {
+		t.Errorf("createSite(blog): %v", err)
+	}
+}
+
 func TestReservedNameRejectedOnCreate(t *testing.T) {
 	ts, _ := newTestServer(t)
 	c := loggedInClient(t, ts)
-	for _, name := range []string{"v1", "index"} {
+	for _, name := range []string{"v1", "index", "www", "api", "admin", "ui", "static", "assets", "health", "metrics", "login"} {
 		got := post(t, c, ts.URL+"/v1/auth/sites", "application/json", []byte(`{"name":"`+name+`"}`))
 		expectStatus(t, got, http.StatusBadRequest)
 	}

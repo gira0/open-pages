@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -87,7 +88,7 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 			err = fs.ErrNotExist // no directory listings
 		}
 	case err == nil && strings.HasSuffix(r.URL.Path, "/"):
-		f.Close()
+		_ = f.Close()
 		err = fs.ErrNotExist // "/file.html/" is not "/file.html"
 	}
 	if err != nil {
@@ -135,15 +136,15 @@ func openFile(root *os.Root, name string) (*os.File, fs.FileInfo, error) {
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, err
 	}
 	if info.IsDir() {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, errIsDir
 	}
 	if !info.Mode().IsRegular() {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, fs.ErrNotExist
 	}
 	return f, info, nil
@@ -162,12 +163,16 @@ func rootName(filePath string) (string, bool) {
 	return name, true
 }
 
+// redirectToSlash sends the browser to the same directory with a trailing slash. The
+// target is relative and built from the last path segment only, so a request path such
+// as "//evil.example/x" can never turn into a redirect to another host.
 func redirectToSlash(w http.ResponseWriter, r *http.Request) {
-	target := r.URL.Path + "/"
+	target := "./" + url.PathEscape(path.Base(r.URL.Path)) + "/"
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
-	http.Redirect(w, r, target, http.StatusMovedPermanently)
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusMovedPermanently)
 }
 
 // etag is weak: it names the deployed version plus the file's size and mtime, so it

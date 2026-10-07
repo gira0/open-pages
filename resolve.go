@@ -6,9 +6,15 @@ import (
 	"strings"
 )
 
-// reservedSiteNames can't be used as site names: in path mode they would shadow the
-// API and UI routes that live on the same host.
-var reservedSiteNames = map[string]bool{"v1": true, "index": true}
+// reservedSiteNames can't be used as site names in either URL mode: in path mode they
+// would shadow API and UI routes on the base domain, in subdomain mode they collide with
+// hosts operators commonly point at the service itself (www.pages.corp, api.pages.corp).
+var reservedSiteNames = map[string]bool{
+	"v1": true, "index": true, "api": true, "www": true, "admin": true, "ui": true,
+	"static": true, "assets": true, "health": true, "healthz": true, "metrics": true,
+	"login": true, "logout": true, "register": true, "auth": true, "user": true,
+	"users": true, "sites": true, "docs": true, "app": true, "mail": true,
+}
 
 func reservedSiteName(name string) bool { return reservedSiteNames[name] }
 

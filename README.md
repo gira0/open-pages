@@ -52,12 +52,15 @@ url_mode = path        # path (default) or subdomain
 base_domain = pages.corp
 ```
 
-The API and UI stay on the bare `base_domain` in both modes. Site names are DNS labels, so
+The API and UI stay on the bare `base_domain` in both modes. Site names that could collide
+with the API, the UI or service hosts are reserved in both modes and can't be created
+(`v1`, `index`, `api`, `www`, `admin`, `ui`, `static`, `assets`, `health`, `metrics`, `login`
+and a few similar ones; the full list is `reservedSiteNames` in `resolve.go`). Site names are DNS labels, so
 switching modes needs no data migration.
 
 **Path mode** (`url_mode = path`): `https://pages.corp/<site>/...`. It needs one DNS name and
-one certificate and nothing else. The API and UI live on the same host, so the names `v1`
-and `index` are reserved and can't be used for sites.
+one certificate and nothing else. The API and UI live on the same host, which is why those
+names are reserved.
 
 Caveats of path mode:
 
