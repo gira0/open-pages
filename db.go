@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS session (
 
 CREATE TABLE IF NOT EXISTS groups (
 	groupid INTEGER PRIMARY KEY,
-	name    VARCHAR(255) NOT NULL
+	name    VARCHAR(255) NOT NULL,
+	owner   INTEGER NULL,
+	FOREIGN KEY (owner) REFERENCES user(userid)
 );
 
 CREATE TABLE IF NOT EXISTS user_group (
@@ -62,5 +64,40 @@ func openDB(path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
 	return db, nil
+}
+
+// migrate brings databases created by older versions up to date. Every step is
+// idempotent, so it runs on each start.
+func migrate(db *sql.DB) error {
+	ctx := context.Background()
+	// groups.owner: the user who administers the group. Groups that predate it keep a
+	// NULL owner and can't be changed through the API until an operator sets one.
+	var hasOwner int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('groups') WHERE name = 'owner'").Scan(&hasOwner); err != nil {
+		return err
+	}
+	if hasOwner == 0 {
+		if _, err := db.ExecContext(ctx,
+			"ALTER TABLE groups ADD COLUMN owner INTEGER NULL REFERENCES user(userid)"); err != nil {
+			return err
+		}
+	}
+	// A user is in a group at most once, and group names are unique ignoring case.
+	steps := []string{
+		"DELETE FROM user_group WHERE ugid NOT IN (SELECT MIN(ugid) FROM user_group GROUP BY uid, gid)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS user_group_member ON user_group (uid, gid)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS groups_name ON groups (name COLLATE NOCASE)",
+	}
+	for _, q := range steps {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
