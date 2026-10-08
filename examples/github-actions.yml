@@ -1,0 +1,33 @@
+# Example only: copy to .github/workflows/deploy.yml in the repository that holds your site.
+#
+# Setup:
+#   1. Log in to open-pages and create an API token (POST /v1/auth/tokens, see the README).
+#   2. Add it as the repository secret OPEN_PAGES_TOKEN.
+#   3. Add the server URL as the repository variable OPEN_PAGES_URL (https://pages.corp).
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Build your site into ./public here (hugo, npm run build, ...).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # Pin a release tag instead of @latest once you have one.
+      - run: go install github.com/gira0/open-pages@latest
+      - name: Deploy
+        run: open-pages deploy blog ./public
+        env:
+          OPEN_PAGES_TOKEN: ${{ secrets.OPEN_PAGES_TOKEN }}
+          OPEN_PAGES_URL: ${{ vars.OPEN_PAGES_URL }}

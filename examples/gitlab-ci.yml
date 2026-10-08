@@ -1,0 +1,14 @@
+# Example only: add to the .gitlab-ci.yml of the project that holds your site.
+#
+# Setup: create an API token in open-pages (POST /v1/auth/tokens, see the README) and add it
+# as the masked CI/CD variable OPEN_PAGES_TOKEN. Add the server URL as OPEN_PAGES_URL.
+deploy-pages:
+  image: golang:1
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # Build your site into ./public first (or take it from an earlier job's artifacts).
+    # Pin a release tag instead of @latest once you have one.
+    - go install github.com/gira0/open-pages@latest
+    - $(go env GOPATH)/bin/open-pages deploy blog ./public

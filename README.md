@@ -2,8 +2,8 @@
 
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
 
-> Status: early prototype. Users can register, log in, upload a site archive and have it
-> served. Per-site access control is not in yet: every deployed site is public.
+> Status: early prototype. Users can register, log in, upload a site archive (or deploy from
+> CI with an API token) and have it served. Per-site access control is not in yet: every deployed site is public.
 
 ## Requirements
 
@@ -52,7 +52,10 @@ version (stable releases also get `major.minor` and `latest`).
 | POST | `/v1/user/register` | | Create a user (JSON or form: `email`, `password`) |
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
 | GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
-| POST | `/v1/auth/logout` | ✓ | End the session |
+| POST | `/v1/auth/logout` | session | End the session |
+| POST | `/v1/auth/tokens` | session | Create an API token: `name`, optional `expires_in_days` (1 to 3650, absent for no expiry); the token is returned once |
+| GET | `/v1/auth/tokens` | session | List your tokens (name, prefix, created, expires; never the token) |
+| DELETE | `/v1/auth/tokens/{id}` | session | Revoke one of your tokens |
 | POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description` and `group` id); the name must be a DNS label |
 | PUT | `/v1/auth/sites/{name}` | ✓ | Change `description` and/or `group` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
 | DELETE | `/v1/auth/sites/{name}` | ✓ | Delete the site, all its versions and its database row; owner only |
@@ -60,6 +63,9 @@ version (stable releases also get `major.minor` and `latest`).
 | POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
 | GET | `/v1/auth/sites/{name}/versions` | ✓ | List kept versions (newest first) and the `current` one; owner only |
 | POST | `/v1/auth/sites/{name}/rollback` | ✓ | Make a kept version live: `{"version": "<id>"}`; owner only |
+
+Auth "✓" means a session cookie or an API token (see below); "session" means a login
+session only.
 
 Whoever creates a site owns it. Only the owner can update, delete, redeploy, list versions
 of or roll back a site: other users get 403, unknown sites 404. A `group` must be the id of
@@ -76,6 +82,38 @@ are kept; older ones are deleted.
 
 Uploads are limited in size, file count and uncompressed size (see `[limits]` in
 `settings.ini`). Entries that would land outside the site directory are rejected.
+
+## API tokens and deploying from CI
+
+An API token lets a pipeline call the API as you without a browser session. Create one while
+logged in (the token is shown once, so store it right away), then send it as
+`Authorization: Bearer <token>`:
+
+```sh
+curl -b cookies -X POST https://pages.corp/v1/auth/tokens \
+  -H 'Content-Type: application/json' -d '{"name": "ci", "expires_in_days": 90}'
+```
+
+Tokens are random, stored only as a SHA-256 hash (plus a short prefix for the list), and can
+be revoked at any time or set to expire. A token acts as its user with that user's full
+rights, so keep it in the CI secret store; per-site scoping is not supported yet. Tokens
+cannot create or revoke tokens or log out; those need a real login session. Each user can
+hold at most 50 tokens.
+
+The same binary deploys a directory:
+
+```sh
+export OPEN_PAGES_TOKEN=opt_...                  # read from the environment only
+export OPEN_PAGES_URL=https://pages.corp         # or: -server https://pages.corp
+open-pages deploy blog ./public                  # flags go before <site> <dir>
+```
+
+It zips the directory (files are read inside it only; symlinks and other special files are
+rejected), uploads it to `/v1/auth/sites/blog/upload`, and creates the site first if it does
+not exist (`-create=false` turns that off). Install it with
+`go install github.com/gira0/open-pages@latest`. Example pipelines for
+[GitHub Actions](examples/github-actions.yml) and [GitLab CI](examples/gitlab-ci.yml) are in
+[`examples/`](examples/); they are examples only and are not run by this repository's CI.
 
 ## Serving sites
 
