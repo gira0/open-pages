@@ -32,7 +32,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/user/login", s.handleLogin)
 
 	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
-	mux.Handle("POST /v1/auth/logout", s.requireAuth(s.handleLogout))
+	mux.Handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))
+	// Token management needs a real session: an API token can't mint or revoke tokens.
+	mux.Handle("POST /v1/auth/tokens", s.requireSession(s.handleTokenCreate))
+	mux.Handle("GET /v1/auth/tokens", s.requireSession(s.handleTokenList))
+	mux.Handle("DELETE /v1/auth/tokens/{id}", s.requireSession(s.handleTokenRevoke))
 	mux.Handle("GET /v1/auth/groups", s.requireAuth(s.handleGroupList))
 	mux.Handle("POST /v1/auth/groups", s.requireAuth(s.handleGroupCreate))
 	mux.Handle("GET /v1/auth/groups/{id}", s.requireAuth(s.handleGroupGet))
