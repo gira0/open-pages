@@ -20,6 +20,30 @@ Open http://localhost:8080/index for the test page. Settings are documented in
 [`settings.ini`](settings.ini). The database (`data.db`) and extracted sites (`op_data/`)
 are created under `datapath`.
 
+## Container
+
+A multi-stage `Dockerfile` builds a static binary into a minimal `scratch` image that runs as
+a non-root user (uid 65532). The image listens on all interfaces, port 8080, and keeps the
+database and sites in the `/data` volume.
+
+```sh
+docker compose up --build        # see docker-compose.yml
+# or
+docker build -t open-pages .
+docker run -p 8080:8080 -v open-pages-data:/data open-pages
+```
+
+Defaults come from [`deploy/settings.ini`](deploy/settings.ini) inside the image. To change
+them, mount your own file over `/etc/open-pages/settings.ini` (keep `datapath` and `tmppath`
+under `/data`). The image sets `TMPDIR=/data/tmp` because it has no `/tmp`, so large
+uploads are spooled on the volume. There are no environment variables: configuration is the settings file plus
+the `-config` flag. A bind-mounted data directory must be writable by uid 65532.
+
+Pushing a `v*` tag runs the release workflow: it publishes a GitHub release with
+`linux/amd64` and `linux/arm64` archives (binary, `templates/`, `settings.ini`, and
+`SHA256SUMS`) and pushes a multi-arch image to `ghcr.io/gira0/open-pages` tagged with the
+version (stable releases also get `major.minor` and `latest`).
+
 ## API
 
 | Method | Path | Auth | Description |
