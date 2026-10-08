@@ -1,0 +1,20 @@
+.git
+.github
+.gitignore
+.dockerignore
+.editorconfig
+.golangci.yml
+.claude
+Dockerfile
+docker-compose.yml
+*.md
+*.db
+*.out
+*.test
+coverage.html
+/open-pages
+/op_data
+/html
+/tmp
+# The host's settings.ini is not baked in; the image uses deploy/settings.ini.
+/settings.ini

@@ -1,0 +1,102 @@
+name: Release
+
+# Pushing a tag like v1.2.3 (or v1.2.3-rc.1 for a prerelease) publishes a GitHub
+# release with linux/amd64 and linux/arm64 archives and a multi-arch container image
+# on ghcr.io.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release and upload its assets
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the tag is a version
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not a version like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: Build archives
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            name="open-pages_${TAG}_linux_${arch}"
+            mkdir -p "build/$name"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w" -o "build/$name/open-pages" .
+            # The binary reads its UI templates from ./templates, so ship them alongside.
+            cp -r templates settings.ini "build/$name/"
+            tar -C build -czf "dist/$name.tar.gz" "$name"
+          done
+          (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
+      - name: Publish the release
+        run: |
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          # A tag with a hyphen (v1.2.3-rc.1) is a prerelease.
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/* "${flags[@]}"
+
+  image:
+    # Publish the image only once the release (tests, archives) has succeeded.
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push the image to ghcr.io
+    env:
+      TAG: ${{ github.ref_name }}
+      REGISTRY_USER: ${{ github.actor }}
+      REGISTRY_TOKEN: ${{ github.token }}
+      REVISION: ${{ github.sha }}
+    steps:
+      - name: Check the tag is a version
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not a version like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Log in to ghcr.io
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+      # The Dockerfile cross-compiles on the runner's own architecture, so building
+      # for arm64 needs no QEMU emulation.
+      - name: Build and push
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="${TAG#v}"
+          tags=(--tag "$image:$version")
+          # Stable releases also move the major.minor and latest tags.
+          if [[ "$version" != *-* ]]; then
+            tags+=(--tag "$image:${version%.*}" --tag "$image:latest")
+          fi
+          docker buildx create --name release --driver docker-container --use
+          docker buildx build . \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=true --sbom=true \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$version" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            "${tags[@]}" --push
