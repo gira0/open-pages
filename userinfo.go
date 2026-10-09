@@ -16,8 +16,9 @@ type userInfo struct {
 }
 
 type groupInfo struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	OwnerID *int64 `json:"owner_id"` // null for groups without an owner
 }
 
 type userDocs struct {
@@ -47,26 +48,12 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT DISTINCT g.groupid, g.name FROM groups g JOIN user_group ug ON ug.gid = g.groupid
-		 WHERE ug.uid = ? ORDER BY g.name, g.groupid`, uid)
+	groups, err := s.userGroups(r.Context(), uid)
 	if err != nil {
 		internalError(w, "list groups", err)
 		return
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var g groupInfo
-		if err := rows.Scan(&g.ID, &g.Name); err != nil {
-			internalError(w, "scan group", err)
-			return
-		}
-		info.Groups = append(info.Groups, g)
-	}
-	if err := rows.Err(); err != nil {
-		internalError(w, "list groups", err)
-		return
-	}
+	info.Groups = groups
 
 	// DISTINCT guards against a duplicate user_group row repeating a doc.
 	docRows, err := s.db.QueryContext(r.Context(),

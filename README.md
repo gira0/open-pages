@@ -58,6 +58,12 @@ version (stable releases also get `major.minor` and `latest`).
 | POST | `/v1/auth/tokens` | session | Create an API token: `name`, optional `expires_in_days` (1 to 3650, absent for no expiry); the token is returned once |
 | GET | `/v1/auth/tokens` | session | List your tokens (name, prefix, created, expires; never the token) |
 | DELETE | `/v1/auth/tokens/{id}` | session | Revoke one of your tokens |
+| GET | `/v1/auth/groups` | ✓ | List the groups you belong to |
+| POST | `/v1/auth/groups` | ✓ | Create a group (`name`); you become its owner and first member |
+| GET | `/v1/auth/groups/{id}` | ✓ | The group and its members (id, email); members only |
+| DELETE | `/v1/auth/groups/{id}` | ✓ | Delete the group and its memberships; owner only, and only while no site uses it |
+| POST | `/v1/auth/groups/{id}/members` | ✓ | Add a member by `email`; owner only |
+| DELETE | `/v1/auth/groups/{id}/members/{userid}` | ✓ | Remove a member; owner only, or yourself to leave |
 | POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description` and `group` id); the name must be a DNS label |
 | PUT | `/v1/auth/sites/{name}` | ✓ | Change `description` and/or `group` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
 | DELETE | `/v1/auth/sites/{name}` | ✓ | Delete the site, all its versions and its database row; owner only |
@@ -72,6 +78,13 @@ session only.
 Whoever creates a site owns it. Only the owner can update, delete, redeploy, list versions
 of or roll back a site: other users get 403, unknown sites 404. A `group` must be the id of
 an existing group, otherwise the request fails with 400.
+
+Groups: any logged-in user can create one and owns it. Only the owner can delete the group
+or add and remove other members; any member can leave, and the owner can't be removed (delete
+the group instead). Non-members get 403 on a group's details, unknown groups 404. A group
+that is still the `group` of a site can't be deleted (409), so a site never silently loses
+its group; move or delete the sites first. Group names are unique ignoring case (Unicode simple case folding, so `Ä` and `ä` clash). Groups
+created before owners existed have no owner and can't be changed through the API.
 
 Redeploying is just uploading again: each upload becomes a new version and goes live. Roll
 back with the version id from the upload response or the versions list. Versions older
