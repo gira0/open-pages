@@ -57,7 +57,7 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		return
 	}
 	if err != nil {
-		slog.Error("look up site", "err", err)
+		slog.Error("look up site", "err", err, "request_id", requestIDOf(w))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -67,7 +67,7 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		// response of a missing site, so it doesn't reveal that the site exists.
 		ok, err := s.viewerMaySee(r, rec)
 		if err != nil {
-			slog.Error("check site access", "err", err)
+			slog.Error("check site access", "err", err, "request_id", requestIDOf(w))
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// fetch sends a GET, with an optional bearer token, and returns status, body and headers.
-func fetch(t *testing.T, c *http.Client, url, bearer string) (int, string, http.Header) {
+// fetchURL sends a GET, with an optional bearer token, and returns status, body and headers.
+func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string, http.Header) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 	w := newAccessWorld(t)
 	url := w.ts.URL + "/secret/"
 
-	_, missing, _ := fetch(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	_, missing, _ := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
 	cases := []struct {
 		name   string
 		client *http.Client
@@ -101,7 +101,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body, h := fetch(t, tc.client, url, tc.bearer)
+			status, body, h := fetchURL(t, tc.client, url, tc.bearer)
 			if status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
@@ -125,7 +125,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 	}
 
 	// Public sites stay open to everyone and are not marked private.
-	status, body, h := fetch(t, w.anon, w.ts.URL+"/open/", "")
+	status, body, h := fetchURL(t, w.anon, w.ts.URL+"/open/", "")
 	if status != http.StatusOK || strings.TrimSpace(body) != "<h1>open</h1>" {
 		t.Fatalf("public site: %d %q", status, body)
 	}
@@ -133,7 +133,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 		t.Errorf("public site Cache-Control = %q", h.Get("Cache-Control"))
 	}
 	// A broken token on a public site is ignored.
-	if status, _, _ := fetch(t, w.anon, w.ts.URL+"/open/", "opt_nope"); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.anon, w.ts.URL+"/open/", "opt_nope"); status != http.StatusOK {
 		t.Errorf("public site with bad token: %d", status)
 	}
 }
@@ -145,10 +145,10 @@ func TestVisibilityChangesAccess(t *testing.T) {
 	// Restricted without a group is private to the owner.
 	code, _ := doJSON(t, w.owner, http.MethodPut, w.ts.URL+"/v1/auth/sites/secret", `{"group":0}`)
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetch(t, w.member, url, ""); status != http.StatusNotFound {
+	if status, _, _ := fetchURL(t, w.member, url, ""); status != http.StatusNotFound {
 		t.Errorf("member of no group on private site: %d", status)
 	}
-	if status, _, _ := fetch(t, w.owner, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.owner, url, ""); status != http.StatusOK {
 		t.Errorf("owner on private site: %d", status)
 	}
 
@@ -158,7 +158,7 @@ func TestVisibilityChangesAccess(t *testing.T) {
 	if out["visibility"] != visPublic {
 		t.Fatalf("update response = %v", out)
 	}
-	if status, _, _ := fetch(t, w.anon, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.anon, url, ""); status != http.StatusOK {
 		t.Errorf("anonymous on public site: %d", status)
 	}
 
@@ -198,7 +198,7 @@ func TestSiteGroupMustIncludeOwner(t *testing.T) {
 	expectStatus(t, code, http.StatusCreated)
 	arch := zipArchive(t, map[string]string{"index.html": "team"})
 	expectStatus(t, post(t, w.member, sites+"/team/upload", "application/zip", arch), http.StatusOK)
-	if status, _, _ := fetch(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusOK {
 		t.Fatalf("group owner on member's site: %d", status)
 	}
 
@@ -210,10 +210,10 @@ func TestSiteGroupMustIncludeOwner(t *testing.T) {
 	}
 	code, _ = doJSON(t, w.member, http.MethodDelete, groupURL(w.ts, w.group, fmt.Sprintf("/members/%d", memberID)), "")
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetch(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusNotFound {
+	if status, _, _ := fetchURL(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusNotFound {
 		t.Errorf("group owner after site owner left the group: %d, want 404", status)
 	}
-	if status, _, _ := fetch(t, w.member, w.ts.URL+"/team/", ""); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.member, w.ts.URL+"/team/", ""); status != http.StatusOK {
 		t.Errorf("site owner after leaving the group: %d, want 200", status)
 	}
 }
@@ -236,7 +236,7 @@ func TestSiteMetadataAccess(t *testing.T) {
 		{"anonymous", w.anon, "", http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if status, _, _ := fetch(t, tc.client, meta, tc.bearer); status != tc.status {
+			if status, _, _ := fetchURL(t, tc.client, meta, tc.bearer); status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
 		})
@@ -310,7 +310,7 @@ func TestPublicSiteListing(t *testing.T) {
 	if got := list(w.anon, ""); strings.Join(got, ",") != "secret" {
 		t.Errorf("after flipping visibility: %v, want [secret]", got)
 	}
-	_, body, _ := fetch(t, w.anon, w.ts.URL+"/v1/sites", "")
+	_, body, _ := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
 	if !strings.Contains(body, `"description":"now open"`) || strings.Contains(body, "owner") {
 		t.Errorf("listing body = %s", body)
 	}
@@ -447,7 +447,7 @@ func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
 			{"directory redirect", "/" + name + "/docs", http.StatusMovedPermanently},
 			{"never deployed", "/" + name + "-empty/", http.StatusNotFound},
 		} {
-			status, _, h := fetch(t, noRedirect(w.owner), w.ts.URL+tc.path, "")
+			status, _, h := fetchURL(t, noRedirect(w.owner), w.ts.URL+tc.path, "")
 			if status != tc.status {
 				t.Errorf("%s %s: status %d, want %d", vis, tc.what, status, tc.status)
 			}
@@ -460,8 +460,8 @@ func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
 		}
 	}
 	// A denied request and a missing site answer with identical headers, both uncacheable.
-	_, _, missing := fetch(t, w.anon, w.ts.URL+"/nonexistent/", "")
-	_, _, denied := fetch(t, w.anon, w.ts.URL+"/g-restricted/", "")
+	_, _, missing := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	_, _, denied := fetchURL(t, w.anon, w.ts.URL+"/g-restricted/", "")
 	if missing.Get("Cache-Control") != "no-store" {
 		t.Errorf("missing-site Cache-Control = %q", missing.Get("Cache-Control"))
 	}
@@ -482,7 +482,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	expectStatus(t, post(t, w.owner, w.ts.URL+"/v1/auth/sites/members/upload", "application/zip",
 		zipArchive(t, map[string]string{"index.html": "members only"})), http.StatusOK)
 	url := w.ts.URL + "/members/"
-	_, missing, _ := fetch(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	_, missing, _ := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
 
 	for _, tc := range []struct {
 		name   string
@@ -499,7 +499,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 		{"bogus token with valid cookie", w.outsider, "opt_nope", http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body, _ := fetch(t, tc.client, url, tc.bearer)
+			status, body, _ := fetchURL(t, tc.client, url, tc.bearer)
 			if status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
@@ -510,7 +510,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	}
 
 	// Never listed publicly.
-	_, listing, _ := fetch(t, w.anon, w.ts.URL+"/v1/sites", "")
+	_, listing, _ := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
 	if strings.Contains(listing, "members") {
 		t.Errorf("public listing shows an authenticated site: %s", listing)
 	}
@@ -521,7 +521,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	if out["visibility"] != visAuthenticated {
 		t.Errorf("metadata = %v", out)
 	}
-	if status, _, _ := fetch(t, w.anon, meta, ""); status != http.StatusUnauthorized {
+	if status, _, _ := fetchURL(t, w.anon, meta, ""); status != http.StatusUnauthorized {
 		t.Errorf("anonymous metadata: %d", status)
 	}
 	// Still owner-only to change or list versions.
@@ -551,12 +551,12 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	if out["visibility"] != visRestricted {
 		t.Fatalf("update response = %v", out)
 	}
-	if status, _, _ := fetch(t, w.outsider, url, ""); status != http.StatusNotFound {
+	if status, _, _ := fetchURL(t, w.outsider, url, ""); status != http.StatusNotFound {
 		t.Errorf("outsider after restricting: %d", status)
 	}
 	code, _ = doJSON(t, w.owner, http.MethodPut, meta, `{"visibility":"authenticated"}`)
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetch(t, w.outsider, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchURL(t, w.outsider, url, ""); status != http.StatusOK {
 		t.Errorf("outsider after re-opening to logged-in users: %d", status)
 	}
 }

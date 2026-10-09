@@ -2,7 +2,7 @@
 
 # Build on the host's native platform and cross-compile, so multi-arch images
 # need no emulation. The app is pure Go (modernc.org/sqlite), hence CGO_ENABLED=0.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

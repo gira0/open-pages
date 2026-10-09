@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -195,10 +194,10 @@ func groupGone(err error, group int64) bool {
 // errNotGroupMember if owner is not in the group.
 func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64, visibility string) (Site, error) {
 	if !validSiteName(name) {
-		return Site{}, fmt.Errorf("invalid site name %q", name)
+		return Site{}, errors.New("invalid site name")
 	}
 	if reservedSiteName(name) {
-		return Site{}, fmt.Errorf("site name %q is reserved", name)
+		return Site{}, errors.New("site name is reserved")
 	}
 	if !validVisibility(visibility) {
 		return Site{}, fmt.Errorf("invalid visibility %q", visibility)
@@ -318,7 +317,7 @@ func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 func (s *Server) deleteSite(ctx context.Context, site Site) error {
 	dir := s.SiteDir(site.Name)
 	if dir == "" {
-		return fmt.Errorf("invalid site name %q", site.Name)
+		return errors.New("invalid site name")
 	}
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
@@ -341,7 +340,7 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, error) {
 	dir := s.SiteDir(site.Name)
 	if dir == "" {
-		return "", fmt.Errorf("invalid site name %q", site.Name)
+		return "", errors.New("invalid site name")
 	}
 	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
 		return "", err
@@ -383,7 +382,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		return "", err
 	}
 	if err := s.pruneVersions(site.Name); err != nil {
-		slog.Warn("prune old versions", "site", site.Name, "err", err)
+		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
 	return version, nil
 }
@@ -400,7 +399,7 @@ func (s *Server) SwitchCurrent(site, version string) error {
 func (s *Server) switchCurrent(site, version string) error {
 	dir := s.SiteDir(site)
 	if dir == "" {
-		return fmt.Errorf("invalid site name %q", site)
+		return errors.New("invalid site name")
 	}
 	if !versionRe.MatchString(version) {
 		return errVersionAbsent
@@ -438,7 +437,7 @@ func (s *Server) versionsAndCurrent(site string) (versions []string, current str
 func (s *Server) Versions(site string) ([]string, error) {
 	dir := s.SiteDir(site)
 	if dir == "" {
-		return nil, fmt.Errorf("invalid site name %q", site)
+		return nil, errors.New("invalid site name")
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, versionsDir))
 	if errors.Is(err, os.ErrNotExist) {
@@ -461,7 +460,7 @@ func (s *Server) Versions(site string) ([]string, error) {
 func (s *Server) CurrentVersion(site string) (string, error) {
 	link := s.CurrentDir(site)
 	if link == "" {
-		return "", fmt.Errorf("invalid site name %q", site)
+		return "", errors.New("invalid site name")
 	}
 	target, err := os.Readlink(link)
 	if errors.Is(err, os.ErrNotExist) {
