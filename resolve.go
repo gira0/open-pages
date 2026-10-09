@@ -11,7 +11,7 @@ import (
 // hosts operators commonly point at the service itself (www.pages.corp, api.pages.corp).
 var reservedSiteNames = map[string]bool{
 	"v1": true, "index": true, "api": true, "www": true, "admin": true, "ui": true,
-	"static": true, "assets": true, "health": true, "healthz": true, "metrics": true,
+	"static": true, "assets": true, "health": true, "healthz": true, "readyz": true, "metrics": true,
 	"login": true, "logout": true, "register": true, "auth": true, "user": true,
 	"users": true, "sites": true, "docs": true, "app": true, "mail": true,
 }
