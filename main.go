@@ -93,6 +93,9 @@ func newServer(cfg Config) (*Server, error) {
 
 		metrics: newMetrics(),
 	}
+	if cfg.OIDC.Enabled {
+		s.oidc = newOIDCClient(cfg.OIDC)
+	}
 	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
 	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
 		return nil, fmt.Errorf("create %s: %w", s.sites, err)

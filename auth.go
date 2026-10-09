@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -89,11 +90,15 @@ func (s *Server) sessionUser(r *http.Request) (int64, error) {
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
+	s.setCookie(w, sessionCookie, "/", token, maxAge)
+}
+
+func (s *Server) setCookie(w http.ResponseWriter, name, path, value string, maxAge int) {
 	// Secure is configurable so the service also works over plain HTTP on internal networks.
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: see above
-		Name:     sessionCookie,
-		Value:    token,
-		Path:     "/",
+		Name:     name,
+		Value:    value,
+		Path:     path,
 		MaxAge:   maxAge,
 		Secure:   s.cfg.CookieSecure,
 		HttpOnly: true,
@@ -176,24 +181,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.startSession(w, r, uid); err != nil {
+		internalError(w, "start session", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "successful login"})
+}
+
+// startSession prunes expired sessions, stores a new one for uid and sets the cookie.
+// It is the shared tail of local and OIDC login.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, uid int64) error {
 	token, err := generateToken()
 	if err != nil {
-		internalError(w, "generate token", err)
-		return
+		return fmt.Errorf("generate token: %w", err)
 	}
 	now := time.Now()
 	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM session WHERE expires <= ?", now.Unix()); err != nil {
-		internalError(w, "prune sessions", err)
-		return
+		return fmt.Errorf("prune sessions: %w", err)
 	}
 	if _, err := s.db.ExecContext(r.Context(),
 		"INSERT INTO session (userid, token, expires) VALUES (?, ?, ?)",
 		uid, token, now.Add(sessionLifetime).Unix()); err != nil {
-		internalError(w, "insert session", err)
-		return
+		return fmt.Errorf("insert session: %w", err)
 	}
 	s.setSessionCookie(w, token, int(sessionLifetime.Seconds()))
-	writeJSON(w, http.StatusOK, map[string]string{"status": "successful login"})
+	return nil
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

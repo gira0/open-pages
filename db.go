@@ -14,7 +14,9 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS user (
 	userid   INTEGER PRIMARY KEY,
 	email    VARCHAR(255) NOT NULL,
-	password BINARY(60) NOT NULL
+	password BINARY(60) NOT NULL,
+	oidc_issuer  TEXT NULL,
+	oidc_subject TEXT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS user_email ON user (email);
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS user_group (
 	ugid INTEGER PRIMARY KEY,
 	uid  INTEGER NOT NULL,
 	gid  INTEGER NOT NULL,
+	oidc INTEGER NOT NULL DEFAULT 0,
 	FOREIGN KEY (uid) REFERENCES user(userid),
 	FOREIGN KEY (gid) REFERENCES groups(groupid)
 );
@@ -120,6 +123,17 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	// OIDC: user.oidc_issuer/oidc_subject identify a user created by OIDC sign-in (NULL for
+	// local accounts); user_group.oidc marks memberships managed by the identity provider.
+	for _, col := range []struct{ table, name, ddl string }{
+		{"user", "oidc_issuer", "oidc_issuer TEXT NULL"},
+		{"user", "oidc_subject", "oidc_subject TEXT NULL"},
+		{"user_group", "oidc", "oidc INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := addColumn(ctx, db, col.table, col.name, col.ddl); err != nil {
+			return err
+		}
+	}
 	if err := migrateGroupNames(ctx, db); err != nil {
 		return fmt.Errorf("group names: %w", err)
 	}
@@ -127,6 +141,7 @@ func migrate(db *sql.DB) error {
 	steps := []string{
 		"DELETE FROM user_group WHERE ugid NOT IN (SELECT MIN(ugid) FROM user_group GROUP BY uid, gid)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS user_group_member ON user_group (uid, gid)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS user_oidc ON user (oidc_issuer, oidc_subject)",
 		"DROP INDEX IF EXISTS groups_name",
 		"CREATE UNIQUE INDEX IF NOT EXISTS groups_name_key ON groups (name_key)",
 	}
@@ -136,6 +151,20 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// addColumn adds a column to a table unless it is already there.
+func addColumn(ctx context.Context, db *sql.DB, table, name, ddl string) error {
+	var n int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, name).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+ddl)
+	return err
 }
 
 // migrateGroupNames fills groups.name_key and resolves names that only differ in case.

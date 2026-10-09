@@ -258,6 +258,13 @@ func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email
 	if err != nil {
 		return false, fmt.Errorf("query user: %w", err)
 	}
+	// An existing provider-managed membership becomes a manual one, so a later OIDC
+	// sync doesn't remove what the owner added by hand.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE user_group SET oidc = 0 WHERE gid = ? AND oidc = 1
+		 AND uid = (SELECT userid FROM user WHERE email = ?)`, groupID, email); err != nil {
+		return false, fmt.Errorf("mark membership manual: %w", err)
+	}
 	return false, nil
 }
 

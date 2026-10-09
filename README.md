@@ -54,6 +54,8 @@ version (stable releases also get `major.minor` and `latest`).
 | GET | `/v1/sites` | | List the public sites (`name`, `description`); authenticated and restricted sites never appear |
 | POST | `/v1/user/register` | | Create a user (JSON or form: `email`, `password`) |
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
+| GET | `/v1/auth/oidc/login` | | Start OIDC sign-in: redirects to the identity provider; optional `return_to` (a path on this server). Only with `[oidc]` enabled |
+| GET | `/v1/auth/oidc/callback` | | Finish OIDC sign-in and set the session cookie (the redirect URL registered at the provider). Only with `[oidc]` enabled |
 | GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
 | POST | `/v1/auth/logout` | session | End the session |
 | POST | `/v1/auth/tokens` | session | Create an API token: `name`, optional `expires_in_days` (1 to 3650, absent for no expiry); the token is returned once |
@@ -158,6 +160,73 @@ uploading, rolling back and version listing remain owner-only whatever the visib
 In subdomain mode the session cookie is host-only and never reaches `<site>.<base_domain>`, so
 browsers cannot open restricted sites there yet; they can be fetched with an API token. Use path
 mode if restricted sites must work in a browser.
+
+## Corporate sign-in (OIDC)
+
+Besides local accounts, people can sign in with the company identity provider over OpenID
+Connect (Keycloak, Entra ID, ADFS and other standards-compliant providers). It is off by
+default and the server starts unchanged without an `[oidc]` section. LDAP is not supported.
+
+```ini
+[oidc]
+enabled = true
+issuer = https://sso.example.com/realms/corp
+client_id = open-pages
+client_secret = ...
+redirect_url = https://pages.example.com/v1/auth/oidc/callback
+scopes = openid email profile
+email_claim = email
+groups_claim = groups
+allowed_email_domain = corp.example
+```
+
+`issuer` and `redirect_url` must be https (plain http only for localhost). The issuer must be
+exactly what the provider reports in `<issuer>/.well-known/openid-configuration`, which is
+fetched on the first sign-in, so the server starts even while the provider is down. The client
+secret is read from the settings file only (there is no environment override) and is never
+logged; make the file readable only by the service user.
+
+Setup with Keycloak: create an OpenID Connect client with "Client authentication" on, the
+standard flow enabled and the valid redirect URI above; copy its secret from the Credentials
+tab; to send groups add a "Group Membership" mapper to the client's dedicated scope, with
+"Full group path" off and "Add to ID token" on. Other providers: register a web application
+with the same redirect URL, authorization code flow and client-secret authentication; for Entra
+ID use the `https://login.microsoftonline.com/<tenant>/v2.0` issuer and add a groups claim in the
+app registration's token configuration.
+
+How it works: `GET /v1/auth/oidc/login` redirects the browser to the provider using the
+authorization code flow with PKCE (S256), `state` and `nonce`. The callback checks the state
+(single use, tied to the browser by a short-lived cookie), exchanges the code, then verifies the
+ID token: RS256 or ES256 signature against the provider's JWKS (any other algorithm is refused),
+issuer, audience (and `azp` when there are several), expiry, not-before and nonce. It then starts
+the same session as local login (7 days, same cookie), so API tokens, groups and site access work
+as for any user. Verification is implemented on the standard library; there is no JWT or OAuth
+dependency. Use `?return_to=/some/path` on the login URL to be redirected there afterwards;
+without it the callback answers `{"status": "successful login"}`.
+
+**How identities relate to local users.** Accounts have no separate username; the email is the
+account name. An OIDC user is identified by issuer plus subject, never by email, and its email
+is taken from the token at first sign-in and then kept. On first sign-in a user is created with
+no password, so local login can never be used for it. If the email already belongs to any other
+account (a local one, or another identity; compared ignoring case) the sign-in is refused with
+409: accounts are never linked or taken over by matching email, so a local account must be
+removed or renamed by an operator first. A token without a valid email, with `email_verified`
+false, or outside `allowed_email_domain` is refused with 403.
+
+**Groups.** `groups_claim` (default `groups`; a list of names or a single name; empty turns
+mapping off) is mapped onto existing open-pages groups with the same name, ignoring case. Names
+that match no group are ignored: groups are never created from the token, so the provider cannot
+fill the server with groups. At every sign-in the user is added to the matching groups and
+removed from groups it was added to by an earlier sign-in that the token no longer lists.
+Memberships added by hand through the API are never removed by this; if the owner removes a
+provider-managed member, the next sign-in adds them back.
+
+**OIDC-only setups.** `[auth] local_login = false` leaves `/v1/user/register` and
+`/v1/user/login` unregistered, so those requests are rejected (default `true`; a value that isn't `true` or `false` fails startup). It requires `[oidc]` to be enabled.
+Existing local sessions and API tokens keep working.
+
+In subdomain mode the session cookie is host-only (see Access control), so signing in does not
+let a browser open restricted sites there.
 
 ## Serving sites
 
