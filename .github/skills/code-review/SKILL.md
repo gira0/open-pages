@@ -13,7 +13,9 @@ serves them. Review for correctness and security first; style is handled by `gol
 - Go standard library `net/http` only. No Gin, chi or other web frameworks.
 - SQLite through pure-Go `modernc.org/sqlite`. Flag cgo, a C toolchain, or any new dependency
   that needs one. Flag new dependencies that the standard library already covers.
-- Configuration is the settings file plus `-config`. There are no environment variables.
+- The server is configured only by the settings file plus `-config`; flag new server environment
+  variables. The `open-pages deploy` CLI intentionally reads `OPEN_PAGES_TOKEN` and
+  `OPEN_PAGES_URL`.
 
 ## Security-sensitive areas (look hardest here)
 
@@ -35,7 +37,8 @@ serves them. Review for correctness and security first; style is handled by `gol
 - Deploys are atomic and versioned: publish, switch `current` and prune happen in one critical
   section (`deployMu`). Check any new path that touches `versions/` or `current`.
 - Deploy, update, delete and rollback must re-check that the site id and owner still match the
-  database row inside the lock, and must enforce owner or group permission.
+  database row inside the lock. Managing a site (update, delete, rollback, deploy) is
+  owner-only; a group only grants viewing, so flag group members gaining write access.
 - Partial updates write only the fields present in the request.
 - Keep a snapshot read (versions plus current) coherent.
 
