@@ -53,7 +53,7 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePath string) {
 	rec, err := s.getSite(r.Context(), site)
 	if errors.Is(err, errSiteNotFound) {
-		http.NotFound(w, r)
+		notFoundNoStore(w, r)
 		return
 	}
 	if err != nil {
@@ -61,10 +61,10 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	restricted := rec.Visibility == visRestricted
-	if restricted {
-		// Session cookie or API token. Anyone not allowed, anonymous included, gets the same
-		// plain 404 as a missing site, so the response doesn't reveal that the site exists.
+	gated := rec.Visibility != visPublic
+	if gated {
+		// Session cookie or API token. Anyone not allowed, anonymous included, gets exactly the
+		// response of a missing site, so it doesn't reveal that the site exists.
 		ok, err := s.viewerMaySee(r, rec)
 		if err != nil {
 			slog.Error("check site access", "err", err)
@@ -72,9 +72,14 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 			return
 		}
 		if !ok {
-			http.NotFound(w, r)
+			notFoundNoStore(w, r)
 			return
 		}
+		// Everything below depends on who is asking, including 404s and redirects: shared
+		// caches must not keep it, and it varies with the credentials.
+		h := w.Header()
+		h.Set("Cache-Control", "private, no-cache")
+		h.Add("Vary", "Cookie, Authorization")
 	}
 
 	// CurrentDir is a symlink; os.Root follows it for the root itself but then refuses
@@ -116,13 +121,18 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "no-cache") // always revalidate: cheap with ETag, and deploys take effect at once
-	if restricted {
-		h.Set("Cache-Control", "private, no-cache") // shared caches must not hand it to others
-		h.Add("Vary", "Cookie, Authorization")
+	if !gated {
+		h.Set("Cache-Control", "no-cache") // always revalidate: cheap with ETag, and deploys take effect at once
 	}
 	h.Set("ETag", etag(version, info))
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// notFoundNoStore is the plain 404 for a missing site and for one the viewer may not see.
+// Both use this one function so they stay indistinguishable, and neither may be cached.
+func notFoundNoStore(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.NotFound(w, r)
 }
 
 // viewerMaySee resolves who sent the request (API token or session cookie, 0 if neither is
@@ -147,7 +157,9 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, root *os.
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "no-cache")
+	if h.Get("Cache-Control") == "" { // access-controlled sites already set a private one
+		h.Set("Cache-Control", "no-cache")
+	}
 	w.WriteHeader(http.StatusNotFound)
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, f)

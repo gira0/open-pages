@@ -23,7 +23,7 @@ type groupInfo struct {
 
 type userDocs struct {
 	Owned    []docInfo `json:"owned"`
-	Viewable []docInfo `json:"viewable"` // owned docs plus docs of groups the user and the doc owner share
+	Viewable []docInfo `json:"viewable"` // owned docs, login-only docs, and docs of groups the user and the doc owner share
 }
 
 type docInfo struct {
@@ -58,7 +58,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	// DISTINCT guards against a duplicate user_group row repeating a doc.
 	docRows, err := s.db.QueryContext(r.Context(),
 		`SELECT DISTINCT d.docid, d.name, COALESCE(d.description, ''), d.uowner, d.ugroup FROM docs d
-		 WHERE d.uowner = ? OR (d.ugroup IN (SELECT gid FROM user_group WHERE uid = ?)
+		 WHERE d.uowner = ? OR d.visibility = 'authenticated' OR (d.ugroup IN (SELECT gid FROM user_group WHERE uid = ?)
 		   AND EXISTS (SELECT 1 FROM user_group og WHERE og.uid = d.uowner AND og.gid = d.ugroup))
 		 ORDER BY d.name`, uid, uid)
 	if err != nil {

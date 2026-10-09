@@ -49,15 +49,19 @@ type badArchiveError struct{ err error }
 func (e *badArchiveError) Error() string { return e.err.Error() }
 func (e *badArchiveError) Unwrap() error { return e.err }
 
-// Site visibility. A public site is served to everyone. A restricted site is served only
-// to its owner and to members of its group (see canView).
+// Site visibility. A public site is served to everyone. An authenticated site is served to
+// any logged-in user (session or API token). A restricted site is served only to its owner
+// and to members of its group (see canView).
 const (
-	visPublic     = "public"
-	visRestricted = "restricted"
+	visPublic        = "public"
+	visAuthenticated = "authenticated"
+	visRestricted    = "restricted"
 )
 
 // validVisibility reports whether v is a known visibility.
-func validVisibility(v string) bool { return v == visPublic || v == visRestricted }
+func validVisibility(v string) bool {
+	return v == visPublic || v == visAuthenticated || v == visRestricted
+}
 
 // Site is a hosted site. OwnerID and GroupID are 0 when the site has no owner or group.
 type Site struct {
@@ -124,15 +128,18 @@ func (s *Server) checkGroup(ctx context.Context, group, owner int64) error {
 }
 
 // canView reports whether the user (0 for anonymous) may see the site's content and
-// metadata. Public sites: everyone. Restricted sites: the owner, and members of the site's
+// metadata. Public sites: everyone. Authenticated sites: any logged-in user. Restricted sites: the owner, and members of the site's
 // group, but only while the owner is still a member of that group too, so a site can't be
 // shared with a group its owner has no standing in.
 func (s *Server) canView(ctx context.Context, site Site, user int64) (bool, error) {
-	if site.Visibility != visRestricted {
+	if site.Visibility == visPublic {
 		return true, nil
 	}
 	if user == 0 {
 		return false, nil
+	}
+	if site.Visibility == visAuthenticated {
+		return true, nil
 	}
 	if user == site.OwnerID {
 		return true, nil

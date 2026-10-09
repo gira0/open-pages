@@ -135,6 +135,8 @@ not exist (`-create=false` turns that off). Install it with
 Every site has a `visibility`, set when it is created or later by its owner (default `public`):
 
 - `public`: served to everyone and listed by `GET /v1/sites`.
+- `authenticated`: served to any logged-in user (session cookie or API token); anonymous
+  visitors get a 404. Not listed by `GET /v1/sites`.
 - `restricted`: served only to the owner and the members of the site's `group`. A restricted
   site without a group is private to its owner.
 
@@ -143,9 +145,11 @@ site to a group its owner is not in is refused (403), and if the owner later lea
 the other members lose access at once (the owner keeps it). Both session cookies and API tokens
 (`Authorization: Bearer ...`) are honoured, in both URL modes.
 
-Refusals: when serving, anyone who may not view a restricted site, anonymous visitors included,
-gets the same plain 404 as a site that does not exist, so nothing leaks about which restricted
-sites exist; responses for restricted sites carry `Cache-Control: private`. On the JSON API a
+Refusals: when serving, anyone who may not view a non-public site, anonymous visitors included,
+gets the same plain 404 as a site that does not exist (both `Cache-Control: no-store`), so
+nothing leaks about which such sites exist. Everything served for a non-public site, 404 pages
+and redirects included, carries `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
+There is no IP-based "intranet" level; restrict that at the reverse proxy. On the JSON API a
 logged-in user who may not view a site gets 403, as for every other site endpoint. Editing,
 uploading, rolling back and version listing remain owner-only whatever the visibility.
 

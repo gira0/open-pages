@@ -114,7 +114,10 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 				}
 				return
 			}
-			// A refusal looks exactly like a site that does not exist.
+			// A refusal looks exactly like a site that does not exist, and is not cacheable.
+			if cc := h.Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("refusal Cache-Control = %q, want no-store", cc)
+			}
 			if body != missing {
 				t.Errorf("refusal body %q differs from missing-site body %q", body, missing)
 			}
@@ -400,6 +403,198 @@ func TestMigrateAddsVisibility(t *testing.T) {
 		if err := db.QueryRowContext(t.Context(), "SELECT visibility FROM docs WHERE name = 'old'").Scan(&vis); err != nil || vis != visPublic {
 			t.Fatalf("visibility = %q, %v", vis, err)
 		}
+		// The migrated column accepts the new level and still rejects unknown ones.
+		if _, err := db.ExecContext(t.Context(), "UPDATE docs SET visibility = 'authenticated'"); err != nil {
+			t.Fatalf("authenticated rejected: %v", err)
+		}
+		if _, err := db.ExecContext(t.Context(), "UPDATE docs SET visibility = 'friends'"); err == nil {
+			t.Fatal("unknown visibility accepted")
+		}
+		if _, err := db.ExecContext(t.Context(), "UPDATE docs SET visibility = 'public'"); err != nil {
+			t.Fatal(err)
+		}
 		db.Close()
+	}
+}
+
+// noRedirect is a copy of c that returns redirects instead of following them.
+func noRedirect(c *http.Client) *http.Client {
+	return &http.Client{
+		Jar:           c.Jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// Everything served for a gated site depends on the viewer, so it must all be private:
+// content, custom and plain 404s, never-deployed sites and directory redirects.
+func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
+	w := newAccessWorld(t)
+	files := map[string]string{"index.html": "home", "404.html": "custom missing", "docs/index.html": "docs"}
+	for _, vis := range []string{visRestricted, visAuthenticated} {
+		name := "g-" + vis
+		code, _ := doJSON(t, w.owner, http.MethodPost, w.ts.URL+"/v1/auth/sites", `{"name":"`+name+`","visibility":"`+vis+`"}`)
+		expectStatus(t, code, http.StatusCreated)
+		expectStatus(t, post(t, w.owner, w.ts.URL+"/v1/auth/sites/"+name+"/upload", "application/zip", zipArchive(t, files)), http.StatusOK)
+		code, _ = doJSON(t, w.owner, http.MethodPost, w.ts.URL+"/v1/auth/sites", `{"name":"`+name+`-empty","visibility":"`+vis+`"}`)
+		expectStatus(t, code, http.StatusCreated)
+
+		for _, tc := range []struct {
+			what, path string
+			status     int
+		}{
+			{"content", "/" + name + "/", http.StatusOK},
+			{"custom 404", "/" + name + "/nope", http.StatusNotFound},
+			{"directory redirect", "/" + name + "/docs", http.StatusMovedPermanently},
+			{"never deployed", "/" + name + "-empty/", http.StatusNotFound},
+		} {
+			status, _, h := fetch(t, noRedirect(w.owner), w.ts.URL+tc.path, "")
+			if status != tc.status {
+				t.Errorf("%s %s: status %d, want %d", vis, tc.what, status, tc.status)
+			}
+			if cc := h.Get("Cache-Control"); cc != "private, no-cache" {
+				t.Errorf("%s %s: Cache-Control %q", vis, tc.what, cc)
+			}
+			if v := h.Get("Vary"); !strings.Contains(v, "Cookie") || !strings.Contains(v, "Authorization") {
+				t.Errorf("%s %s: Vary %q", vis, tc.what, v)
+			}
+		}
+	}
+	// A denied request and a missing site answer with identical headers, both uncacheable.
+	_, _, missing := fetch(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	_, _, denied := fetch(t, w.anon, w.ts.URL+"/g-restricted/", "")
+	if missing.Get("Cache-Control") != "no-store" {
+		t.Errorf("missing-site Cache-Control = %q", missing.Get("Cache-Control"))
+	}
+	for _, k := range []string{"Cache-Control", "Vary", "Content-Type", "X-Content-Type-Options"} {
+		if missing.Get(k) != denied.Get(k) {
+			t.Errorf("header %s differs: missing %q, denied %q", k, missing.Get(k), denied.Get(k))
+		}
+	}
+}
+
+func TestAuthenticatedVisibility(t *testing.T) {
+	w := newAccessWorld(t)
+	code, out := doJSON(t, w.owner, http.MethodPost, w.ts.URL+"/v1/auth/sites", `{"name":"members","visibility":"authenticated"}`)
+	expectStatus(t, code, http.StatusCreated)
+	if out["visibility"] != visAuthenticated {
+		t.Fatalf("create response = %v", out)
+	}
+	expectStatus(t, post(t, w.owner, w.ts.URL+"/v1/auth/sites/members/upload", "application/zip",
+		zipArchive(t, map[string]string{"index.html": "members only"})), http.StatusOK)
+	url := w.ts.URL + "/members/"
+	_, missing, _ := fetch(t, w.anon, w.ts.URL+"/nonexistent/", "")
+
+	for _, tc := range []struct {
+		name   string
+		client *http.Client
+		bearer string
+		status int
+	}{
+		{"owner", w.owner, "", http.StatusOK},
+		{"member session", w.member, "", http.StatusOK},
+		{"outsider session, no group needed", w.outsider, "", http.StatusOK},
+		{"outsider token", w.anon, w.outsiderTok, http.StatusOK},
+		{"anonymous", w.anon, "", http.StatusNotFound},
+		{"bogus token", w.anon, "opt_nope", http.StatusNotFound},
+		{"bogus token with valid cookie", w.outsider, "opt_nope", http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body, _ := fetch(t, tc.client, url, tc.bearer)
+			if status != tc.status {
+				t.Fatalf("status %d, want %d", status, tc.status)
+			}
+			if status == http.StatusNotFound && body != missing {
+				t.Errorf("refusal body %q differs from missing-site body %q", body, missing)
+			}
+		})
+	}
+
+	// Never listed publicly.
+	_, listing, _ := fetch(t, w.anon, w.ts.URL+"/v1/sites", "")
+	if strings.Contains(listing, "members") {
+		t.Errorf("public listing shows an authenticated site: %s", listing)
+	}
+	// Metadata: any logged-in user, nobody anonymous.
+	meta := w.ts.URL + "/v1/auth/sites/members"
+	code, out = doJSON(t, w.outsider, http.MethodGet, meta, "")
+	expectStatus(t, code, http.StatusOK)
+	if out["visibility"] != visAuthenticated {
+		t.Errorf("metadata = %v", out)
+	}
+	if status, _, _ := fetch(t, w.anon, meta, ""); status != http.StatusUnauthorized {
+		t.Errorf("anonymous metadata: %d", status)
+	}
+	// Still owner-only to change or list versions.
+	code, _ = doJSON(t, w.outsider, http.MethodGet, meta+"/versions", "")
+	expectStatus(t, code, http.StatusForbidden)
+	code, _ = doJSON(t, w.outsider, http.MethodPut, meta, `{"visibility":"public"}`)
+	expectStatus(t, code, http.StatusForbidden)
+
+	// /v1/auth/user lists it as viewable for a user who neither owns it nor shares a group.
+	code, info := doJSON(t, w.outsider, http.MethodGet, w.ts.URL+"/v1/auth/user", "")
+	expectStatus(t, code, http.StatusOK)
+	docs, _ := info["docs"].(map[string]any)
+	viewable, _ := docs["viewable"].([]any)
+	found := false
+	for _, d := range viewable {
+		if m, _ := d.(map[string]any); m["name"] == "members" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("viewable = %v", viewable)
+	}
+
+	// Switching levels through PUT.
+	code, out = doJSON(t, w.owner, http.MethodPut, meta, `{"visibility":"restricted"}`)
+	expectStatus(t, code, http.StatusOK)
+	if out["visibility"] != visRestricted {
+		t.Fatalf("update response = %v", out)
+	}
+	if status, _, _ := fetch(t, w.outsider, url, ""); status != http.StatusNotFound {
+		t.Errorf("outsider after restricting: %d", status)
+	}
+	code, _ = doJSON(t, w.owner, http.MethodPut, meta, `{"visibility":"authenticated"}`)
+	expectStatus(t, code, http.StatusOK)
+	if status, _, _ := fetch(t, w.outsider, url, ""); status != http.StatusOK {
+		t.Errorf("outsider after re-opening to logged-in users: %d", status)
+	}
+}
+
+func TestAuthenticatedSiteSubdomainMode(t *testing.T) {
+	s := newSubdomainServer(t)
+	ctx := t.Context()
+	uid := testOwner(t, s)
+	if _, err := s.createSite(ctx, "intra", "", uid, 0, visAuthenticated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployNamed(t, s, "intra", writeZip(t, map[string]string{"index.html": "hi"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, "INSERT INTO session (userid, token, expires) VALUES (?, 'tok', ?)",
+		uid, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(s, "GET", "intra.pages.corp", "/", "Cookie", sessionCookie+"=tok"); w.Code != 200 {
+		t.Errorf("logged in: %d", w.Code)
+	}
+	if w := do(s, "GET", "intra.pages.corp", "/"); w.Code != 404 {
+		t.Errorf("anonymous: %d", w.Code)
+	}
+	if w := do(s, "GET", "intra.pages.corp", "/", "Cookie", sessionCookie+"=expired"); w.Code != 404 {
+		t.Errorf("unknown session: %d", w.Code)
+	}
+}
+
+// Existing databases gain a visibility column that accepts all three levels and nothing else.
+func TestVisibilityCheckConstraint(t *testing.T) {
+	_, s := newTestServer(t)
+	for i, vis := range []string{visPublic, visAuthenticated, visRestricted} {
+		if _, err := s.createSite(t.Context(), fmt.Sprintf("vis-%d", i), "", testOwner(t, s), 0, vis); err != nil {
+			t.Fatalf("%s: %v", vis, err)
+		}
+	}
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO docs (name, visibility) VALUES ('bad', 'friends')"); err == nil {
+		t.Fatal("database accepted an unknown visibility")
 	}
 }

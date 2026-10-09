@@ -14,7 +14,7 @@ type siteUpdate struct {
 	Visibility  *string `json:"visibility"`
 }
 
-const errBadVisibility = `visibility must be "public" or "restricted"`
+const errBadVisibility = `visibility must be "public", "authenticated" or "restricted"`
 
 // handleSiteUpdate changes a site's description and/or group. Owner only.
 func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSiteGet returns a site's metadata to the people who may view it: everyone logged in
-// for a public site, the owner and group members for a restricted one. Other callers get 403
+// for a public or authenticated site, the owner and group members for a restricted one. Other callers get 403
 // (the manage endpoints already tell logged-in users that a site exists).
 func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
