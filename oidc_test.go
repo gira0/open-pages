@@ -51,7 +51,7 @@ type fakeIDP struct {
 
 type idpAuthRequest struct{ nonce, challenge string }
 
-func newFakeIdP(t *testing.T) *fakeIDP {
+func newFakeIDP(t *testing.T) *fakeIDP {
 	t.Helper()
 	p := &fakeIDP{codes: map[string]idpAuthRequest{}, set: idpSettings{sub: "sub-1", email: "ann@corp.example"}}
 	var err error
@@ -281,7 +281,7 @@ func countUsers(t *testing.T, s *Server) int {
 }
 
 func TestOIDCHappyPath(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
 	c := browser(t)
 	expectStatus(t, signIn(t, ts, idp, c), http.StatusOK)
@@ -301,7 +301,7 @@ func TestOIDCHappyPath(t *testing.T) {
 }
 
 func TestOIDCRepeatLogin(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
 	// The same subject with a changed email is the same user.
@@ -323,7 +323,7 @@ func TestOIDCRepeatLogin(t *testing.T) {
 }
 
 func TestOIDCES256(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	idp.update(func(s *idpSettings) { s.alg = "ES256" })
 	ts, _ := newOIDCTestServer(t, idp, nil)
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
@@ -350,7 +350,7 @@ func TestOIDCRejectsBadTokens(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			idp := newFakeIdP(t)
+			idp := newFakeIDP(t)
 			idp.update(mutate)
 			ts, s := newOIDCTestServer(t, idp, nil)
 			c := browser(t)
@@ -365,7 +365,7 @@ func TestOIDCRejectsBadTokens(t *testing.T) {
 }
 
 func TestOIDCAudienceListWithAzp(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	idp.update(func(s *idpSettings) {
 		s.tweak = func(c map[string]any) { c["aud"] = []string{testClientID, "other"}; c["azp"] = testClientID }
 	})
@@ -374,7 +374,7 @@ func TestOIDCAudienceListWithAzp(t *testing.T) {
 }
 
 func TestOIDCBadState(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, nil)
 
 	t.Run("state not issued", func(t *testing.T) {
@@ -414,7 +414,7 @@ func TestOIDCBadState(t *testing.T) {
 }
 
 func TestOIDCGroupMapping(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
 
 	// An admin creates the groups; the provider only maps people into them.
@@ -469,7 +469,7 @@ func TestOIDCGroupMapping(t *testing.T) {
 }
 
 func TestOIDCGroupsClaimAsString(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *Config) { c.OIDC.GroupsClaim = "roles" })
 	newGroupVia(t, ts, loggedInClient(t, ts), "admins")
 	idp.update(func(s *idpSettings) { s.tweak = func(c map[string]any) { c["roles"] = "admins" } })
@@ -481,7 +481,7 @@ func TestOIDCGroupsClaimAsString(t *testing.T) {
 }
 
 func TestOIDCNoEmailTakeover(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
 	userClient(t, ts, "ann@corp.example") // a local account with the same email
 	idp.update(func(s *idpSettings) { s.email = "Ann@Corp.example" })
@@ -493,7 +493,7 @@ func TestOIDCNoEmailTakeover(t *testing.T) {
 }
 
 func TestOIDCEmailRules(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *Config) { c.OIDC.AllowedEmailDomain = "corp.example" })
 	idp.update(func(s *idpSettings) { s.email = "mallory@other.example" })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusForbidden)
@@ -507,7 +507,7 @@ func TestOIDCEmailRules(t *testing.T) {
 }
 
 func TestOIDCReturnTo(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, nil)
 	for _, bad := range []string{"https://evil.example/", "//evil.example", "/\\evil.example", "relative"} {
 		code, _, _ := oidcGet(t, browser(t), ts.URL+"/v1/auth/oidc/login?return_to="+url.QueryEscape(bad))
@@ -535,7 +535,7 @@ func TestOIDCDisabledLeavesRoutesOut(t *testing.T) {
 }
 
 func TestOIDCOnlyDisablesLocalLogin(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, func(c *Config) { c.LocalLogin = false })
 	creds := []byte(`{"email":"a@example.com","password":"correct horse"}`)
 	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/register", "application/json", creds), http.StatusMethodNotAllowed)
@@ -544,7 +544,7 @@ func TestOIDCOnlyDisablesLocalLogin(t *testing.T) {
 }
 
 func TestOIDCProviderDown(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, nil)
 	idp.srv.Close()
 	code, _, _ := oidcGet(t, browser(t), ts.URL+"/v1/auth/oidc/login")
@@ -552,7 +552,7 @@ func TestOIDCProviderDown(t *testing.T) {
 }
 
 func TestOIDCSecretNeverServed(t *testing.T) {
-	idp := newFakeIdP(t)
+	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, nil)
 	c := browser(t)
 	_, body, h := oidcGet(t, c, ts.URL+"/v1/auth/oidc/login")
