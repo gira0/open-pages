@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -168,27 +169,25 @@ func TestOwnerOnlyMutations(t *testing.T) {
 func TestSiteGroup(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
-	if _, err := s.db.Exec("INSERT INTO groups (groupid, name) VALUES (7, 'eng')"); err != nil {
-		t.Fatal(err)
-	}
+	gid := newGroupVia(t, ts, c, "eng")
 	sites := ts.URL + "/v1/auth/sites"
 
 	// Set on create; unknown groups are rejected.
-	code, _ := doJSON(t, c, http.MethodPost, sites, `{"name":"blog","group":7}`)
+	code, _ := doJSON(t, c, http.MethodPost, sites, fmt.Sprintf(`{"name":"blog","group":%d}`, gid))
 	expectStatus(t, code, http.StatusCreated)
 	code, _ = doJSON(t, c, http.MethodPost, sites, `{"name":"wiki","group":99}`)
 	expectStatus(t, code, http.StatusBadRequest)
 	if _, err := s.getSite(t.Context(), "wiki"); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("site with bad group was created: %v", err)
 	}
-	if site, _ := s.getSite(t.Context(), "blog"); site.GroupID != 7 {
-		t.Fatalf("GroupID = %d, want 7", site.GroupID)
+	if site, _ := s.getSite(t.Context(), "blog"); site.GroupID != gid {
+		t.Fatalf("GroupID = %d, want %d", site.GroupID, gid)
 	}
 
 	// Update: absent fields stay, 0 clears the group, unknown groups are rejected.
 	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `{"description":"Team blog"}`)
 	expectStatus(t, code, http.StatusOK)
-	if site, _ := s.getSite(t.Context(), "blog"); site.Description != "Team blog" || site.GroupID != 7 {
+	if site, _ := s.getSite(t.Context(), "blog"); site.Description != "Team blog" || site.GroupID != gid {
 		t.Fatalf("after description update: %+v", site)
 	}
 	code, _ = doJSON(t, c, http.MethodPut, sites+"/blog", `{"group":99}`)

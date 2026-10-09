@@ -21,7 +21,7 @@ func TestUserInfo(t *testing.T) {
 		}
 	}
 	mustExec("INSERT INTO groups (groupid, name) VALUES (1, 'eng'), (2, 'ops')")
-	mustExec("INSERT INTO user_group (uid, gid) VALUES (1, 1)")
+	mustExec("INSERT INTO user_group (uid, gid) VALUES (1, 1), (2, 1)")
 	mustExec("INSERT INTO docs (uowner, ugroup, name, description) VALUES (1, NULL, 'mine', 'my doc')")
 	mustExec("INSERT INTO docs (uowner, ugroup, name) VALUES (2, 1, 'shared')")
 	mustExec("INSERT INTO docs (uowner, ugroup, name) VALUES (2, 2, 'hidden')")

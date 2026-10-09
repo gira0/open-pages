@@ -370,7 +370,7 @@ func TestConcurrentDeleteVersusSiteAssign(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		site, err := s.createSite(t.Context(), fmt.Sprintf("s%d", i), "", 1, 0)
+		site, err := s.createSite(t.Context(), fmt.Sprintf("s%d", i), "", 1, 0, visPublic)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -385,11 +385,11 @@ func TestConcurrentDeleteVersusSiteAssign(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _, updErr = s.updateSite(t.Context(), site.ID, nil, &g.ID)
+			_, updErr = s.updateSite(t.Context(), site, nil, &g.ID, nil)
 		}()
 		go func() {
 			defer wg.Done()
-			_, crtErr = s.createSite(t.Context(), fmt.Sprintf("n%d", i), "", 1, g.ID)
+			_, crtErr = s.createSite(t.Context(), fmt.Sprintf("n%d", i), "", 1, g.ID, visPublic)
 		}()
 		wg.Wait()
 

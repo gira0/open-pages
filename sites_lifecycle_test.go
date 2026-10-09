@@ -12,7 +12,7 @@ func ensureBlogSite(t *testing.T, s *Server) {
 	if _, err := s.getSite(t.Context(), "blog"); err == nil {
 		return
 	}
-	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0); err != nil {
+	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0, visPublic); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -56,7 +56,7 @@ func TestDeployAfterDeleteIsRejected(t *testing.T) {
 		"INSERT OR IGNORE INTO user (userid, email, password) VALUES (2, 'two@example.com', 'x')"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.createSite(t.Context(), "blog", "", 2, 0); err != nil {
+	if _, err := s.createSite(t.Context(), "blog", "", 2, 0, visPublic); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.deploy(t.Context(), stale, writeZip(t, late)); !errors.Is(err, errSiteNotFound) {
@@ -70,7 +70,11 @@ func TestDeployAfterDeleteIsRejected(t *testing.T) {
 // Updates touch only the fields they carry, so one never reverts the other.
 func TestUpdateSiteWritesOnlyGivenColumns(t *testing.T) {
 	_, s := newTestServer(t)
-	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO groups (groupid, name) VALUES (7, 'eng')"); err != nil {
+	owner := testOwner(t, s)
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO groups (groupid, name, owner) VALUES (7, 'eng', ?)", owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO user_group (uid, gid) VALUES (?, 7)", owner); err != nil {
 		t.Fatal(err)
 	}
 	ensureBlogSite(t, s)
@@ -80,21 +84,27 @@ func TestUpdateSiteWritesOnlyGivenColumns(t *testing.T) {
 	}
 
 	desc, grp := "hello", int64(7)
-	if _, _, err := s.updateSite(t.Context(), site.ID, &desc, nil); err != nil {
+	restricted := visRestricted
+	if _, err := s.updateSite(t.Context(), site, &desc, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.updateSite(t.Context(), site.ID, nil, &grp); err != nil {
+	if _, err := s.updateSite(t.Context(), site, nil, &grp, nil); err != nil {
 		t.Fatal(err)
 	}
-	gotDesc, gotGrp, err := s.updateSite(t.Context(), site.ID, nil, nil)
-	if err != nil || gotDesc != "hello" || gotGrp != 7 {
-		t.Fatalf("after two partial updates: %q %d %v", gotDesc, gotGrp, err)
+	if _, err := s.updateSite(t.Context(), site, nil, nil, &restricted); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.updateSite(t.Context(), site, nil, nil, nil)
+	if err != nil || got.Description != "hello" || got.GroupID != 7 || got.Visibility != visRestricted {
+		t.Fatalf("after partial updates: %+v %v", got, err)
 	}
 	zero := int64(0)
-	if _, gotGrp, _ = s.updateSite(t.Context(), site.ID, nil, &zero); gotGrp != 0 {
-		t.Fatalf("group not cleared: %d", gotGrp)
+	if got, _ = s.updateSite(t.Context(), site, nil, &zero, nil); got.GroupID != 0 {
+		t.Fatalf("group not cleared: %d", got.GroupID)
 	}
-	if _, _, err := s.updateSite(t.Context(), site.ID+100, &desc, nil); !errors.Is(err, errSiteNotFound) {
+	gone := site
+	gone.ID += 100
+	if _, err := s.updateSite(t.Context(), gone, &desc, nil, nil); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("update of missing site = %v", err)
 	}
 }

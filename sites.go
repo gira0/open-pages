@@ -49,6 +49,16 @@ type badArchiveError struct{ err error }
 func (e *badArchiveError) Error() string { return e.err.Error() }
 func (e *badArchiveError) Unwrap() error { return e.err }
 
+// Site visibility. A public site is served to everyone. A restricted site is served only
+// to its owner and to members of its group (see canView).
+const (
+	visPublic     = "public"
+	visRestricted = "restricted"
+)
+
+// validVisibility reports whether v is a known visibility.
+func validVisibility(v string) bool { return v == visPublic || v == visRestricted }
+
 // Site is a hosted site. OwnerID and GroupID are 0 when the site has no owner or group.
 type Site struct {
 	ID          int64
@@ -56,6 +66,7 @@ type Site struct {
 	Description string
 	OwnerID     int64
 	GroupID     int64
+	Visibility  string
 }
 
 // validSiteName reports whether name is usable as a site name (a DNS label).
@@ -87,20 +98,81 @@ func nullableID(id int64) any {
 	return id
 }
 
-// checkGroup returns errGroupNotFound unless group is 0 (none) or an existing group.
-func (s *Server) checkGroup(ctx context.Context, group int64) error {
+// checkGroup decides whether owner may put a site in group. 0 (none) is always fine. A
+// group counts only if the site owner belongs to it: it returns errGroupNotFound for an
+// unknown group and errNotGroupMember when the owner is not a member.
+func (s *Server) checkGroup(ctx context.Context, group, owner int64) error {
 	if group == 0 {
 		return nil
 	}
+	member, err := s.userInGroup(ctx, owner, group)
+	if err != nil {
+		return err
+	}
+	if member {
+		return nil
+	}
 	var one int
-	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM groups WHERE groupid = ?", group).Scan(&one)
+	err = s.db.QueryRowContext(ctx, "SELECT 1 FROM groups WHERE groupid = ?", group).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errGroupNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("query group: %w", err)
 	}
-	return nil
+	return errNotGroupMember
+}
+
+// canView reports whether the user (0 for anonymous) may see the site's content and
+// metadata. Public sites: everyone. Restricted sites: the owner, and members of the site's
+// group, but only while the owner is still a member of that group too, so a site can't be
+// shared with a group its owner has no standing in.
+func (s *Server) canView(ctx context.Context, site Site, user int64) (bool, error) {
+	if site.Visibility != visRestricted {
+		return true, nil
+	}
+	if user == 0 {
+		return false, nil
+	}
+	if user == site.OwnerID {
+		return true, nil
+	}
+	if site.GroupID == 0 || site.OwnerID == 0 {
+		return false, nil
+	}
+	member, err := s.userInGroup(ctx, user, site.GroupID)
+	if err != nil || !member {
+		return false, err
+	}
+	return s.userInGroup(ctx, site.OwnerID, site.GroupID)
+}
+
+// publicSite is one entry of the public site listing.
+type publicSite struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// listPublicSites returns the public sites ordered by name. It is never nil.
+func (s *Server) listPublicSites(ctx context.Context) ([]publicSite, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT name, COALESCE(description, '') FROM docs WHERE visibility = ? ORDER BY name", visPublic)
+	if err != nil {
+		return nil, fmt.Errorf("query public sites: %w", err)
+	}
+	defer rows.Close()
+	out := []publicSite{}
+	for rows.Next() {
+		var p publicSite
+		if err := rows.Scan(&p.Name, &p.Description); err != nil {
+			return nil, fmt.Errorf("scan site: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query public sites: %w", err)
+	}
+	return out, nil
 }
 
 // groupGone reports whether err is the foreign-key failure of writing a site's group
@@ -112,20 +184,24 @@ func groupGone(err error, group int64) bool {
 }
 
 // createSite registers a new site owned by owner, optionally in group (0 for none).
-// It returns errSiteExists on a name clash and errGroupNotFound for an unknown group.
-func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64) (Site, error) {
+// It returns errSiteExists on a name clash, errGroupNotFound for an unknown group and
+// errNotGroupMember if owner is not in the group.
+func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64, visibility string) (Site, error) {
 	if !validSiteName(name) {
 		return Site{}, fmt.Errorf("invalid site name %q", name)
 	}
 	if reservedSiteName(name) {
 		return Site{}, fmt.Errorf("site name %q is reserved", name)
 	}
-	if err := s.checkGroup(ctx, group); err != nil {
+	if !validVisibility(visibility) {
+		return Site{}, fmt.Errorf("invalid visibility %q", visibility)
+	}
+	if err := s.checkGroup(ctx, group, owner); err != nil {
 		return Site{}, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO docs (uowner, ugroup, name, description) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
-		owner, nullableID(group), name, description)
+		"INSERT INTO docs (uowner, ugroup, name, description, visibility) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
+		owner, nullableID(group), name, description, visibility)
 	if groupGone(err, group) {
 		return Site{}, errGroupNotFound
 	}
@@ -136,7 +212,7 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
-	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group}, nil
+	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group, Visibility: visibility}, nil
 }
 
 // getSite loads a site by name. It returns errSiteNotFound if there is none.
@@ -148,7 +224,7 @@ func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 		group sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		"SELECT docid, description, uowner, ugroup FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group)
+		"SELECT docid, description, uowner, ugroup, visibility FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group, &site.Visibility)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
@@ -159,11 +235,11 @@ func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 	return site, nil
 }
 
-// updateSite changes the description and/or group (0 for none) of the site with the
-// given id, writing only the columns whose argument is non-nil, in a single statement.
-// It returns the stored values, errGroupNotFound for an unknown group and errSiteNotFound
-// if the site has been deleted meanwhile.
-func (s *Server) updateSite(ctx context.Context, id int64, description *string, group *int64) (string, int64, error) {
+// updateSite changes the description, group (0 for none) and/or visibility of site,
+// writing only the columns whose argument is non-nil, in a single statement. It returns the
+// site with its stored values, errGroupNotFound for an unknown group, errNotGroupMember if
+// the owner is not in the new group and errSiteNotFound if the site has been deleted meanwhile.
+func (s *Server) updateSite(ctx context.Context, site Site, description *string, group *int64, visibility *string) (Site, error) {
 	var (
 		sets []string
 		args []any
@@ -173,33 +249,42 @@ func (s *Server) updateSite(ctx context.Context, id int64, description *string, 
 		args = append(args, *description)
 	}
 	if group != nil {
-		if err := s.checkGroup(ctx, *group); err != nil {
-			return "", 0, err
+		if err := s.checkGroup(ctx, *group, site.OwnerID); err != nil {
+			return Site{}, err
 		}
 		sets = append(sets, "ugroup = ?")
 		args = append(args, nullableID(*group))
 	}
+	if visibility != nil {
+		if !validVisibility(*visibility) {
+			return Site{}, fmt.Errorf("invalid visibility %q", *visibility)
+		}
+		sets = append(sets, "visibility = ?")
+		args = append(args, *visibility)
+	}
 	if len(sets) == 0 {
 		sets = append(sets, "docid = docid") // no-op write, so RETURNING reads the row
 	}
-	args = append(args, id)
+	args = append(args, site.ID)
 	var (
 		desc sql.NullString
 		grp  sql.NullInt64
+		out  = site
 	)
 	err := s.db.QueryRowContext(ctx,
-		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? RETURNING description, ugroup",
-		args...).Scan(&desc, &grp)
+		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? RETURNING description, ugroup, visibility",
+		args...).Scan(&desc, &grp, &out.Visibility)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, errSiteNotFound
+		return Site{}, errSiteNotFound
 	}
 	if group != nil && groupGone(err, *group) {
-		return "", 0, errGroupNotFound
+		return Site{}, errGroupNotFound
 	}
 	if err != nil {
-		return "", 0, fmt.Errorf("update site: %w", err)
+		return Site{}, fmt.Errorf("update site: %w", err)
 	}
-	return desc.String, grp.Int64, nil
+	out.Description, out.GroupID = desc.String, grp.Int64
+	return out, nil
 }
 
 // checkSiteLive returns errSiteNotFound unless the database still has this exact site:

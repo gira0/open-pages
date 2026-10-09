@@ -28,6 +28,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 	})
+	mux.HandleFunc("GET /v1/sites", s.handlePublicSites)
 	mux.HandleFunc("POST /v1/user/register", s.handleRegister)
 	mux.HandleFunc("POST /v1/user/login", s.handleLogin)
 
@@ -44,6 +45,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /v1/auth/groups/{id}/members", s.requireAuth(s.handleMemberAdd))
 	mux.Handle("DELETE /v1/auth/groups/{id}/members/{uid}", s.requireAuth(s.handleMemberRemove))
 	mux.Handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
+	mux.Handle("GET /v1/auth/sites/{name}", s.requireAuth(s.handleSiteGet))
 	mux.Handle("PUT /v1/auth/sites/{name}", s.requireAuth(s.handleSiteUpdate))
 	mux.Handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
 	mux.Handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))

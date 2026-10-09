@@ -51,13 +51,30 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 // serveSite serves filePath from the live version of site. Lookup and (later) access
 // control happen here, whatever the URL mode.
 func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePath string) {
-	if _, err := s.getSite(r.Context(), site); errors.Is(err, errSiteNotFound) {
+	rec, err := s.getSite(r.Context(), site)
+	if errors.Is(err, errSiteNotFound) {
 		http.NotFound(w, r)
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		slog.Error("look up site", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	restricted := rec.Visibility == visRestricted
+	if restricted {
+		// Session cookie or API token. Anyone not allowed, anonymous included, gets the same
+		// plain 404 as a missing site, so the response doesn't reveal that the site exists.
+		ok, err := s.viewerMaySee(r, rec)
+		if err != nil {
+			slog.Error("check site access", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
 	// CurrentDir is a symlink; os.Root follows it for the root itself but then refuses
@@ -100,8 +117,22 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-cache") // always revalidate: cheap with ETag, and deploys take effect at once
+	if restricted {
+		h.Set("Cache-Control", "private, no-cache") // shared caches must not hand it to others
+		h.Add("Vary", "Cookie, Authorization")
+	}
 	h.Set("ETag", etag(version, info))
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// viewerMaySee resolves who sent the request (API token or session cookie, 0 if neither is
+// valid) and whether that user may view site.
+func (s *Server) viewerMaySee(r *http.Request, site Site) (bool, error) {
+	uid, err := s.authUser(r)
+	if err != nil {
+		return false, err
+	}
+	return s.canView(r.Context(), site, uid)
 }
 
 // serveNotFound sends the site's own 404.html with status 404, or a plain 404.

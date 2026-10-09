@@ -13,7 +13,8 @@ import (
 type siteCreate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Group       int64  `json:"group"` // optional group id; 0 or absent for none
+	Group       int64  `json:"group"`      // optional group id; 0 or absent for none
+	Visibility  string `json:"visibility"` // "public" (default) or "restricted"
 }
 
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +37,20 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "description must be at most 512 characters")
 		return
 	}
-	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group)
+	if d.Visibility == "" {
+		d.Visibility = visPublic
+	}
+	if !validVisibility(d.Visibility) {
+		writeError(w, http.StatusBadRequest, errBadVisibility)
+		return
+	}
+	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
 	if errors.Is(err, errGroupNotFound) {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, errNotGroupMember) {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if errors.Is(err, errSiteExists) {
@@ -49,7 +61,7 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create site", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name})
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name, "visibility": d.Visibility})
 }
 
 // authorizeSite loads the site named in the URL and checks the caller owns it,
