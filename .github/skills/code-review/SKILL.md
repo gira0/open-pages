@@ -28,8 +28,9 @@ serves them. Review for correctness and security first; style is handled by `gol
 - **Site names** (`sites.go`): must be hostname-valid and must not be a reserved name.
 - **Serving and URL resolution** (`serve.go`, `resolve.go`): check both `url_mode = path` and
   `url_mode = subdomain`; no escaping the site root; behaviour on unknown or reserved hosts.
-- **Log injection**: do not log raw user-controlled values (paths, hosts, names, headers).
-  CodeQL flags this; log IDs, matched route patterns and status instead.
+- **Log injection**: do not log raw unvalidated user input (request paths, hosts, headers,
+  client addresses). CodeQL flags this; log IDs, matched route patterns and status instead.
+  Values already validated to a bounded form, such as a site name (a DNS label), are fine.
 - **Redirects and outbound HTTP** (`cli.go`): never forward credentials across redirects.
 
 ## Data and deploys
@@ -57,8 +58,9 @@ Past Copilot reviews kept raising these:
 1. Concurrency between deploy, delete, update and prune on the same site.
 2. Docs or comments that promise more than the code does.
 3. Config values parsed too leniently (accept only the documented values).
-4. Credentials or headers leaking: redirects, CORS (`Access-Control-Expose-Headers`),
-   fallback between auth schemes.
+4. Credentials leaking: forwarded across redirects, or falling back between auth schemes.
+   (CORS `Access-Control-Expose-Headers: X-Request-Id` is required so browsers can read the
+   request ID; do not flag it.)
 5. Blocking calls that ignore their context or timeout (filesystem, network).
 6. UI or templates left stale after an API or route change.
 
