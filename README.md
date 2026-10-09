@@ -236,3 +236,9 @@ merges; no independent approval is required while the project has a solo maintai
 Actions have read-only default permissions and cannot approve pull requests.
 Secret scanning and push protection are enabled. See [SECURITY.md](SECURITY.md) for
 supported versions and private vulnerability reporting.
+
+## Code review
+
+Copilot code review reads [`.github/skills/code-review/SKILL.md`](.github/skills/code-review/SKILL.md)
+for this repo's conventions, security-sensitive areas and accepted patterns. Update it when a
+review finding keeps recurring or a convention changes.
