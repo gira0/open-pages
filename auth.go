@@ -101,17 +101,21 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge in
 	})
 }
 
-// requireAuth rejects requests without a valid session and passes the user id on in the context.
+// requireAuth rejects requests without a valid session or API token and passes the user
+// id on in the context.
 func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uid, err := s.sessionUser(r)
+		uid, err := s.authUser(r)
 		if err != nil {
-			internalError(w, "session lookup", err)
+			internalError(w, "auth lookup", err)
 			return
 		}
 		if uid == 0 {
-			if _, err := r.Cookie(sessionCookie); err == nil {
-				s.setSessionCookie(w, "", -1)
+			// A rejected API token says nothing about the session cookie.
+			if _, bearer := bearerToken(r); !bearer {
+				if _, err := r.Cookie(sessionCookie); err == nil {
+					s.setSessionCookie(w, "", -1)
+				}
 			}
 			writeError(w, http.StatusUnauthorized, "unauthenticated")
 			return

@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/rs/xid"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // A site is a row in the docs table plus a directory tree under op_data:
@@ -101,6 +103,14 @@ func (s *Server) checkGroup(ctx context.Context, group int64) error {
 	return nil
 }
 
+// groupGone reports whether err is the foreign-key failure of writing a site's group
+// column because that group was deleted after checkGroup looked. group is the id being
+// written, 0 meaning none.
+func groupGone(err error, group int64) bool {
+	var se *sqlite.Error
+	return group != 0 && errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY
+}
+
 // createSite registers a new site owned by owner, optionally in group (0 for none).
 // It returns errSiteExists on a name clash and errGroupNotFound for an unknown group.
 func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64) (Site, error) {
@@ -116,6 +126,9 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	res, err := s.db.ExecContext(ctx,
 		"INSERT INTO docs (uowner, ugroup, name, description) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
 		owner, nullableID(group), name, description)
+	if groupGone(err, group) {
+		return Site{}, errGroupNotFound
+	}
 	if err != nil {
 		return Site{}, fmt.Errorf("insert site: %w", err)
 	}
@@ -179,6 +192,9 @@ func (s *Server) updateSite(ctx context.Context, id int64, description *string, 
 		args...).Scan(&desc, &grp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, errSiteNotFound
+	}
+	if group != nil && groupGone(err, *group) {
+		return "", 0, errGroupNotFound
 	}
 	if err != nil {
 		return "", 0, fmt.Errorf("update site: %w", err)
