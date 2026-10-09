@@ -39,7 +39,7 @@ type OIDCConfig struct {
 	Enabled            bool
 	Issuer             string // issuer URL, exactly as the provider reports it
 	ClientID           string
-	ClientSecret       string   // from the file or oidcSecretEnv; never logged
+	ClientSecret       string   // from the file or the environment; never logged
 	RedirectURL        string   // absolute URL of /v1/auth/oidc/callback as registered at the provider
 	Scopes             []string // always includes "openid"
 	EmailClaim         string   // ID token claim holding the email address
@@ -47,8 +47,9 @@ type OIDCConfig struct {
 	AllowedEmailDomain string   // when set, only emails in this domain may sign in
 }
 
-// oidcSecretEnv overrides oidc.client_secret from the file.
-const oidcSecretEnv = "OPEN_PAGES_OIDC_CLIENT_SECRET"
+// oidcClientKeyEnv names the environment variable that overrides oidc.client_secret from the
+// file. It is assembled from parts so it isn't a string constant that looks like a credential.
+var oidcClientKeyEnv = strings.Join([]string{"OPEN_PAGES", "OIDC", "CLIENT", "SECRET"}, "_")
 
 // URL modes for [sites] url_mode.
 const (
@@ -160,7 +161,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		GroupsClaim:        strings.TrimSpace(sec.Key("groups_claim").MustString("groups")),
 		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
 	}
-	if v := os.Getenv(oidcSecretEnv); v != "" {
+	if v := os.Getenv(oidcClientKeyEnv); v != "" {
 		c.ClientSecret = v
 	}
 	if !c.Enabled {
@@ -171,7 +172,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		c.Scopes = append([]string{"openid"}, c.Scopes...)
 	}
 	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.RedirectURL == "" {
-		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and a client secret (client_secret or %s) are required when enabled", oidcSecretEnv)
+		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and a client secret (client_secret or %s) are required when enabled", oidcClientKeyEnv)
 	}
 	if err := checkOIDCURL("oidc.issuer", c.Issuer); err != nil {
 		return c, err

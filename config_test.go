@@ -103,7 +103,7 @@ allowed_email_domain = @Corp.Example
 		o.AllowedEmailDomain != "corp.example" || !slices.Equal(o.Scopes, []string{"openid", "profile", "email"}) {
 		t.Fatalf("unexpected OIDC config: %+v", o)
 	}
-	t.Setenv(oidcSecretEnv, "from-env")
+	t.Setenv(oidcClientKeyEnv, "from-env")
 	if cfg, err = loadConfig(path); err != nil || cfg.OIDC.ClientSecret != "from-env" {
 		t.Fatalf("the environment secret must win: %q, %v", cfg.OIDC.ClientSecret, err)
 	}

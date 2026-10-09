@@ -37,8 +37,8 @@ type idpSettings struct {
 	tweak      func(claims map[string]any)
 }
 
-// fakeIdP is an in-process OpenID provider with discovery, JWKS, authorize and token endpoints.
-type fakeIdP struct {
+// fakeIDP is an in-process OpenID provider with discovery, JWKS, authorize and token endpoints.
+type fakeIDP struct {
 	srv     *httptest.Server
 	rsaKey  *rsa.PrivateKey
 	ecKey   *ecdsa.PrivateKey
@@ -51,9 +51,9 @@ type fakeIdP struct {
 
 type idpAuthRequest struct{ nonce, challenge string }
 
-func newFakeIdP(t *testing.T) *fakeIdP {
+func newFakeIdP(t *testing.T) *fakeIDP {
 	t.Helper()
-	p := &fakeIdP{codes: map[string]idpAuthRequest{}, set: idpSettings{sub: "sub-1", email: "ann@corp.example"}}
+	p := &fakeIDP{codes: map[string]idpAuthRequest{}, set: idpSettings{sub: "sub-1", email: "ann@corp.example"}}
 	var err error
 	if p.rsaKey, err = rsa.GenerateKey(rand.Reader, 2048); err != nil {
 		t.Fatal(err)
@@ -93,13 +93,13 @@ func pad32(b []byte) []byte {
 	return append(make([]byte, 32-len(b)), b...)
 }
 
-func (p *fakeIdP) exchanged() int {
+func (p *fakeIDP) exchanged() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.tokenOK
 }
 
-func (p *fakeIdP) update(f func(s *idpSettings)) {
+func (p *fakeIDP) update(f func(s *idpSettings)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	f(&p.set)
@@ -107,7 +107,7 @@ func (p *fakeIdP) update(f func(s *idpSettings)) {
 
 // authorize plays the user's approval at the provider: it takes the URL the login endpoint
 // redirected to and returns the callback query the provider would send the browser back with.
-func (p *fakeIdP) authorize(t *testing.T, location string) url.Values {
+func (p *fakeIDP) authorize(t *testing.T, location string) url.Values {
 	t.Helper()
 	u, err := url.Parse(location)
 	if err != nil || !strings.HasPrefix(location, p.srv.URL+"/authorize?") {
@@ -133,7 +133,7 @@ func (p *fakeIdP) authorize(t *testing.T, location string) url.Values {
 	return url.Values{"code": {code}, "state": {q.Get("state")}}
 }
 
-func (p *fakeIdP) handleToken(w http.ResponseWriter, r *http.Request) {
+func (p *fakeIDP) handleToken(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -174,7 +174,7 @@ func (p *fakeIdP) handleToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id_token": p.sign(s, claims), "token_type": "Bearer"})
 }
 
-func (p *fakeIdP) sign(s idpSettings, claims map[string]any) string {
+func (p *fakeIDP) sign(s idpSettings, claims map[string]any) string {
 	hdr := map[string]string{"alg": "RS256", "kid": "rsa1", "typ": "JWT"}
 	if s.alg != "" {
 		hdr["alg"] = s.alg
@@ -187,9 +187,9 @@ func (p *fakeIdP) sign(s idpSettings, claims map[string]any) string {
 	input := b64(hb) + "." + b64(cb)
 	digest := sha256.Sum256([]byte(input))
 	var sig []byte
-	switch {
-	case s.alg == "none":
-	case s.alg == "ES256":
+	switch s.alg {
+	case "none":
+	case "ES256":
 		der, _ := ecdsa.SignASN1(rand.Reader, p.ecKey, digest[:])
 		var rs struct{ R, S *big.Int }
 		_, _ = asn1.Unmarshal(der, &rs)
@@ -205,7 +205,7 @@ func (p *fakeIdP) sign(s idpSettings, claims map[string]any) string {
 }
 
 // newOIDCTestServer starts open-pages with OIDC pointed at idp. mutate adjusts the config.
-func newOIDCTestServer(t *testing.T, idp *fakeIdP, mutate func(*Config)) (*httptest.Server, *Server) {
+func newOIDCTestServer(t *testing.T, idp *fakeIDP, mutate func(*Config)) (*httptest.Server, *Server) {
 	t.Helper()
 	cfg := defaultConfig()
 	cfg.DataPath, cfg.TmpPath = t.TempDir(), t.TempDir()
@@ -249,7 +249,7 @@ func oidcGet(t *testing.T, c *http.Client, target string) (int, string, http.Hea
 }
 
 // signIn runs the whole flow for idp's current settings and returns the callback's status.
-func signIn(t *testing.T, ts *httptest.Server, idp *fakeIdP, c *http.Client) int {
+func signIn(t *testing.T, ts *httptest.Server, idp *fakeIDP, c *http.Client) int {
 	t.Helper()
 	code, _, h := oidcGet(t, c, ts.URL+"/v1/auth/oidc/login")
 	expectStatus(t, code, http.StatusFound)

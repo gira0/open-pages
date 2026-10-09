@@ -345,7 +345,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, err := s.oidc.metadata(r.Context())
 	if err != nil {
-		oidcUnavailable(w, "oidc discovery", err)
+		oidcUnavailable(w, "oidc discovery")
 		return
 	}
 	state, redirect, ok := s.oidc.begin(meta, returnTo)
@@ -359,8 +359,10 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
-func oidcUnavailable(w http.ResponseWriter, msg string, err error) {
-	slog.Error(msg, "err", err, "request_id", requestIDOf(w))
+// oidcUnavailable logs a fixed message (the error can carry request-derived text, so it is not
+// logged) and answers 502.
+func oidcUnavailable(w http.ResponseWriter, msg string) {
+	slog.Error(msg, "request_id", requestIDOf(w))
 	writeError(w, http.StatusBadGateway, "identity provider unavailable")
 }
 
@@ -389,12 +391,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	meta, err := s.oidc.metadata(r.Context())
 	if err != nil {
-		oidcUnavailable(w, "oidc discovery", err)
+		oidcUnavailable(w, "oidc discovery")
 		return
 	}
 	raw, err := s.oidc.exchangeCode(r.Context(), meta, code, pending.verifier)
 	if err != nil {
-		oidcUnavailable(w, "oidc code exchange", err)
+		oidcUnavailable(w, "oidc code exchange")
 		return
 	}
 	claims, err := s.oidc.idTokenClaims(r.Context(), meta, raw)
