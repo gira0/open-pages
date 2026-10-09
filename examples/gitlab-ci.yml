@@ -1,6 +1,6 @@
 # Example only: add to the .gitlab-ci.yml of the project that holds your site.
 #
-# Setup: create an API token in open-pages (POST /v1/auth/tokens, see the README) and add it
+# Setup: create an API token in open-pages (POST /v1/auth/tokens, see docs/api.md) and add it
 # as the masked CI/CD variable OPEN_PAGES_TOKEN. Add the server URL as OPEN_PAGES_URL.
 deploy-pages:
   image: golang:1

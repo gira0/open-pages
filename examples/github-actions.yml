@@ -1,7 +1,7 @@
 # Example only: copy to .github/workflows/deploy.yml in the repository that holds your site.
 #
 # Setup:
-#   1. Log in to open-pages and create an API token (POST /v1/auth/tokens, see the README).
+#   1. Log in to open-pages and create an API token (POST /v1/auth/tokens, see docs/api.md).
 #   2. Add it as the repository secret OPEN_PAGES_TOKEN.
 #   3. Add the server URL as the repository variable OPEN_PAGES_URL (https://pages.corp).
 name: Deploy site
