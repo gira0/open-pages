@@ -20,6 +20,7 @@ type Server struct {
 	deployMu sync.Mutex // serializes switching and pruning versions
 	metrics  *metrics
 	health   healthProbe
+	oidc     *oidcClient // nil unless [oidc] is enabled
 }
 
 func (s *Server) routes() http.Handler {
@@ -34,8 +35,14 @@ func (s *Server) routes() http.Handler {
 	if s.cfg.MetricsToken != "" {
 		mux.HandleFunc("GET /metrics", s.handleMetrics)
 	}
-	mux.HandleFunc("POST /v1/user/register", s.handleRegister)
-	mux.HandleFunc("POST /v1/user/login", s.handleLogin)
+	if s.cfg.LocalLogin {
+		mux.HandleFunc("POST /v1/user/register", s.handleRegister)
+		mux.HandleFunc("POST /v1/user/login", s.handleLogin)
+	}
+	if s.oidc != nil {
+		mux.HandleFunc("GET /v1/auth/oidc/login", s.handleOIDCLogin)
+		mux.HandleFunc("GET /v1/auth/oidc/callback", s.handleOIDCCallback)
+	}
 
 	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
 	mux.Handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))

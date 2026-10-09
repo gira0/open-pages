@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -26,7 +30,25 @@ type Config struct {
 	LogFormat      string     // logFormatText or logFormatJSON
 	MetricsListen  string     // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
 	MetricsToken   string     // bearer token for /metrics on the main listener; empty disables it there
+	LocalLogin     bool       // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
+	OIDC           OIDCConfig // optional OpenID Connect sign-in; disabled by default
 }
+
+// OIDCConfig is the [oidc] section.
+type OIDCConfig struct {
+	Enabled            bool
+	Issuer             string // issuer URL, exactly as the provider reports it
+	ClientID           string
+	ClientSecret       string   // from the file or oidcSecretEnv; never logged
+	RedirectURL        string   // absolute URL of /v1/auth/oidc/callback as registered at the provider
+	Scopes             []string // always includes "openid"
+	EmailClaim         string   // ID token claim holding the email address
+	GroupsClaim        string   // ID token claim holding the group names; empty disables group mapping
+	AllowedEmailDomain string   // when set, only emails in this domain may sign in
+}
+
+// oidcSecretEnv overrides oidc.client_secret from the file.
+const oidcSecretEnv = "OPEN_PAGES_OIDC_CLIENT_SECRET"
 
 // URL modes for [sites] url_mode.
 const (
@@ -49,6 +71,7 @@ func defaultConfig() Config {
 		URLMode:        urlModePath,
 		LogLevel:       slog.LevelInfo,
 		LogFormat:      logFormatText,
+		LocalLogin:     true,
 	}
 }
 
@@ -109,6 +132,14 @@ func loadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("metrics.token: must be at least %d characters", minMetricsTokenLen)
 	}
 
+	cfg.LocalLogin = f.Section("auth").Key("local_login").MustBool(cfg.LocalLogin)
+	if cfg.OIDC, err = loadOIDCConfig(f.Section("oidc")); err != nil {
+		return cfg, err
+	}
+	if !cfg.LocalLogin && !cfg.OIDC.Enabled {
+		return cfg, errors.New("auth.local_login = false needs [oidc] enabled = true, or nobody could sign in")
+	}
+
 	if cfg.DataPath, err = filepath.Abs(cfg.DataPath); err != nil {
 		return cfg, fmt.Errorf("datapath: %w", err)
 	}
@@ -116,4 +147,55 @@ func loadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("tmppath: %w", err)
 	}
 	return cfg, nil
+}
+
+func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
+	c := OIDCConfig{
+		Enabled:            sec.Key("enabled").MustBool(false),
+		Issuer:             strings.TrimSpace(sec.Key("issuer").String()),
+		ClientID:           strings.TrimSpace(sec.Key("client_id").String()),
+		ClientSecret:       sec.Key("client_secret").String(),
+		RedirectURL:        strings.TrimSpace(sec.Key("redirect_url").String()),
+		EmailClaim:         sec.Key("email_claim").MustString("email"),
+		GroupsClaim:        strings.TrimSpace(sec.Key("groups_claim").MustString("groups")),
+		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
+	}
+	if v := os.Getenv(oidcSecretEnv); v != "" {
+		c.ClientSecret = v
+	}
+	if !c.Enabled {
+		return OIDCConfig{}, nil
+	}
+	c.Scopes = strings.Fields(strings.ReplaceAll(sec.Key("scopes").MustString("openid email profile"), ",", " "))
+	if !slices.Contains(c.Scopes, "openid") {
+		c.Scopes = append([]string{"openid"}, c.Scopes...)
+	}
+	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.RedirectURL == "" {
+		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and a client secret (client_secret or %s) are required when enabled", oidcSecretEnv)
+	}
+	if err := checkOIDCURL("oidc.issuer", c.Issuer); err != nil {
+		return c, err
+	}
+	if err := checkOIDCURL("oidc.redirect_url", c.RedirectURL); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// checkOIDCURL requires an absolute https URL; plain http is accepted only for loopback
+// hosts (local development against a test provider).
+func checkOIDCURL(key, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Fragment != "" {
+		return fmt.Errorf("%s: must be an absolute URL", key)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if h := u.Hostname(); h == "localhost" || h == "127.0.0.1" || h == "::1" {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: must use https (http is only allowed for localhost)", key)
 }
