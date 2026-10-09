@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -39,17 +38,13 @@ type OIDCConfig struct {
 	Enabled            bool
 	Issuer             string // issuer URL, exactly as the provider reports it
 	ClientID           string
-	ClientSecret       string   // from the file or the environment; never logged
+	ClientSecret       string   // from the settings file only; never logged
 	RedirectURL        string   // absolute URL of /v1/auth/oidc/callback as registered at the provider
 	Scopes             []string // always includes "openid"
 	EmailClaim         string   // ID token claim holding the email address
 	GroupsClaim        string   // ID token claim holding the group names; empty disables group mapping
 	AllowedEmailDomain string   // when set, only emails in this domain may sign in
 }
-
-// oidcClientKeyEnv names the environment variable that overrides oidc.client_secret from the
-// file. It is assembled from parts so it isn't a string constant that looks like a credential.
-var oidcClientKeyEnv = strings.Join([]string{"OPEN_PAGES", "OIDC", "CLIENT", "SECRET"}, "_")
 
 // URL modes for [sites] url_mode.
 const (
@@ -133,7 +128,9 @@ func loadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("metrics.token: must be at least %d characters", minMetricsTokenLen)
 	}
 
-	cfg.LocalLogin = f.Section("auth").Key("local_login").MustBool(cfg.LocalLogin)
+	if cfg.LocalLogin, err = strictBool(f.Section("auth"), "local_login", cfg.LocalLogin); err != nil {
+		return cfg, err
+	}
 	if cfg.OIDC, err = loadOIDCConfig(f.Section("oidc")); err != nil {
 		return cfg, err
 	}
@@ -150,9 +147,26 @@ func loadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+// strictBool reads a boolean key, failing on anything that isn't a boolean instead of
+// silently using the default (a typo must not leave a security setting at its default).
+func strictBool(sec *ini.Section, name string, def bool) (bool, error) {
+	if !sec.HasKey(name) {
+		return def, nil
+	}
+	v, err := sec.Key(name).Bool()
+	if err != nil {
+		return def, fmt.Errorf("%s.%s: must be true or false", sec.Name(), name)
+	}
+	return v, nil
+}
+
 func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
+	enabled, err := strictBool(sec, "enabled", false)
+	if err != nil {
+		return OIDCConfig{}, err
+	}
 	c := OIDCConfig{
-		Enabled:            sec.Key("enabled").MustBool(false),
+		Enabled:            enabled,
 		Issuer:             strings.TrimSpace(sec.Key("issuer").String()),
 		ClientID:           strings.TrimSpace(sec.Key("client_id").String()),
 		ClientSecret:       sec.Key("client_secret").String(),
@@ -160,9 +174,6 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		EmailClaim:         sec.Key("email_claim").MustString("email"),
 		GroupsClaim:        strings.TrimSpace(sec.Key("groups_claim").MustString("groups")),
 		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
-	}
-	if v := os.Getenv(oidcClientKeyEnv); v != "" {
-		c.ClientSecret = v
 	}
 	if !c.Enabled {
 		return OIDCConfig{}, nil
@@ -172,7 +183,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		c.Scopes = append([]string{"openid"}, c.Scopes...)
 	}
 	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.RedirectURL == "" {
-		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and a client secret (client_secret or %s) are required when enabled", oidcClientKeyEnv)
+		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and and client_secret are required when enabled")
 	}
 	if err := checkOIDCURL("oidc.issuer", c.Issuer); err != nil {
 		return c, err

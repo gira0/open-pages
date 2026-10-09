@@ -10,6 +10,7 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -558,5 +559,85 @@ func TestOIDCSecretNeverServed(t *testing.T) {
 	_, body, h := oidcGet(t, c, ts.URL+"/v1/auth/oidc/login")
 	if strings.Contains(body+h.Get("Location"), testClientSecret) {
 		t.Fatal("client secret leaked into the login response")
+	}
+}
+
+func TestOIDCConcurrentEmailVariants(t *testing.T) {
+	idp := newFakeIDP(t)
+	_, s := newOIDCTestServer(t, idp, nil)
+	ids := []oidcIdentity{
+		{issuer: idp.srv.URL, subject: "sub-a", email: "Ann@Corp.example"},
+		{issuer: idp.srv.URL, subject: "sub-b", email: "ann@corp.example"},
+	}
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = s.oidcUser(t.Context(), ids[i])
+		}()
+	}
+	wg.Wait()
+	taken := 0
+	for _, err := range errs {
+		if errors.Is(err, errOIDCEmailTaken) {
+			taken++
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if users := countUsers(t, s); taken != 1 || users != 1 {
+		t.Fatalf("taken = %d, users = %d; want exactly one insert to win", taken, users)
+	}
+}
+
+func TestManualAddKeepsMembershipAcrossSync(t *testing.T) {
+	idp := newFakeIDP(t)
+	ts, s := newOIDCTestServer(t, idp, nil)
+	owner := loggedInClient(t, ts)
+	gid := newGroupVia(t, ts, owner, "eng")
+	idp.update(func(s *idpSettings) { s.groups = []string{"eng"} })
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+
+	// The owner adds the provider-managed member by hand; the membership becomes manual.
+	code, _ := doJSON(t, owner, http.MethodPost, groupURL(ts, gid, "/members"), `{"email":"ann@corp.example"}`)
+	expectStatus(t, code, http.StatusOK)
+
+	idp.update(func(s *idpSettings) { s.groups = nil })
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var n int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM user_group WHERE gid = ? AND oidc = 0 AND uid IN (SELECT userid FROM user WHERE oidc_subject = 'sub-1')",
+		gid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("manual membership survivors = %d (%v), want 1", n, err)
+	}
+}
+
+func TestIndexShowsEnabledSignInMethods(t *testing.T) {
+	idp := newFakeIDP(t)
+	for _, tc := range []struct {
+		name  string
+		local bool
+	}{
+		{"both", true},
+		{"oidc only", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, _ := newOIDCTestServer(t, idp, func(c *Config) { c.LocalLogin = tc.local })
+			code, body, _ := oidcGet(t, browser(t), ts.URL+"/index")
+			expectStatus(t, code, http.StatusOK)
+			if got := strings.Contains(body, `action="/v1/user/login"`); got != tc.local {
+				t.Errorf("local form shown = %v, want %v", got, tc.local)
+			}
+			if !strings.Contains(body, `href="/v1/auth/oidc/login"`) {
+				t.Error("OIDC sign-in link missing")
+			}
+		})
+	}
+	ts, _ := newTestServer(t)
+	_, body, _ := oidcGet(t, browser(t), ts.URL+"/index")
+	if strings.Contains(body, "oidc/login") || !strings.Contains(body, `action="/v1/user/login"`) {
+		t.Error("default server must show only the local form")
 	}
 }

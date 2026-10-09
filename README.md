@@ -172,7 +172,6 @@ default and the server starts unchanged without an `[oidc]` section. LDAP is not
 enabled = true
 issuer = https://sso.example.com/realms/corp
 client_id = open-pages
-# or set OPEN_PAGES_OIDC_CLIENT_SECRET, which wins over the file
 client_secret = ...
 redirect_url = https://pages.example.com/v1/auth/oidc/callback
 scopes = openid email profile
@@ -184,7 +183,8 @@ allowed_email_domain = corp.example
 `issuer` and `redirect_url` must be https (plain http only for localhost). The issuer must be
 exactly what the provider reports in `<issuer>/.well-known/openid-configuration`, which is
 fetched on the first sign-in, so the server starts even while the provider is down. The client
-secret comes from the file or the environment and is never logged.
+secret is read from the settings file only (there is no environment override) and is never
+logged; make the file readable only by the service user.
 
 Setup with Keycloak: create an OpenID Connect client with "Client authentication" on, the
 standard flow enabled and the valid redirect URI above; copy its secret from the Credentials
@@ -222,7 +222,7 @@ Memberships added by hand through the API are never removed by this; if the owne
 provider-managed member, the next sign-in adds them back.
 
 **OIDC-only setups.** `[auth] local_login = false` leaves `/v1/user/register` and
-`/v1/user/login` unregistered (POSTs get 405; default `true`). It requires `[oidc]` to be enabled.
+`/v1/user/login` unregistered, so those requests are rejected (default `true`; a value that isn't `true` or `false` fails startup). It requires `[oidc]` to be enabled.
 Existing local sessions and API tokens keep working.
 
 In subdomain mode the session cookie is host-only (see Access control), so signing in does not

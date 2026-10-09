@@ -505,18 +505,14 @@ func (s *Server) oidcUser(ctx context.Context, id oidcIdentity) (int64, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("lookup oidc user: %w", err)
 	}
-	var taken bool
-	if err := s.db.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT 1 FROM user WHERE email = ? COLLATE NOCASE)", id.email).Scan(&taken); err != nil {
-		return 0, fmt.Errorf("check email: %w", err)
-	}
-	if taken {
-		return 0, errOIDCEmailTaken
-	}
-	// The empty password hash never matches, so the account can't use local login.
+	// The empty password hash never matches, so the account can't use local login. The
+	// case-insensitive email check is part of the INSERT, so two concurrent first logins
+	// with case variants of one email can't both succeed.
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO user (email, password, oidc_issuer, oidc_subject) VALUES (?, '', ?, ?) ON CONFLICT DO NOTHING",
-		id.email, id.issuer, id.subject)
+		`INSERT INTO user (email, password, oidc_issuer, oidc_subject)
+		 SELECT ?, '', ?, ? WHERE NOT EXISTS (SELECT 1 FROM user WHERE email = ? COLLATE NOCASE)
+		 ON CONFLICT DO NOTHING`,
+		id.email, id.issuer, id.subject, id.email)
 	if err != nil {
 		return 0, fmt.Errorf("insert oidc user: %w", err)
 	}

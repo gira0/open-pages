@@ -69,7 +69,8 @@ func (s *Server) routes() http.Handler {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if err := s.tmpl.ExecuteTemplate(w, "index.html", map[string]string{"title": "Posts"}); err != nil {
+	data := map[string]any{"title": "Posts", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil}
+	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		ctxLogger(r.Context()).Error("render index", "err", err)
 	}
 }

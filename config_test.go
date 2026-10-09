@@ -103,9 +103,9 @@ allowed_email_domain = @Corp.Example
 		o.AllowedEmailDomain != "corp.example" || !slices.Equal(o.Scopes, []string{"openid", "profile", "email"}) {
 		t.Fatalf("unexpected OIDC config: %+v", o)
 	}
-	t.Setenv(oidcClientKeyEnv, "from-env")
-	if cfg, err = loadConfig(path); err != nil || cfg.OIDC.ClientSecret != "from-env" {
-		t.Fatalf("the environment secret must win: %q, %v", cfg.OIDC.ClientSecret, err)
+	t.Setenv("OPEN_PAGES_OIDC_CLIENT_SECRET", "from-env")
+	if cfg, err = loadConfig(path); err != nil || cfg.OIDC.ClientSecret != "from-file" {
+		t.Fatalf("the environment must not override the file: %q, %v", cfg.OIDC.ClientSecret, err)
 	}
 }
 
@@ -116,6 +116,8 @@ func TestLoadOIDCConfigErrors(t *testing.T) {
 		"plain http":       "[oidc]\nenabled = true\nissuer = http://sso.example\nclient_id = x\nclient_secret = y\nredirect_url = https://p.example/cb\n",
 		"relative url":     "[oidc]\nenabled = true\nissuer = https://sso.example\nclient_id = x\nclient_secret = y\nredirect_url = /cb\n",
 		"nobody can login": "[auth]\nlocal_login = false\n",
+		"typo local_login": "[auth]\nlocal_login = flase\n",
+		"typo enabled":     "[oidc]\nenabled = treu\n",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
