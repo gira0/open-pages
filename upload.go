@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 )
@@ -126,18 +125,22 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 
 	version, err := s.deploy(r.Context(), site, spool)
 	if errors.Is(err, errSiteNotFound) {
+		s.metrics.recordDeploy(deployFailed)
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	var bad *badArchiveError
 	if errors.As(err, &bad) {
-		slog.Info("rejected upload", "site", site.Name, "err", err)
+		s.metrics.recordDeploy(deployRejected)
+		ctxLogger(r.Context()).Info("rejected upload", "site", site.Name)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err != nil {
+		s.metrics.recordDeploy(deployFailed)
 		internalError(w, "deploy site", err)
 		return
 	}
+	s.metrics.recordDeploy(deployOK)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "site": site.Name, "version": version})
 }
