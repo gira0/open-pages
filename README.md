@@ -3,7 +3,7 @@
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
 
 > Status: early prototype. Users can register, log in, upload a site archive (or deploy from
-> CI with an API token) and have it served. Per-site access control is not in yet: every deployed site is public.
+> CI with an API token) and have it served, publicly or restricted to a group.
 
 ## Requirements
 
@@ -51,6 +51,7 @@ version (stable releases also get `major.minor` and `latest`).
 | GET | `/v1/ping` | | Liveness: answers `pong` without touching anything |
 | GET | `/healthz` | | Health: pings the database and checks that `op_data/` and the staging `tmp/` are writable; `200 {"status":"ok",...}` or `503 {"status":"fail",...}` with a per-check `ok`/`fail` (reasons go to the log) |
 | GET | `/metrics` | token | Prometheus metrics; off unless configured, see [Operations](#operations) |
+| GET | `/v1/sites` | | List the public sites (`name`, `description`); authenticated and restricted sites never appear |
 | POST | `/v1/user/register` | | Create a user (JSON or form: `email`, `password`) |
 | POST | `/v1/user/login` | | Log in and receive a session cookie |
 | GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
@@ -64,8 +65,9 @@ version (stable releases also get `major.minor` and `latest`).
 | DELETE | `/v1/auth/groups/{id}` | ✓ | Delete the group and its memberships; owner only, and only while no site uses it |
 | POST | `/v1/auth/groups/{id}/members` | ✓ | Add a member by `email`; owner only |
 | DELETE | `/v1/auth/groups/{id}/members/{userid}` | ✓ | Remove a member; owner only, or yourself to leave |
-| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description` and `group` id); the name must be a DNS label |
-| PUT | `/v1/auth/sites/{name}` | ✓ | Change `description` and/or `group` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
+| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description`, `group` id and `visibility`); the name must be a DNS label |
+| GET | `/v1/auth/sites/{name}` | ✓ | Site metadata (description, owner, group, visibility, current version); anyone who may view the site, others get 403 |
+| PUT | `/v1/auth/sites/{name}` | ✓ | Change `description`, `group` and/or `visibility` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
 | DELETE | `/v1/auth/sites/{name}` | ✓ | Delete the site, all its versions and its database row; owner only |
 | POST | `/v1/auth/sites/{name}/upload` | ✓ | Deploy a `.zip`, `.tar.gz` or `.tar` (raw body) as a new version; owner only |
 | POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
@@ -77,7 +79,7 @@ session only.
 
 Whoever creates a site owns it. Only the owner can update, delete, redeploy, list versions
 of or roll back a site: other users get 403, unknown sites 404. A `group` must be the id of
-an existing group, otherwise the request fails with 400.
+an existing group (otherwise 400) that the site owner is a member of (otherwise 403).
 
 Groups: any logged-in user can create one and owns it. Only the owner can delete the group
 or add and remove other members; any member can leave, and the owner can't be removed (delete
@@ -129,6 +131,33 @@ not exist (`-create=false` turns that off). Install it with
 `go install github.com/gira0/open-pages@latest`. Example pipelines for
 [GitHub Actions](examples/github-actions.yml) and [GitLab CI](examples/gitlab-ci.yml) are in
 [`examples/`](examples/); they are examples only and are not run by this repository's CI.
+
+## Access control
+
+Every site has a `visibility`, set when it is created or later by its owner (default `public`):
+
+- `public`: served to everyone and listed by `GET /v1/sites`.
+- `authenticated`: served to any logged-in user (session cookie or API token); anonymous
+  visitors get a 404. Not listed by `GET /v1/sites`.
+- `restricted`: served only to the owner and the members of the site's `group`. A restricted
+  site without a group is private to its owner.
+
+A site's group counts for access only while the **site owner is a member of it**. Assigning a
+site to a group its owner is not in is refused (403), and if the owner later leaves the group
+the other members lose access at once (the owner keeps it). Both session cookies and API tokens
+(`Authorization: Bearer ...`) are honoured, in both URL modes.
+
+Refusals: when serving, anyone who may not view a non-public site, anonymous visitors included,
+gets the same plain 404 as a site that does not exist (both `Cache-Control: no-store`), so
+nothing leaks about which such sites exist. Everything served for a non-public site, 404 pages
+and redirects included, carries `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
+There is no IP-based "intranet" level; restrict that at the reverse proxy. On the JSON API a
+logged-in user who may not view a site gets 403, as for every other site endpoint. Editing,
+uploading, rolling back and version listing remain owner-only whatever the visibility.
+
+In subdomain mode the session cookie is host-only and never reaches `<site>.<base_domain>`, so
+browsers cannot open restricted sites there yet; they can be fetched with an API token. Use path
+mode if restricted sites must work in a browser.
 
 ## Serving sites
 

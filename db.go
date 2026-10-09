@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS docs (
 	name        VARCHAR(256) NOT NULL UNIQUE,
 	description VARCHAR(512) NULL,
 	path        VARCHAR(256) NULL UNIQUE,
+	visibility  TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'authenticated', 'restricted')),
 	FOREIGN KEY (uowner) REFERENCES user(userid),
 	FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 );
@@ -105,6 +106,18 @@ func migrate(db *sql.DB) error {
 			if _, err := db.ExecContext(ctx, "ALTER TABLE groups ADD COLUMN "+col.ddl); err != nil {
 				return err
 			}
+		}
+	}
+	// docs.visibility: who may see a site (public, authenticated or restricted); existing sites stay public.
+	var n int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('docs') WHERE name = 'visibility'").Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := db.ExecContext(ctx,
+			"ALTER TABLE docs ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'authenticated', 'restricted'))"); err != nil {
+			return err
 		}
 	}
 	if err := migrateGroupNames(ctx, db); err != nil {

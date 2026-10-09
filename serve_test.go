@@ -45,7 +45,7 @@ func writeZip(t *testing.T, files map[string]string) *os.File {
 // deploySite registers site and deploys files as its live version.
 func deploySite(t *testing.T, s *Server, site string, files map[string]string) {
 	t.Helper()
-	created, err := s.createSite(t.Context(), site, "", testOwner(t, s), 0)
+	created, err := s.createSite(t.Context(), site, "", testOwner(t, s), 0, visPublic)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestSitePlain404WithoutCustomPage(t *testing.T) {
 
 func TestSiteNotDeployed(t *testing.T) {
 	s := newServeTestServer(t, nil)
-	if _, err := s.createSite(t.Context(), "empty", "", testOwner(t, s), 0); err != nil {
+	if _, err := s.createSite(t.Context(), "empty", "", testOwner(t, s), 0, visPublic); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, do(s, "GET", "", "/empty/").Code, http.StatusNotFound)
@@ -249,11 +249,11 @@ func TestPathModeDoesNotShadowAPI(t *testing.T) {
 func TestCreateSiteRejectsReserved(t *testing.T) {
 	s := newServeTestServer(t, nil)
 	for _, name := range []string{"www", "api", "v1"} {
-		if _, err := s.createSite(t.Context(), name, "", testOwner(t, s), 0); err == nil {
+		if _, err := s.createSite(t.Context(), name, "", testOwner(t, s), 0, visPublic); err == nil {
 			t.Errorf("createSite(%q) succeeded", name)
 		}
 	}
-	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0); err != nil {
+	if _, err := s.createSite(t.Context(), "blog", "", testOwner(t, s), 0, visPublic); err != nil {
 		t.Errorf("createSite(blog): %v", err)
 	}
 }
