@@ -119,7 +119,7 @@ rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 |---|---|---|
 | `keep_versions` | `5` | Versions kept per site, including the live one; older ones are deleted after each deploy and can no longer be rolled back to. Values below 1 are treated as 1 |
 | `url_mode` | `path` | `path` or `subdomain`; anything else fails startup. See [URL modes](#url-modes) |
-| `base_domain` | empty | Bare host name of the API and UI (for example `pages.corp`), no port or slash. Required for `subdomain` mode, ignored in `path` mode |
+| `base_domain` | empty | Bare host name of the API and UI (for example `pages.corp`). Required for `subdomain` mode, ignored in `path` mode. The only checks are that it is not empty and contains no `:` or `/`; other malformed values (spaces, bad labels) are accepted at startup and simply never match a request. It is lower-cased and a trailing dot removed |
 
 ### [log]
 
@@ -164,7 +164,8 @@ sign-in flow, provider setup and identity rules are in [auth.md](auth.md#oidc-si
 ### Startup checks
 
 The server refuses to start, with the reason on stderr, when: the file cannot be read;
-`url_mode` is invalid; `url_mode = subdomain` with an empty or invalid `base_domain`;
+`url_mode` is invalid; `url_mode = subdomain` with an empty `base_domain` or one containing
+`:` or `/` (no other hostname validation is done);
 `log.level` or `log.format` is invalid; `metrics.token` is shorter than 16 characters;
 `local_login` or `oidc.enabled` is not a boolean; `local_login = false` without OIDC; OIDC
 is enabled with a required key missing or a non-https URL; or the data directories or
@@ -336,23 +337,23 @@ row.
 
 ## Backups
 
-State is the database plus `op_data/`. Back up both from the same moment where you can;
-`tmp/` and `.staging-*` need no backup.
+State is the database plus `op_data/`. `tmp/` and `.staging-*` need no backup.
 
-- **Database.** Safest while running is SQLite's own backup, which gives a consistent copy:
+The two must be captured together. The database says which sites exist and `op_data/`
+holds their files, and a running server changes both: a deploy adds a version directory and
+moves the `current` link, pruning deletes old versions, and deleting a site removes files
+and then the row. Copying them one after the other while the server runs can give a site
+row without files, or a `current` link whose target was pruned in between. So:
 
-  ```sh
-  sqlite3 /data/data.db ".backup '/backup/data.db'"
-  ```
-
-  or `sqlite3 /data/data.db "VACUUM INTO '/backup/data.db'"`. Copying `data.db` with `cp` is
-  safe only while the server is stopped (the database uses the default rollback journal, so
-  a leftover `data.db-journal` next to it belongs with it).
-- **Sites.** Copy `op_data/` (`rsync -a`, `tar`). Version directories are immutable once
-  published and `current` is a relative symlink, so a copy keeps working if the symlink is
-  preserved (`tar` and `rsync -a` do). If you only want the live content, the `current`
-  targets are enough, but rollback history is lost.
-- **Container.** With a named volume, stop the container for a simple copy:
+- **Stop the server for the whole backup**, then copy `data.db` (and any `data.db-journal`
+  beside it, which belongs with it) and `op_data/` (`rsync -a` or `tar`, which keep the
+  relative `current` symlinks). This is the supported method.
+- Alternatively use a storage-level snapshot (LVM, ZFS, a cloud volume snapshot) that
+  captures the volume holding both at one instant.
+- Online tools such as `sqlite3 data.db ".backup ..."` give a consistent copy of the
+  database only, not of `op_data/`. They are fine for an extra database copy, but are not a
+  coordinated backup on their own.
+- **Container.** With a named volume, stop the container, archive, start it again:
 
   ```sh
   docker compose stop

@@ -33,7 +33,10 @@ curl localhost:8080/hello/
 As a container:
 
 ```sh
-docker compose up --build        # or: docker run -p 8080:8080 -v open-pages-data:/data open-pages
+docker compose up --build
+# or, without Compose:
+docker build -t open-pages .
+docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
 
 Deploy a directory from CI with the same binary:

@@ -167,8 +167,8 @@ Operational consequences:
 - **Migrations are one-way.** Back up `data.db` before upgrading (see
   [getting-started.md](getting-started.md#backups)); an older binary is not guaranteed to
   work with a database that a newer one has migrated.
-- Columns are only ever added. Nothing is dropped or retyped, and the `CHECK` on
-  `docs.visibility` is the same in a created and in a migrated table.
+- Table columns are only ever added; none is dropped or retyped (the one thing dropped is
+  the obsolete `groups_name` index). The `CHECK` on `docs.visibility` is the same in a created and in a migrated table.
 - To change the schema, a developer adds the table or column to the script and a guarded
   step to `migrate`; there is no separate tool.
 
