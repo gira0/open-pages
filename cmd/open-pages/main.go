@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,12 +15,8 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/web"
 )
-
-// templateFS holds the UI templates, so the binary does not depend on the working directory.
-//
-//go:embed templates/*.html
-var templateFS embed.FS
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deploy" {
@@ -112,7 +107,7 @@ func newServer(cfg config.Config) (*Server, error) {
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
 
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	tmpl, err := template.ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}

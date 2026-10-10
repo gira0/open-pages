@@ -45,7 +45,7 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
               go build -trimpath -ldflags="-s -w" -o "build/$name/open-pages" ./cmd/open-pages
             # The UI templates are embedded in the binary; ship the sample settings alongside.
-            cp settings.ini "build/$name/"
+            cp configs/settings.ini "build/$name/"
             tar -C build -czf "dist/$name.tar.gz" "$name"
           done
           (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
