@@ -160,7 +160,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	body, etag := f.body, f.etag
 	if f.gz != nil {
 		h.Add("Vary", "Accept-Encoding")
-		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if acceptsGzip(strings.Join(r.Header.Values("Accept-Encoding"), ",")) {
 			h.Set("Content-Encoding", "gzip")
 			body, etag = f.gz, strings.TrimSuffix(f.etag, `"`)+`-gz"`
 		}

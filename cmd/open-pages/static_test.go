@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -93,6 +94,16 @@ func TestStaticGzip(t *testing.T) {
 	}
 	if gz.Body.Len() >= plain.Body.Len()/4 {
 		t.Errorf("gzip %d bytes of %d: compression not effective", gz.Body.Len(), plain.Body.Len())
+	}
+
+	// Accept-Encoding may arrive split over several header lines.
+	r := httptest.NewRequest("GET", url, nil)
+	r.Header.Add("Accept-Encoding", "br")
+	r.Header.Add("Accept-Encoding", "gzip")
+	split := httptest.NewRecorder()
+	s.routes().ServeHTTP(split, r)
+	if split.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("gzip not sent for a split Accept-Encoding header")
 	}
 
 	notModified := do(s, "GET", "", url, "Accept-Encoding", "gzip", "If-None-Match", gz.Header().Get("ETag"))
