@@ -165,11 +165,25 @@ func TestParseMalformed(t *testing.T) {
 }
 
 func TestClaimsMalformed(t *testing.T) {
-	for name, payload := range map[string]string{"not json": "nope", "null": "null", "array": "[1]"} {
+	for name, payload := range map[string]string{
+		"not json":       "nope",
+		"null":           "null",
+		"array":          "[1]",
+		"trailing bytes": `{"sub":"x"}garbage`,
+		"second object":  `{"sub":"x"}{"sub":"y"}`,
+		"trailing brace": `{"sub":"x"}}`,
+	} {
 		tok := &Token{payload: []byte(payload)}
 		if _, err := tok.Claims(); !errors.Is(err, ErrMalformed) {
 			t.Errorf("%s: err = %v, want ErrMalformed", name, err)
 		}
+	}
+}
+
+func TestClaimsAllowsTrailingWhitespace(t *testing.T) {
+	tok := &Token{payload: []byte("{\"sub\":\"x\"}\n ")}
+	if _, err := tok.Claims(); err != nil {
+		t.Fatalf("trailing whitespace: %v", err)
 	}
 }
 

@@ -187,6 +187,21 @@ func TestArchiveSkipsSymlinks(t *testing.T) {
 	}
 }
 
+func TestArchiveCountsSkippedEntries(t *testing.T) {
+	data := tarBytes(t,
+		entry{name: "l1", typ: tar.TypeSymlink},
+		entry{name: "l2", typ: tar.TypeSymlink},
+		entry{name: "l3", typ: tar.TypeSymlink},
+		entry{name: "ok.txt", body: "ok"},
+	)
+	if _, err := run(t, data, Limits{MaxBytes: 10, MaxFiles: 4}); err != nil {
+		t.Fatalf("at the limit: %v", err)
+	}
+	if _, err := run(t, data, Limits{MaxBytes: 10, MaxFiles: 3}); err == nil {
+		t.Error("symlinks not counted toward the file limit")
+	}
+}
+
 func TestArchiveLimits(t *testing.T) {
 	zipData := zipBytes(t, entry{name: "a", body: "12345"}, entry{name: "b", body: "67890"})
 	tarData := tarBytes(t, entry{name: "a", body: "12345"}, entry{name: "b", body: "67890"})
