@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/names"
 )
 
@@ -211,7 +212,7 @@ func TestKeepVersionsConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[sites]\nkeep_versions = 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfig(path)
+	cfg, err := config.Load(path)
 	if err != nil || cfg.KeepVersions != 1 {
 		t.Fatalf("KeepVersions = %d, %v; want clamp to 1", cfg.KeepVersions, err)
 	}

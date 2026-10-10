@@ -14,7 +14,7 @@ Needs Go 1.26 or newer; there is no C toolchain requirement (SQLite is pure Go).
 
 ```sh
 go build -o open-pages ./cmd/open-pages
-./open-pages -config settings.ini
+./open-pages -config configs/settings.ini
 ```
 
 Then open http://localhost:8080/index, or use the API:
@@ -33,7 +33,7 @@ curl localhost:8080/hello/
 As a container:
 
 ```sh
-docker compose up --build
+docker compose -f deploy/docker-compose.yml up --build
 # or, without Compose:
 docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages

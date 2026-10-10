@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 // newServeTestServer builds a server with the given settings applied to the default config.
-func newServeTestServer(t *testing.T, mutate func(*Config)) *Server {
+func newServeTestServer(t *testing.T, mutate func(*config.Config)) *Server {
 	t.Helper()
-	cfg := defaultConfig()
+	cfg := config.Default()
 	cfg.DataPath = t.TempDir()
 	cfg.TmpPath = t.TempDir()
 	if mutate != nil {
@@ -361,11 +363,11 @@ func TestLoadConfigURLMode(t *testing.T) {
 		}
 		return p
 	}
-	cfg, err := loadConfig(write("[sites]\n"))
-	if err != nil || cfg.URLMode != urlModePath {
+	cfg, err := config.Load(write("[sites]\n"))
+	if err != nil || cfg.URLMode != config.URLModePath {
 		t.Fatalf("default: %q %v", cfg.URLMode, err)
 	}
-	if _, err := loadConfig(write("[sites]\nurl_mode = bogus\n")); err == nil {
+	if _, err := config.Load(write("[sites]\nurl_mode = bogus\n")); err == nil {
 		t.Error("expected an error for an unknown url_mode")
 	}
 }

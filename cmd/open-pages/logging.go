@@ -2,20 +2,15 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/logging"
 	"github.com/rs/xid"
-)
-
-// Log formats for [log] format.
-const (
-	logFormatText = "text"
-	logFormatJSON = "json"
 )
 
 // requestIDHeader carries the request ID back to the client. The ID is always generated
@@ -23,28 +18,9 @@ const (
 // up in the logs.
 const requestIDHeader = "X-Request-Id"
 
-// parseLogLevel reads a [log] level: debug, info, warn or error (case-insensitive).
-func parseLogLevel(s string) (slog.Level, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	}
-	return slog.LevelInfo, fmt.Errorf("log.level %q: must be debug, info, warn or error", s)
-}
-
 // newLogger builds the process logger from the [log] settings, writing to w.
-func newLogger(w io.Writer, cfg Config) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
-	if cfg.LogFormat == logFormatJSON {
-		return slog.New(slog.NewJSONHandler(w, opts))
-	}
-	return slog.New(slog.NewTextHandler(w, opts))
+func newLogger(w io.Writer, cfg config.Config) *slog.Logger {
+	return logging.New(w, cfg.LogLevel, cfg.LogFormat)
 }
 
 type requestIDKey struct{}

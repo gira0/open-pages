@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 type Server struct {
 	db    *sql.DB
-	cfg   Config
+	cfg   config.Config
 	tmpl  *template.Template
 	sites string // directory holding extracted uploads
 	tmp   string // staging directory for extraction

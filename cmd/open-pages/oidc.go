@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/jwt"
 	"github.com/gira0/open-pages/internal/names"
 )
@@ -53,7 +54,7 @@ var (
 
 // oidcClient talks to the provider and holds the login attempts in flight.
 type oidcClient struct {
-	cfg  OIDCConfig
+	cfg  config.OIDCConfig
 	http *http.Client
 
 	fetchMu     sync.Mutex // guards meta, keys and keysFetched; held while talking to the provider
@@ -81,7 +82,7 @@ type pendingLogin struct {
 	expires  time.Time
 }
 
-func newOIDCClient(cfg OIDCConfig) *oidcClient {
+func newOIDCClient(cfg config.OIDCConfig) *oidcClient {
 	return &oidcClient{
 		cfg: cfg,
 		http: &http.Client{
@@ -135,7 +136,7 @@ func (c *oidcClient) metadata(ctx context.Context) (*oidcMeta, error) {
 		return nil, errors.New("discovery: issuer in the provider's document differs from oidc.issuer")
 	}
 	for _, e := range []string{m.AuthorizationEndpoint, m.TokenEndpoint, m.JWKSURI} {
-		if err := checkOIDCURL("discovery endpoint", e); err != nil {
+		if err := config.CheckOIDCURL("discovery endpoint", e); err != nil {
 			return nil, err
 		}
 	}

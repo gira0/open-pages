@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/names"
 )
 
@@ -12,7 +13,7 @@ import (
 // site is "" when the request is not for a site (it belongs to the API or UI).
 // filePath is the slash-rooted path within the site, not yet cleaned or checked.
 func (s *Server) siteFromRequest(r *http.Request) (site, filePath string) {
-	if s.cfg.URLMode == urlModeSubdomain {
+	if s.cfg.URLMode == config.URLModeSubdomain {
 		// Subdomain mode: <site>.<base_domain>/<file path>
 		label, under := s.subdomainOf(r.Host)
 		if !under || !names.ValidSite(label) {

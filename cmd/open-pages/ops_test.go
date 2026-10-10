@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/logging"
 	"github.com/gira0/open-pages/internal/names"
 )
 
@@ -92,19 +94,19 @@ func TestLogConfig(t *testing.T) {
 		return path
 	}
 
-	cfg, err := loadConfig(write("[log]\nlevel = DEBUG\nformat = JSON\n"))
+	cfg, err := config.Load(write("[log]\nlevel = DEBUG\nformat = JSON\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LogLevel != slog.LevelDebug || cfg.LogFormat != logFormatJSON {
+	if cfg.LogLevel != slog.LevelDebug || cfg.LogFormat != logging.FormatJSON {
 		t.Errorf("got level %v format %q", cfg.LogLevel, cfg.LogFormat)
 	}
 
-	cfg, err = loadConfig(write(""))
+	cfg, err = config.Load(write(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LogLevel != slog.LevelInfo || cfg.LogFormat != logFormatText {
+	if cfg.LogLevel != slog.LevelInfo || cfg.LogFormat != logging.FormatText {
 		t.Errorf("defaults: level %v format %q", cfg.LogLevel, cfg.LogFormat)
 	}
 	if cfg.MetricsListen != "" || cfg.MetricsToken != "" {
@@ -116,12 +118,12 @@ func TestLogConfig(t *testing.T) {
 		"[log]\nformat = xml\n",
 		"[metrics]\ntoken = short\n",
 	} {
-		if _, err := loadConfig(write(ini)); err == nil {
+		if _, err := config.Load(write(ini)); err == nil {
 			t.Errorf("expected an error for %q", ini)
 		}
 	}
 
-	cfg, err = loadConfig(write("[metrics]\nlisten = 127.0.0.1:9100\ntoken = " + testMetricsToken + "\n"))
+	cfg, err = config.Load(write("[metrics]\nlisten = 127.0.0.1:9100\ntoken = " + testMetricsToken + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +134,8 @@ func TestLogConfig(t *testing.T) {
 
 func TestNewLoggerFormatsAndLevels(t *testing.T) {
 	var buf bytes.Buffer
-	cfg := defaultConfig()
-	cfg.LogFormat = logFormatJSON
+	cfg := config.Default()
+	cfg.LogFormat = logging.FormatJSON
 	cfg.LogLevel = slog.LevelWarn
 	l := newLogger(&buf, cfg)
 	l.Info("hidden")
@@ -148,7 +150,7 @@ func TestNewLoggerFormatsAndLevels(t *testing.T) {
 	}
 
 	buf.Reset()
-	cfg.LogFormat = logFormatText
+	cfg.LogFormat = logging.FormatText
 	newLogger(&buf, cfg).Warn("plain")
 	if !strings.Contains(buf.String(), "msg=plain") {
 		t.Errorf("text output = %q", buf.String())
@@ -157,7 +159,7 @@ func TestNewLoggerFormatsAndLevels(t *testing.T) {
 
 func TestRequestIDHeaderAndLog(t *testing.T) {
 	var logs lockedBuffer
-	cfg := defaultConfig()
+	cfg := config.Default()
 	old := slog.Default()
 	slog.SetDefault(newLogger(&logs, cfg))
 	t.Cleanup(func() { slog.SetDefault(old) })
@@ -436,12 +438,12 @@ func TestHealthProbeSingleFlight(t *testing.T) {
 
 func TestLogLevelStrict(t *testing.T) {
 	for _, ok := range []string{"debug", "INFO", " Warn ", "error"} {
-		if _, err := parseLogLevel(ok); err != nil {
+		if _, err := logging.ParseLevel(ok); err != nil {
 			t.Errorf("%q rejected: %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"INFO+1", "WARN-2", "", "trace"} {
-		if _, err := parseLogLevel(bad); err == nil {
+		if _, err := logging.ParseLevel(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
@@ -450,7 +452,7 @@ func TestLogLevelStrict(t *testing.T) {
 		if err := os.WriteFile(path, []byte("[log]\nlevel = "+level+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadConfig(path); err == nil {
+		if _, err := config.Load(path); err == nil {
 			t.Errorf("config accepted level %s", level)
 		}
 	}
@@ -459,10 +461,10 @@ func TestLogLevelStrict(t *testing.T) {
 func TestHandlerLogLinesCarryRequestID(t *testing.T) {
 	var logs lockedBuffer
 	old := slog.Default()
-	slog.SetDefault(newLogger(&logs, defaultConfig()))
+	slog.SetDefault(newLogger(&logs, config.Default()))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	s := &Server{cfg: defaultConfig(), metrics: newMetrics()}
+	s := &Server{cfg: config.Default(), metrics: newMetrics()}
 	h := s.observe(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctxLogger(r.Context()).Info("from handler")
 	}))

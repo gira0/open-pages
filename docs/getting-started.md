@@ -16,7 +16,7 @@ Pick one.
 
 ```sh
 go build -o open-pages ./cmd/open-pages
-./open-pages -config settings.ini
+./open-pages -config configs/settings.ini
 ```
 
 The UI template is embedded in the binary, so it can run from any working directory.
@@ -35,7 +35,7 @@ github.com/gira0/open-pages/cmd/open-pages@latest` installs it. See
 
 ```sh
 go build -o open-pages ./cmd/open-pages
-./open-pages -config settings.ini &
+./open-pages -config configs/settings.ini &
 
 # create an account and log in
 curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
@@ -68,7 +68,7 @@ environment variables for the server; configuration is the settings file only. (
 ## Configuration reference
 
 The settings file is INI. A missing file is a fatal error; a missing key uses the default.
-The repository's [`settings.ini`](../settings.ini) documents the same keys and
+The repository's [`configs/settings.ini`](../configs/settings.ini) documents the same keys and
 [`deploy/settings.ini`](../deploy/settings.ini) holds the defaults baked into the container
 image. Booleans written as anything other than a boolean silently fall back to the default,
 except the two security-relevant ones, `auth.local_login` and `oidc.enabled`, where a bad
@@ -212,19 +212,19 @@ To change settings, mount your own file over the baked-in one and keep `datapath
 
 ```sh
 docker run -p 8080:8080 -v open-pages-data:/data \
-  -v "$PWD/settings.ini":/etc/open-pages/settings.ini:ro open-pages
+  -v "$PWD/my-settings.ini":/etc/open-pages/settings.ini:ro open-pages
 ```
 
 A named volume is writable by uid 65532 out of the box. A bind-mounted data directory must
 be `chown`ed to `65532` first. There are no environment variables for configuration.
 
-`docker-compose.yml` is an example: it builds the image locally (use
+`deploy/docker-compose.yml` is an example: it builds the image locally (use
 `image: ghcr.io/gira0/open-pages:<version>` for a release), publishes port 8080, mounts the
 `open-pages-data` volume at `/data`, and runs with `read_only: true`, `cap_drop: [ALL]` and
 `no-new-privileges`. An optional commented line shows the settings override.
 
 ```sh
-docker compose up --build
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
 Because the image has no shell or `curl`, a container health check cannot run inside it;

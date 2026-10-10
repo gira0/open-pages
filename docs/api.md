@@ -115,7 +115,7 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://pages.corp/metrics
 
 ### GET /index
 
-No authentication. Renders `cmd/open-pages/templates/index.html`: a local login form (when local login is
+No authentication. Renders `web/templates/index.html`: a local login form (when local login is
 enabled), a "Sign in with your company account" link (when OIDC is enabled) and a form that
 creates a site and uploads an archive to it. It is a test page, not a stable interface.
 

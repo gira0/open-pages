@@ -12,6 +12,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 // withSites adds site serving around the API mux.
@@ -20,7 +22,7 @@ import (
 // Subdomain mode: requests for <site>.<base_domain> go to the site handler; everything
 // else (the bare base_domain) goes to the mux, so the API and UI stay there.
 func (s *Server) withSites(mux *http.ServeMux) http.Handler {
-	if s.cfg.URLMode != urlModeSubdomain {
+	if s.cfg.URLMode != config.URLModeSubdomain {
 		mux.HandleFunc("GET /{path...}", s.handleSite)
 		return mux
 	}
