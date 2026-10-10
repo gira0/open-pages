@@ -9,12 +9,15 @@ import (
 )
 
 func TestParseLevel(t *testing.T) {
-	good := map[string]slog.Level{
-		"debug": slog.LevelDebug, "INFO": slog.LevelInfo, " Warn ": slog.LevelWarn, "error": slog.LevelError,
+	good := []struct {
+		in   string
+		want slog.Level
+	}{
+		{"debug", slog.LevelDebug}, {"INFO", slog.LevelInfo}, {" Warn ", slog.LevelWarn}, {"error", slog.LevelError},
 	}
-	for in, want := range good {
-		if got, err := ParseLevel(in); err != nil || got != want {
-			t.Errorf("ParseLevel(%q) = %v, %v; want %v", in, got, err, want)
+	for _, c := range good {
+		if got, err := ParseLevel(c.in); err != nil || got != c.want {
+			t.Errorf("ParseLevel(%q) = %v, %v; want %v", c.in, got, err, c.want)
 		}
 	}
 	for _, bad := range []string{"INFO+1", "WARN-2", "", "trace"} {
