@@ -76,6 +76,16 @@ jobs:
           TOTAL: ${{ steps.coverage.outputs.total }}
           COVERAGE_MIN: 70
 
+  openapi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Rules are in redocly.yaml; the route-to-spec check is TestOpenAPIMatchesRoutes.
+      - run: npx --yes @redocly/cli@2.57.0 lint api/openapi.yaml
+
   vulncheck:
     runs-on: ubuntu-latest
     timeout-minutes: 15

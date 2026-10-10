@@ -5,6 +5,12 @@ requirement, request and response shapes and status codes, with `curl` examples 
 workflows (not for every route). Who may do what
 is explained in [auth.md](auth.md); the tables behind the data are in [schema.md](schema.md).
 
+The machine-readable contract is the OpenAPI 3.1 document
+[`api/openapi.yaml`](../api/openapi.yaml), which the server also serves at
+`GET /v1/openapi.yaml`. Import it into Postman or Swagger UI, or generate a client from it.
+A test fails when a registered route is missing from it or it lists a route the server does
+not register, so a route change updates both this page and the spec.
+
 The `curl` examples assume the server is at `https://pages.corp`. `cookies` is a cookie jar
 file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 
@@ -45,6 +51,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | GET | `/index` | none | HTML test page (login form, upload form) |
 | GET | `/v1/ping` | none | Liveness |
 | GET | `/healthz` | none | Health check |
+| GET | `/v1/openapi.yaml` | none | OpenAPI 3.1 description of this API |
 | GET | `/metrics` | metrics token | Prometheus metrics (optional) |
 | GET | `/v1/sites` | none | List public sites |
 | POST | `/v1/user/register` | none | Create a local account (optional) |
@@ -95,6 +102,16 @@ a check failed; the reason is logged at `warn`.
 - `503 {"status":"fail","checks":{"database":"fail","data_dir":"ok"}}` (any check failed)
 
 Responses carry `Cache-Control: no-store`.
+
+### GET /v1/openapi.yaml
+
+No authentication. The OpenAPI document embedded in the binary, as
+`Content-Type: application/yaml`. It describes the routes on this page, including the
+optional ones, whether or not this server has them enabled.
+
+```sh
+curl -o openapi.yaml https://pages.corp/v1/openapi.yaml
+```
 
 ### GET /metrics
 

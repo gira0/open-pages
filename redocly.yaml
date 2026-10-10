@@ -1,0 +1,8 @@
+# Lint rules for api/openapi.yaml (`npx @redocly/cli lint`, run in CI).
+extends:
+  - recommended
+rules:
+  # Probes and public listings have no client errors to describe.
+  operation-4xx-response: off
+  # The project has no license file yet.
+  info-license: off
