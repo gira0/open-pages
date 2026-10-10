@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/web"
 )
 
@@ -31,7 +32,7 @@ func main() {
 }
 
 func run(configPath string) error {
-	cfg, err := loadConfig(configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,7 @@ func run(configPath string) error {
 }
 
 // newServer prepares the data directories and database described by cfg.
-func newServer(cfg Config) (*Server, error) {
+func newServer(cfg config.Config) (*Server, error) {
 	s := &Server{
 		cfg:   cfg,
 		sites: filepath.Join(cfg.DataPath, "op_data"),

@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 func newSubdomainServer(t *testing.T) *Server {
 	t.Helper()
-	return newServeTestServer(t, func(c *Config) {
-		c.URLMode = urlModeSubdomain
+	return newServeTestServer(t, func(c *config.Config) {
+		c.URLMode = config.URLModeSubdomain
 		c.BaseDomain = "pages.corp"
 	})
 }
@@ -108,15 +110,15 @@ func TestLoadConfigSubdomain(t *testing.T) {
 		}
 		return p
 	}
-	cfg, err := loadConfig(write("[sites]\nurl_mode = Subdomain\nbase_domain = Pages.Corp\n"))
-	if err != nil || cfg.URLMode != urlModeSubdomain || cfg.BaseDomain != "pages.corp" {
+	cfg, err := config.Load(write("[sites]\nurl_mode = Subdomain\nbase_domain = Pages.Corp\n"))
+	if err != nil || cfg.URLMode != config.URLModeSubdomain || cfg.BaseDomain != "pages.corp" {
 		t.Fatalf("got %+v, %v", cfg, err)
 	}
 	for _, bad := range []string{
 		"[sites]\nurl_mode = subdomain\n",
 		"[sites]\nurl_mode = subdomain\nbase_domain = pages.corp:8080\n",
 	} {
-		if _, err := loadConfig(write(bad)); err == nil || !strings.Contains(err.Error(), "base_domain") {
+		if _, err := config.Load(write(bad)); err == nil || !strings.Contains(err.Error(), "base_domain") {
 			t.Errorf("%q: err = %v", bad, err)
 		}
 	}
