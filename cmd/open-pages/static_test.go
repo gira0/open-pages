@@ -97,7 +97,7 @@ func TestStaticGzip(t *testing.T) {
 	}
 
 	// Accept-Encoding may arrive split over several header lines.
-	r := httptest.NewRequest("GET", url, nil)
+	r := httptest.NewRequest(http.MethodGet, url, nil)
 	r.Header.Add("Accept-Encoding", "br")
 	r.Header.Add("Accept-Encoding", "gzip")
 	split := httptest.NewRecorder()
