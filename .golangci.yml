@@ -25,7 +25,7 @@ linters:
       - linters: [revive]
         text: unused-parameter
       # Site files are world-readable on purpose so a reverse proxy can serve them.
-      - path: cmd/open-pages/extract\.go
+      - path: internal/extract/extract\.go
         linters: [gosec]
         text: "G30[12]:"
 

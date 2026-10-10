@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gira0/open-pages/internal/extract"
 	"github.com/rs/xid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -355,8 +356,8 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	}
 	defer os.RemoveAll(staging)
 
-	limits := extractLimits{maxBytes: s.cfg.MaxExtractSize, maxFiles: s.cfg.MaxExtractFile}
-	if err := extractArchive(src, staging, limits); err != nil {
+	limits := extract.Limits{MaxBytes: s.cfg.MaxExtractSize, MaxFiles: s.cfg.MaxExtractFile}
+	if err := extract.Archive(src, staging, limits); err != nil {
 		return "", &badArchiveError{err}
 	}
 	if err := os.Chmod(staging, 0o755); err != nil { //nolint:gosec // G302: public site content

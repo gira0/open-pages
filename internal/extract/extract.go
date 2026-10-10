@@ -1,4 +1,6 @@
-package main
+// Package extract unpacks uploaded site archives (.zip, .tar.gz, .tar) into a directory,
+// refusing entries that escape it and archives that expand past the given limits.
+package extract
 
 import (
 	"archive/tar"
@@ -21,7 +23,8 @@ const (
 	kindTar
 )
 
-var errUnsupportedArchive = errors.New("unsupported archive: upload a .zip, .tar.gz or .tar file")
+// ErrUnsupported is returned when the file is not a recognised archive format.
+var ErrUnsupported = errors.New("unsupported archive: upload a .zip, .tar.gz or .tar file")
 
 // sniffArchive identifies the archive format from its leading bytes.
 func sniffArchive(head []byte) archiveKind {
@@ -36,17 +39,17 @@ func sniffArchive(head []byte) archiveKind {
 	return kindUnknown
 }
 
-// extractLimits bounds what an archive may expand to.
-type extractLimits struct {
-	maxBytes int64
-	maxFiles int
+// Limits bounds what an archive may expand to.
+type Limits struct {
+	MaxBytes int64 // total bytes written
+	MaxFiles int   // number of entries
 }
 
 // extractor writes archive entries below dest, refusing anything that would escape it
 // or exceed the limits. Symlinks and other special entries are skipped.
 type extractor struct {
 	dest    string
-	limits  extractLimits
+	limits  Limits
 	written int64
 	files   int
 }
@@ -58,8 +61,8 @@ func (e *extractor) target(name string) (string, error) {
 		return "", fmt.Errorf("archive entry %q points outside the site", name)
 	}
 	e.files++
-	if e.files > e.limits.maxFiles {
-		return "", fmt.Errorf("archive has more than %d entries", e.limits.maxFiles)
+	if e.files > e.limits.MaxFiles {
+		return "", fmt.Errorf("archive has more than %d entries", e.limits.MaxFiles)
 	}
 	return filepath.Join(e.dest, local), nil
 }
@@ -84,7 +87,7 @@ func (e *extractor) file(name string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	remaining := e.limits.maxBytes - e.written
+	remaining := e.limits.MaxBytes - e.written
 	n, err := io.CopyN(f, r, remaining+1)
 	e.written += n
 	if cerr := f.Close(); err == nil || errors.Is(err, io.EOF) {
@@ -93,13 +96,13 @@ func (e *extractor) file(name string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if e.written > e.limits.maxBytes {
-		return fmt.Errorf("archive expands to more than %d MiB", e.limits.maxBytes>>20)
+	if e.written > e.limits.MaxBytes {
+		return fmt.Errorf("archive expands to more than %d MiB", e.limits.MaxBytes>>20)
 	}
 	return nil
 }
 
-func extractZip(src io.ReaderAt, size int64, dest string, limits extractLimits) error {
+func extractZip(src io.ReaderAt, size int64, dest string, limits Limits) error {
 	zr, err := zip.NewReader(src, size)
 	if err != nil {
 		return fmt.Errorf("read zip: %w", err)
@@ -124,7 +127,7 @@ func extractZip(src io.ReaderAt, size int64, dest string, limits extractLimits) 
 	return nil
 }
 
-func extractTar(src io.Reader, dest string, limits extractLimits) error {
+func extractTar(src io.Reader, dest string, limits Limits) error {
 	tr := tar.NewReader(src)
 	e := &extractor{dest: dest, limits: limits}
 	for {
@@ -147,8 +150,9 @@ func extractTar(src io.Reader, dest string, limits extractLimits) error {
 	}
 }
 
-// extractArchive detects the format of the file at src and extracts it into dest.
-func extractArchive(src *os.File, dest string, limits extractLimits) error {
+// Archive detects the format of src (zip, gzipped tar or tar) and extracts it into dest.
+// It returns ErrUnsupported for any other format.
+func Archive(src *os.File, dest string, limits Limits) error {
 	head := make([]byte, 512)
 	n, err := src.ReadAt(head, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -175,5 +179,5 @@ func extractArchive(src *os.File, dest string, limits extractLimits) error {
 	case kindTar:
 		return extractTar(src, dest, limits)
 	}
-	return errUnsupportedArchive
+	return ErrUnsupported
 }
