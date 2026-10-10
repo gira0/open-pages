@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 func TestConcurrentDeploysKeepOne(t *testing.T) {
@@ -56,12 +58,12 @@ func TestValidSiteName(t *testing.T) {
 	good := []string{"a", "blog", "my-site", "a1", "0day", strings.Repeat("a", 63)}
 	bad := []string{"", "-a", "a-", "My", "a_b", "a.b", "../x", "a/b", "ü", " a", strings.Repeat("a", 64)}
 	for _, n := range good {
-		if !validSiteName(n) {
+		if !names.ValidSite(n) {
 			t.Errorf("%q should be valid", n)
 		}
 	}
 	for _, n := range bad {
-		if validSiteName(n) {
+		if names.ValidSite(n) {
 			t.Errorf("%q should be invalid", n)
 		}
 	}

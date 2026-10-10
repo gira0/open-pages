@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 // siteUpdate is the body of PUT /v1/auth/sites/{name}. Absent fields are left unchanged;
@@ -63,7 +65,7 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 // (the manage endpoints already tell logged-in users that a site exists).
 func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !validSiteName(name) {
+	if !names.ValidSite(name) {
 		writeError(w, http.StatusNotFound, errSiteNotFound.Error())
 		return
 	}

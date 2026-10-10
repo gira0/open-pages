@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/names"
+	"github.com/gira0/open-pages/internal/store"
 )
 
 // userClient registers and logs in a user with the given email.
@@ -268,7 +271,7 @@ func TestMigrateOldSchema(t *testing.T) {
 
 	// Opening twice proves the migration is idempotent.
 	for range 2 {
-		db, err = openDB(path)
+		db, err = store.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -448,7 +451,7 @@ func TestMigrateDuplicateGroupNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	long := strings.Repeat("x", maxGroupNameLen)
+	long := strings.Repeat("x", names.MaxGroupNameLen)
 	old := []string{
 		"CREATE TABLE user (userid INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL, password BINARY(60) NOT NULL)",
 		"CREATE TABLE groups (groupid INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL)",
@@ -465,7 +468,7 @@ func TestMigrateDuplicateGroupNames(t *testing.T) {
 
 	var first []string
 	for round := range 2 { // the second start must change nothing
-		db, err = openDB(path)
+		db, err = store.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -497,12 +500,12 @@ func TestMigrateDuplicateGroupNames(t *testing.T) {
 	if first[1] != "ENG-2" || first[3] != "ärzte-4" || first[6] != "ENG-2-7" {
 		t.Fatalf("duplicates not renamed as expected: %q %q %q", first[1], first[3], first[6])
 	}
-	if !strings.HasSuffix(first[5], "-6") || len([]rune(first[5])) > maxGroupNameLen {
+	if !strings.HasSuffix(first[5], "-6") || len([]rune(first[5])) > names.MaxGroupNameLen {
 		t.Fatalf("long duplicate = %q (%d runes)", first[5], len([]rune(first[5])))
 	}
 	seen := map[string]bool{}
 	for _, n := range first {
-		if k := groupNameKey(n); seen[k] {
+		if k := names.GroupKey(n); seen[k] {
 			t.Fatalf("names still clash: %v", first)
 		} else {
 			seen[k] = true

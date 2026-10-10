@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/gira0/open-pages/internal/store"
 )
 
 // templateFS holds the UI templates, so the binary does not depend on the working directory.
@@ -116,7 +118,7 @@ func newServer(cfg Config) (*Server, error) {
 	}
 	s.tmpl = tmpl
 
-	s.db, err = openDB(filepath.Join(cfg.DataPath, "data.db"))
+	s.db, err = store.Open(filepath.Join(cfg.DataPath, "data.db"))
 	if err != nil {
 		return nil, err
 	}

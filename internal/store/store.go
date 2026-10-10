@@ -1,10 +1,15 @@
-package main
+// Package store opens the SQLite database and keeps its schema current: the CREATE TABLE
+// script and the idempotent migration steps that bring databases from older versions up
+// to date. It deliberately knows nothing about the server, sites or groups beyond the
+// table layout; queries stay with the code that owns them.
+package store
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 
+	"github.com/gira0/open-pages/internal/names"
 	_ "modernc.org/sqlite"
 )
 
@@ -72,8 +77,9 @@ CREATE TABLE IF NOT EXISTS docs (
 );
 `
 
-// openDB opens (creating if needed) the SQLite database at path and applies the schema.
-func openDB(path string) (*sql.DB, error) {
+// Open opens (creating if needed) the SQLite database at path, applies the schema and
+// runs the migrations. The caller owns the returned handle and must Close it.
+func Open(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -95,7 +101,7 @@ func migrate(db *sql.DB) error {
 	ctx := context.Background()
 	// groups.owner: the user who administers the group. Groups that predate it keep a
 	// NULL owner and can't be changed through the API until an operator sets one.
-	// groups.name_key: the case-folded name that carries the uniqueness (see groupNameKey).
+	// groups.name_key: the case-folded name that carries the uniqueness (see names.GroupKey).
 	for _, col := range []struct{ name, ddl string }{
 		{"owner", "owner INTEGER NULL REFERENCES user(userid)"},
 		{"name_key", "name_key TEXT NULL"},
@@ -169,7 +175,7 @@ func addColumn(ctx context.Context, db *sql.DB, table, name, ddl string) error {
 
 // migrateGroupNames fills groups.name_key and resolves names that only differ in case.
 // The group with the lowest id keeps its name; each later one gets "-<id>" appended
-// (shortening the name so it still fits maxGroupNameLen). Rows already in order are
+// (shortening the name so it still fits names.MaxGroupNameLen). Rows already in order are
 // left alone, so running it again changes nothing.
 func migrateGroupNames(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
@@ -203,14 +209,14 @@ func migrateGroupNames(ctx context.Context, db *sql.DB) error {
 	}
 	seen := make(map[string]bool, len(all))
 	for _, r := range all {
-		name, key := r.name, groupNameKey(r.name)
+		name, key := r.name, names.GroupKey(r.name)
 		for suffix := fmt.Sprintf("-%d", r.id); seen[key]; suffix += "_" {
 			base := []rune(r.name)
-			if keep := maxGroupNameLen - len([]rune(suffix)); len(base) > keep {
+			if keep := names.MaxGroupNameLen - len([]rune(suffix)); len(base) > keep {
 				base = base[:keep]
 			}
 			name = string(base) + suffix
-			key = groupNameKey(name)
+			key = names.GroupKey(name)
 		}
 		seen[key] = true
 		if name == r.name && r.storedKey.Valid && r.storedKey.String == key {

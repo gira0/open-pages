@@ -25,7 +25,7 @@ serves them. Review for correctness and security first; style is handled by `gol
 - **Auth** (`cmd/open-pages/auth.go`, `cmd/open-pages/tokens.go`): token and session handling, constant-time comparison,
   tokens never logged or returned twice, a malformed `Authorization` header must never fall
   back to the session cookie.
-- **Site names** (`cmd/open-pages/sites.go`): must be hostname-valid and must not be a reserved name.
+- **Site names** (`internal/names/names.go`, `cmd/open-pages/sites.go`): must be hostname-valid and must not be a reserved name.
 - **Serving and URL resolution** (`cmd/open-pages/serve.go`, `cmd/open-pages/resolve.go`): check both `url_mode = path` and
   `url_mode = subdomain`; no escaping the site root; behaviour on unknown or reserved hosts.
 - **Log injection**: do not log raw unvalidated user input (request paths, hosts, headers,

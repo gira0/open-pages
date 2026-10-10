@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gira0/open-pages/internal/extract"
+	"github.com/gira0/open-pages/internal/names"
 	"github.com/rs/xid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -32,8 +33,6 @@ const (
 )
 
 var (
-	// siteNameRe is a DNS label: lowercase letters, digits and inner hyphens, 1 to 63 chars.
-	siteNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	// versionRe matches version ids, which are xids.
 	versionRe = regexp.MustCompile(`^[0-9a-v]{20}$`)
 
@@ -73,12 +72,9 @@ type Site struct {
 	Visibility  string
 }
 
-// validSiteName reports whether name is usable as a site name (a DNS label).
-func validSiteName(name string) bool { return siteNameRe.MatchString(name) }
-
 // SiteDir returns the directory holding all versions of site, or "" for an invalid name.
 func (s *Server) SiteDir(site string) string {
-	if !validSiteName(site) {
+	if !names.ValidSite(site) {
 		return ""
 	}
 	return filepath.Join(s.sites, site)
@@ -194,10 +190,10 @@ func groupGone(err error, group int64) bool {
 // It returns errSiteExists on a name clash, errGroupNotFound for an unknown group and
 // errNotGroupMember if owner is not in the group.
 func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64, visibility string) (Site, error) {
-	if !validSiteName(name) {
+	if !names.ValidSite(name) {
 		return Site{}, errors.New("invalid site name")
 	}
-	if reservedSiteName(name) {
+	if names.ReservedSite(name) {
 		return Site{}, errors.New("site name is reserved")
 	}
 	if !validVisibility(visibility) {

@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 const testMetricsToken = "0123456789abcdef-token"
@@ -378,7 +380,7 @@ func TestMetricsDedicatedListener(t *testing.T) {
 // Site names can't shadow the operational endpoints in path mode.
 func TestOpsNamesAreReserved(t *testing.T) {
 	for _, name := range []string{"healthz", "readyz", "metrics"} {
-		if !reservedSiteName(name) {
+		if !names.ReservedSite(name) {
 			t.Errorf("%q must be a reserved site name", name)
 		}
 	}
