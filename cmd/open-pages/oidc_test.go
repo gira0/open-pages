@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 const (
@@ -206,11 +208,11 @@ func (p *fakeIDP) sign(s idpSettings, claims map[string]any) string {
 }
 
 // newOIDCTestServer starts open-pages with OIDC pointed at idp. mutate adjusts the config.
-func newOIDCTestServer(t *testing.T, idp *fakeIDP, mutate func(*Config)) (*httptest.Server, *Server) {
+func newOIDCTestServer(t *testing.T, idp *fakeIDP, mutate func(*config.Config)) (*httptest.Server, *Server) {
 	t.Helper()
-	cfg := defaultConfig()
+	cfg := config.Default()
 	cfg.DataPath, cfg.TmpPath = t.TempDir(), t.TempDir()
-	cfg.OIDC = OIDCConfig{
+	cfg.OIDC = config.OIDCConfig{
 		Enabled: true, Issuer: idp.srv.URL, ClientID: testClientID, ClientSecret: testClientSecret,
 		RedirectURL: testRedirectURL, Scopes: []string{"openid", "email", "profile"},
 		EmailClaim: "email", GroupsClaim: "groups",
@@ -471,7 +473,7 @@ func TestOIDCGroupMapping(t *testing.T) {
 
 func TestOIDCGroupsClaimAsString(t *testing.T) {
 	idp := newFakeIDP(t)
-	ts, s := newOIDCTestServer(t, idp, func(c *Config) { c.OIDC.GroupsClaim = "roles" })
+	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "roles" })
 	newGroupVia(t, ts, loggedInClient(t, ts), "admins")
 	idp.update(func(s *idpSettings) { s.tweak = func(c map[string]any) { c["roles"] = "admins" } })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
@@ -495,7 +497,7 @@ func TestOIDCNoEmailTakeover(t *testing.T) {
 
 func TestOIDCEmailRules(t *testing.T) {
 	idp := newFakeIDP(t)
-	ts, s := newOIDCTestServer(t, idp, func(c *Config) { c.OIDC.AllowedEmailDomain = "corp.example" })
+	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.AllowedEmailDomain = "corp.example" })
 	idp.update(func(s *idpSettings) { s.email = "mallory@other.example" })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusForbidden)
 	idp.update(func(s *idpSettings) { s.email = "" })
@@ -537,7 +539,7 @@ func TestOIDCDisabledLeavesRoutesOut(t *testing.T) {
 
 func TestOIDCOnlyDisablesLocalLogin(t *testing.T) {
 	idp := newFakeIDP(t)
-	ts, _ := newOIDCTestServer(t, idp, func(c *Config) { c.LocalLogin = false })
+	ts, _ := newOIDCTestServer(t, idp, func(c *config.Config) { c.LocalLogin = false })
 	creds := []byte(`{"email":"a@example.com","password":"correct horse"}`)
 	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/register", "application/json", creds), http.StatusMethodNotAllowed)
 	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/login", "application/json", creds), http.StatusMethodNotAllowed)
@@ -624,7 +626,7 @@ func TestIndexShowsEnabledSignInMethods(t *testing.T) {
 		{"oidc only", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, _ := newOIDCTestServer(t, idp, func(c *Config) { c.LocalLogin = tc.local })
+			ts, _ := newOIDCTestServer(t, idp, func(c *config.Config) { c.LocalLogin = tc.local })
 			code, body, _ := oidcGet(t, browser(t), ts.URL+"/index")
 			expectStatus(t, code, http.StatusOK)
 			if got := strings.Contains(body, `action="/v1/user/login"`); got != tc.local {

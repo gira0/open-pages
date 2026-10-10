@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 // reservedSiteNames can't be used as site names in either URL mode: in path mode they
@@ -22,7 +24,7 @@ func reservedSiteName(name string) bool { return reservedSiteNames[name] }
 // site is "" when the request is not for a site (it belongs to the API or UI).
 // filePath is the slash-rooted path within the site, not yet cleaned or checked.
 func (s *Server) siteFromRequest(r *http.Request) (site, filePath string) {
-	if s.cfg.URLMode == urlModeSubdomain {
+	if s.cfg.URLMode == config.URLModeSubdomain {
 		// Subdomain mode: <site>.<base_domain>/<file path>
 		label, under := s.subdomainOf(r.Host)
 		if !under || !validSiteName(label) {

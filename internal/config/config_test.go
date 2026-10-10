@@ -1,10 +1,13 @@
-package main
+package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/logging"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -25,7 +28,7 @@ max_upload_mb = 5
 	if err := os.WriteFile(path, []byte(ini), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,20 +47,20 @@ max_upload_mb = 5
 	if cfg.MaxUploadBytes != 5<<20 {
 		t.Errorf("MaxUploadBytes = %d", cfg.MaxUploadBytes)
 	}
-	if cfg.MaxExtractFile != defaultConfig().MaxExtractFile {
+	if cfg.MaxExtractFile != Default().MaxExtractFile {
 		t.Errorf("MaxExtractFile = %d, want default", cfg.MaxExtractFile)
 	}
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
-	if _, err := loadConfig(filepath.Join(t.TempDir(), "nope.ini")); err == nil {
+	if _, err := Load(filepath.Join(t.TempDir(), "nope.ini")); err == nil {
 		t.Fatal("expected an error for a missing file")
 	}
 }
 
 // The shipped settings.ini must stay loadable.
 func TestLoadShippedConfig(t *testing.T) {
-	if _, err := loadConfig("../../settings.ini"); err != nil {
+	if _, err := Load("../../settings.ini"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -72,7 +75,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestOIDCDefaultsToDisabled(t *testing.T) {
-	cfg, err := loadConfig(writeConfig(t, "[server]\nhttp_port = 8080\n"))
+	cfg, err := Load(writeConfig(t, "[server]\nhttp_port = 8080\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +97,7 @@ groups_claim = roles
 allowed_email_domain = @Corp.Example
 `
 	path := writeConfig(t, ini)
-	cfg, err := loadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +107,7 @@ allowed_email_domain = @Corp.Example
 		t.Fatalf("unexpected OIDC config: %+v", o)
 	}
 	t.Setenv("OPEN_PAGES_OIDC_CLIENT_SECRET", "from-env")
-	if cfg, err = loadConfig(path); err != nil || cfg.OIDC.ClientSecret != "from-file" {
+	if cfg, err = Load(path); err != nil || cfg.OIDC.ClientSecret != "from-file" {
 		t.Fatalf("the environment must not override the file: %q, %v", cfg.OIDC.ClientSecret, err)
 	}
 }
@@ -121,13 +124,54 @@ func TestLoadOIDCConfigErrors(t *testing.T) {
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := loadConfig(writeConfig(t, body)); err == nil {
+			if _, err := Load(writeConfig(t, body)); err == nil {
 				t.Fatal("expected an error")
 			}
 		})
 	}
 	// A disabled section is ignored even when incomplete.
-	if _, err := loadConfig(writeConfig(t, "[oidc]\nenabled = false\nissuer = junk\n")); err != nil {
+	if _, err := Load(writeConfig(t, "[oidc]\nenabled = false\nissuer = junk\n")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckOIDCURL(t *testing.T) {
+	for _, ok := range []string{"https://sso.example/realms/corp", "http://localhost:8080/cb", "http://127.0.0.1/cb", "http://[::1]:9/cb"} {
+		if err := CheckOIDCURL("k", ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "/cb", "http://sso.example", "ftp://sso.example", "https://sso.example/#frag", "https://"} {
+		if err := CheckOIDCURL("k", bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestLoadLogAndSites(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "[log]\nlevel = DEBUG\nformat = JSON\n[sites]\nurl_mode = Subdomain\nbase_domain = Pages.Corp.\nkeep_versions = 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogLevel != slog.LevelDebug || cfg.LogFormat != logging.FormatJSON {
+		t.Errorf("log = %v %q", cfg.LogLevel, cfg.LogFormat)
+	}
+	if cfg.URLMode != URLModeSubdomain || cfg.BaseDomain != "pages.corp" || cfg.KeepVersions != 1 {
+		t.Errorf("sites = %q %q %d", cfg.URLMode, cfg.BaseDomain, cfg.KeepVersions)
+	}
+	for _, bad := range []string{
+		"[log]\nlevel = INFO+1\n",
+		"[log]\nformat = xml\n",
+		"[metrics]\ntoken = short\n",
+		"[sites]\nurl_mode = bogus\n",
+		"[sites]\nurl_mode = subdomain\n",
+	} {
+		if _, err := Load(writeConfig(t, bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	cfg, err = Load(writeConfig(t, ""))
+	if err != nil || cfg.URLMode != URLModePath || cfg.LogFormat != logging.FormatText || cfg.MetricsListen != "" {
+		t.Errorf("defaults = %+v, %v", cfg, err)
 	}
 }

@@ -14,11 +14,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/config"
 )
 
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	cfg := defaultConfig()
+	cfg := config.Default()
 	cfg.DataPath = t.TempDir()
 	cfg.TmpPath = t.TempDir()
 	cfg.MaxUploadBytes = 1 << 20

@@ -1,4 +1,5 @@
-package main
+// Package config reads and validates settings.ini into a Config.
+package config
 
 import (
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gira0/open-pages/internal/logging"
 	"gopkg.in/ini.v1"
 )
 
@@ -23,10 +25,10 @@ type Config struct {
 	MaxExtractFile int        // max number of entries in an archive
 	KeepVersions   int        // versions kept on disk per site, including the current one
 	CORSOrigins    []string   // allowed cross-origin callers; empty means same-origin only
-	URLMode        string     // how a request names its site: urlModePath or urlModeSubdomain
+	URLMode        string     // how a request names its site: URLModePath or URLModeSubdomain
 	BaseDomain     string     // bare host (no port) of the API and UI; also the parent of site subdomains
 	LogLevel       slog.Level // minimum level written to the log
-	LogFormat      string     // logFormatText or logFormatJSON
+	LogFormat      string     // logging.FormatText or logging.FormatJSON
 	MetricsListen  string     // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
 	MetricsToken   string     // bearer token for /metrics on the main listener; empty disables it there
 	LocalLogin     bool       // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
@@ -48,14 +50,15 @@ type OIDCConfig struct {
 
 // URL modes for [sites] url_mode.
 const (
-	urlModePath      = "path"      // <base_domain>/<site>/...
-	urlModeSubdomain = "subdomain" // <site>.<base_domain>/...
+	URLModePath      = "path"      // <base_domain>/<site>/...
+	URLModeSubdomain = "subdomain" // <site>.<base_domain>/...
 )
 
 // minMetricsTokenLen keeps an obviously guessable token from being configured.
 const minMetricsTokenLen = 16
 
-func defaultConfig() Config {
+// Default returns the settings used when settings.ini leaves a key out.
+func Default() Config {
 	return Config{
 		Listen:         ":8080",
 		DataPath:       ".",
@@ -64,15 +67,17 @@ func defaultConfig() Config {
 		MaxExtractSize: 500 << 20,
 		MaxExtractFile: 10000,
 		KeepVersions:   5,
-		URLMode:        urlModePath,
+		URLMode:        URLModePath,
 		LogLevel:       slog.LevelInfo,
-		LogFormat:      logFormatText,
+		LogFormat:      logging.FormatText,
 		LocalLogin:     true,
 	}
 }
 
-func loadConfig(path string) (Config, error) {
-	cfg := defaultConfig()
+// Load reads the settings file at path, applies defaults for missing keys and validates the
+// result. Unparseable or inconsistent settings are an error rather than silently defaulted.
+func Load(path string) (Config, error) {
+	cfg := Default()
 	f, err := ini.Load(path)
 	if err != nil {
 		return cfg, fmt.Errorf("read %s: %w", path, err)
@@ -105,20 +110,20 @@ func loadConfig(path string) (Config, error) {
 	sites := f.Section("sites")
 	cfg.URLMode = strings.ToLower(sites.Key("url_mode").MustString(cfg.URLMode))
 	cfg.BaseDomain = strings.ToLower(strings.TrimSuffix(sites.Key("base_domain").String(), "."))
-	if cfg.URLMode != urlModePath && cfg.URLMode != urlModeSubdomain {
-		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, urlModePath, urlModeSubdomain)
+	if cfg.URLMode != URLModePath && cfg.URLMode != URLModeSubdomain {
+		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, URLModePath, URLModeSubdomain)
 	}
-	if cfg.URLMode == urlModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
+	if cfg.URLMode == URLModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
 		return cfg, fmt.Errorf("sites.base_domain %q: subdomain mode needs a bare host name, for example pages.corp", cfg.BaseDomain)
 	}
 
 	logSec := f.Section("log")
-	if cfg.LogLevel, err = parseLogLevel(logSec.Key("level").MustString("info")); err != nil {
+	if cfg.LogLevel, err = logging.ParseLevel(logSec.Key("level").MustString("info")); err != nil {
 		return cfg, err
 	}
 	cfg.LogFormat = strings.ToLower(logSec.Key("format").MustString(cfg.LogFormat))
-	if cfg.LogFormat != logFormatText && cfg.LogFormat != logFormatJSON {
-		return cfg, fmt.Errorf("log.format %q: must be %q or %q", cfg.LogFormat, logFormatText, logFormatJSON)
+	if cfg.LogFormat != logging.FormatText && cfg.LogFormat != logging.FormatJSON {
+		return cfg, fmt.Errorf("log.format %q: must be %q or %q", cfg.LogFormat, logging.FormatText, logging.FormatJSON)
 	}
 
 	metricsSec := f.Section("metrics")
@@ -185,18 +190,18 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.RedirectURL == "" {
 		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and and client_secret are required when enabled")
 	}
-	if err := checkOIDCURL("oidc.issuer", c.Issuer); err != nil {
+	if err := CheckOIDCURL("oidc.issuer", c.Issuer); err != nil {
 		return c, err
 	}
-	if err := checkOIDCURL("oidc.redirect_url", c.RedirectURL); err != nil {
+	if err := CheckOIDCURL("oidc.redirect_url", c.RedirectURL); err != nil {
 		return c, err
 	}
 	return c, nil
 }
 
-// checkOIDCURL requires an absolute https URL; plain http is accepted only for loopback
+// CheckOIDCURL requires an absolute https URL; plain http is accepted only for loopback
 // hosts (local development against a test provider).
-func checkOIDCURL(key, raw string) error {
+func CheckOIDCURL(key, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.Fragment != "" {
 		return fmt.Errorf("%s: must be an absolute URL", key)
