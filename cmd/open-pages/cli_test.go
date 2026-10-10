@@ -6,6 +6,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -195,6 +197,88 @@ func TestDeployVisibility(t *testing.T) {
 	deploy("notes", dir)
 	if got := visibility("notes"); got != visPublic {
 		t.Fatalf("default visibility = %q, want public", got)
+	}
+}
+
+// TestDeployVisibilityOrder checks that a visibility change that narrows the audience is
+// made before the upload, one that widens it only after a successful upload, and that a
+// failed upload leaves the visibility alone.
+func TestDeployVisibilityOrder(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	token := apiToken(t, ts, c)
+	dir := writeTree(t, map[string]string{"index.html": "hi"})
+
+	// A proxy in front of the server records each request and can fail uploads.
+	target, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var (
+		log        []string
+		failUpload bool
+	)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upload := strings.HasSuffix(r.URL.Path, "/upload")
+		if upload {
+			log = append(log, "upload")
+			if failUpload {
+				http.Error(w, "nope", http.StatusInternalServerError)
+				return
+			}
+		} else if r.Method == http.MethodPut {
+			log = append(log, "put")
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	deploy := func(vis string) error {
+		log = nil
+		return deployCommand(context.Background(), []string{"-visibility", vis, "blog", dir}, env(token, front.URL), &bytes.Buffer{})
+	}
+	visibility := func() string {
+		t.Helper()
+		site, err := s.getSite(context.Background(), "blog")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return site.Visibility
+	}
+
+	if err := deploy(visAuthenticated); err != nil {
+		t.Fatal(err)
+	}
+	// Narrowing: the PUT comes first.
+	if err := deploy(visRestricted); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"put", "upload"}) || visibility() != visRestricted {
+		t.Fatalf("narrowing: requests %v, visibility %q", log, visibility())
+	}
+	// Widening with a failed upload: the visibility stays as it was.
+	failUpload = true
+	if err := deploy(visPublic); err == nil {
+		t.Fatal("deploy succeeded although the upload failed")
+	}
+	if !slices.Equal(log, []string{"upload"}) || visibility() != visRestricted {
+		t.Fatalf("failed widening: requests %v, visibility %q", log, visibility())
+	}
+	// Widening: the PUT comes after the upload.
+	failUpload = false
+	if err := deploy(visPublic); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"upload", "put"}) || visibility() != visPublic {
+		t.Fatalf("widening: requests %v, visibility %q", log, visibility())
+	}
+	// Unchanged: no PUT at all.
+	if err := deploy(visPublic); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"upload"}) {
+		t.Fatalf("unchanged: requests %v", log)
 	}
 }
 

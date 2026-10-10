@@ -287,11 +287,13 @@ open-pages deploy blog ./public                  # flags go before <site> <dir>
 - If the upload answers 404, the CLI creates the site and uploads again. `-create=false`
   turns that off. A site created this way has no group and is `public` unless
   `-visibility` says otherwise.
-- `-visibility public|authenticated|restricted` sets the site's visibility before the
-  upload (with `PUT /v1/auth/sites/<site>`), or creates the site with it, so the new
-  version doesn't go live under the old visibility. The two steps are separate requests,
-  so concurrent deploys to one site with different `-visibility` values can race; the last
-  visibility set wins. Without the flag the visibility is left as it is.
+- `-visibility public|authenticated|restricted` creates the site with that visibility or
+  changes it (with `PUT /v1/auth/sites/<site>`). A change that narrows the audience (say
+  `public` to `restricted`) is made before the upload; one that widens it is made only
+  after the upload succeeded, so a failed deploy never exposes the old version more widely.
+  These are separate requests, so concurrent deploys to one site with different
+  `-visibility` values can still interleave. Without the flag the visibility is left as it
+  is.
   See [auth.md](auth.md#site-visibility) for what each value means.
 - The token must belong to the site's owner (otherwise 403).
 - Plain `http` to a non-loopback host prints a warning, because the token travels in the
