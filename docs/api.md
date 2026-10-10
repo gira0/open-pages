@@ -8,8 +8,9 @@ is explained in [auth.md](auth.md); the tables behind the data are in [schema.md
 The machine-readable contract is the OpenAPI 3.1 document
 [`api/openapi.yaml`](../api/openapi.yaml), which the server also serves at
 `GET /v1/openapi.yaml`. Import it into Postman or Swagger UI, or generate a client from it.
-A test fails when a registered route is missing from it or it lists a route the server does
-not register, so a route change updates both this page and the spec.
+A test fails when a registered route is missing from the spec or the spec lists a route the
+server does not register. Nothing checks this page automatically, so a route change should
+update it by hand alongside the spec.
 
 The `curl` examples assume the server is at `https://pages.corp`. `cookies` is a cookie jar
 file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
