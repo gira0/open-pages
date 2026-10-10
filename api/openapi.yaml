@@ -1158,12 +1158,22 @@ components:
             $ref: "#/components/schemas/Error"
     Unauthenticated:
       description: "`unauthenticated`: no valid session cookie or API token."
+      headers:
+        Set-Cookie:
+          description: Expires `auth_cookie`, sent only when the request carried a rejected session cookie (not with a bearer token).
+          schema:
+            type: string
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     SessionRequired:
       description: "`a login session is required`: API tokens are not accepted here."
+      headers:
+        Set-Cookie:
+          description: Expires `auth_cookie`, sent only when the request carried a rejected session cookie.
+          schema:
+            type: string
       content:
         application/json:
           schema:
