@@ -24,13 +24,17 @@ import (
 // The "deploy" subcommand zips a directory and uploads it as a new version of a site:
 //
 //	OPEN_PAGES_TOKEN=opt_... open-pages deploy -server https://pages.corp blog ./public
+//
+// With -visibility, the site is created with that visibility or its visibility is changed:
+// before the upload when the change narrows who can see the site, after a successful upload
+// when it widens it.
 
 const (
 	envToken       = "OPEN_PAGES_TOKEN"
 	envServerURL   = "OPEN_PAGES_URL"
 	deployTimeout  = 10 * time.Minute
 	maxReplyBytes  = 1 << 20
-	deployUsageMsg = "usage: open-pages deploy [-server URL] [-create=false] <site> <dir>"
+	deployUsageMsg = "usage: open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>"
 )
 
 // runDeploy runs the deploy subcommand and returns the process exit code.
@@ -54,6 +58,7 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 	fl := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	server := fl.String("server", getenv(envServerURL), "server base URL (default $"+envServerURL+")")
 	create := fl.Bool("create", true, "create the site if it does not exist")
+	visibility := fl.String("visibility", "", `set the site's visibility: "public", "authenticated" or "restricted" (default: leave as is; new sites are public)`)
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
@@ -61,6 +66,9 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 		return errors.New(deployUsageMsg)
 	}
 	site, dir := fl.Arg(0), fl.Arg(1)
+	if *visibility != "" && !validVisibility(*visibility) {
+		return errors.New(errBadVisibility)
+	}
 
 	if !names.ValidSite(site) {
 		return fmt.Errorf("invalid site name %q: use a DNS label (lowercase letters, digits, hyphens)", site)
@@ -95,10 +103,20 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 		base:  strings.TrimRight(base.String(), "/"),
 		token: token,
 	}
+	// A visibility change that narrows who can see the site is made before the upload, and
+	// one that widens it only after the upload succeeded, so neither the old nor the new
+	// version is served more widely than asked, even if the upload fails. These are separate
+	// requests, not one atomic step: concurrent deploys to the same site can interleave.
+	created, widen := false, false
+	if *visibility != "" {
+		if created, widen, err = c.prepareVisibility(ctx, site, *visibility, *create); err != nil {
+			return err
+		}
+	}
 	rep, err := c.upload(ctx, site, archive, size)
-	if err == nil && rep.status == http.StatusNotFound && *create {
+	if err == nil && rep.status == http.StatusNotFound && *create && !created {
 		// Unknown site: create it, then upload again. A 409 means someone created it meanwhile.
-		if err = c.createSite(ctx, site); err == nil {
+		if err = c.createSite(ctx, site, *visibility); err == nil {
 			rep, err = c.upload(ctx, site, archive, size)
 		}
 	}
@@ -107,6 +125,11 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 	}
 	if rep.status != http.StatusOK {
 		return rep.failure("upload")
+	}
+	if widen {
+		if err := c.setVisibility(ctx, site, *visibility); err != nil {
+			return fmt.Errorf("deployed %s (version %s), but %w", site, rep.Version, err)
+		}
 	}
 	_, err = fmt.Fprintf(out, "deployed %s (version %s, %d bytes)\n", site, rep.Version, size)
 	return err
@@ -218,9 +241,10 @@ func zipDir(w io.Writer, dir string) error {
 
 // reply is the part of an API response the CLI cares about.
 type reply struct {
-	status  int
-	Error   string `json:"error"`
-	Version string `json:"version"`
+	status     int
+	Error      string `json:"error"`
+	Version    string `json:"version"`
+	Visibility string `json:"visibility"`
 }
 
 func (r reply) failure(what string) error {
@@ -241,14 +265,20 @@ type deployClient struct {
 	token string
 }
 
-func (c *deployClient) post(ctx context.Context, path, ctype string, body io.Reader, size int64) (reply, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, io.NopCloser(body))
+func (c *deployClient) send(ctx context.Context, method, path, ctype string, body io.Reader, size int64) (reply, error) {
+	var rc io.ReadCloser = http.NoBody
+	if body != nil {
+		rc = io.NopCloser(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rc)
 	if err != nil {
 		return reply{}, err
 	}
 	req.ContentLength = size
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", ctype)
+	if ctype != "" {
+		req.Header.Set("Content-Type", ctype)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return reply{}, fmt.Errorf("request failed: %w", err)
@@ -267,20 +297,70 @@ func (c *deployClient) upload(ctx context.Context, site string, archive io.ReadS
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
 		return reply{}, err
 	}
-	return c.post(ctx, "/v1/auth/sites/"+site+"/upload", "application/zip", archive, size)
+	return c.send(ctx, http.MethodPost, "/v1/auth/sites/"+site+"/upload", "application/zip", archive, size)
 }
 
-func (c *deployClient) createSite(ctx context.Context, site string) error {
-	body, err := json.Marshal(siteCreate{Name: site})
+func (c *deployClient) sendJSON(ctx context.Context, method, path string, v any) (reply, error) {
+	body, err := json.Marshal(v)
 	if err != nil {
-		return err
+		return reply{}, err
 	}
-	rep, err := c.post(ctx, "/v1/auth/sites", "application/json", bytes.NewReader(body), int64(len(body)))
+	return c.send(ctx, method, path, "application/json", bytes.NewReader(body), int64(len(body)))
+}
+
+// createSite creates site with the given visibility ("" for the server's default). A 409
+// means someone created it meanwhile, which is fine.
+func (c *deployClient) createSite(ctx context.Context, site, visibility string) error {
+	rep, err := c.sendJSON(ctx, http.MethodPost, "/v1/auth/sites", siteCreate{Name: site, Visibility: visibility})
 	if err != nil {
 		return err
 	}
 	if rep.status != http.StatusCreated && rep.status != http.StatusConflict {
 		return rep.failure("creating the site")
+	}
+	return nil
+}
+
+// openness ranks visibilities from the narrowest audience to the widest.
+var openness = map[string]int{visRestricted: 0, visAuthenticated: 1, visPublic: 2}
+
+// prepareVisibility gets site ready to be deployed with the given visibility. A missing site
+// is created with it when create is set (created reports that). An existing site's
+// visibility is changed now if that narrows its audience; if it widens it, widen reports that
+// the change must wait until the upload has succeeded.
+func (c *deployClient) prepareVisibility(ctx context.Context, site, visibility string, create bool) (created, widen bool, err error) {
+	rep, err := c.send(ctx, http.MethodGet, "/v1/auth/sites/"+site, "", nil, 0)
+	if err != nil {
+		return false, false, err
+	}
+	switch {
+	case rep.status == http.StatusOK:
+		if openness[visibility] > openness[rep.Visibility] {
+			return false, true, nil
+		}
+		if visibility == rep.Visibility {
+			return false, false, nil
+		}
+		return false, false, c.setVisibility(ctx, site, visibility)
+	case rep.status == http.StatusNotFound && create:
+		// If someone else created it meanwhile (409), the upload that follows is refused,
+		// because only the owner may deploy.
+		return true, false, c.createSite(ctx, site, visibility)
+	case rep.status == http.StatusNotFound:
+		return false, false, nil // the upload reports the missing site
+	default:
+		return false, false, rep.failure("reading the site")
+	}
+}
+
+// setVisibility sets the visibility of an existing site.
+func (c *deployClient) setVisibility(ctx context.Context, site, visibility string) error {
+	rep, err := c.sendJSON(ctx, http.MethodPut, "/v1/auth/sites/"+site, siteUpdate{Visibility: &visibility})
+	if err != nil {
+		return err
+	}
+	if rep.status != http.StatusOK {
+		return rep.failure("setting the visibility")
 	}
 	return nil
 }
