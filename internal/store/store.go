@@ -10,7 +10,7 @@ import (
 	"fmt"
 
 	"github.com/gira0/open-pages/internal/names"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" database/sql driver
 )
 
 const schema = `
