@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 // Groups. Any logged-in user may create a group and becomes its owner and first member.
@@ -23,8 +25,6 @@ import (
 // Helpers for other code, such as per-site access control: userInGroup, userGroups,
 // getGroup and groupMembers. They only read; all writes below are single statements
 // or transactions that check authorization in SQL, so a stale read can't be acted on.
-
-const maxGroupNameLen = 64
 
 var (
 	errGroupExists    = errors.New("a group with that name already exists")
@@ -48,12 +48,12 @@ type memberInfo struct {
 	Email string `json:"email"`
 }
 
-// validGroupName trims name and reports whether it is usable: 1 to maxGroupNameLen
+// validGroupName trims name and reports whether it is usable: 1 to names.MaxGroupNameLen
 // characters, no control characters.
 func validGroupName(name string) (string, bool) {
 	name = strings.TrimSpace(name)
 	n := utf8.RuneCountInString(name)
-	if n == 0 || n > maxGroupNameLen || !utf8.ValidString(name) {
+	if n == 0 || n > names.MaxGroupNameLen || !utf8.ValidString(name) {
 		return "", false
 	}
 	for _, r := range name {
@@ -62,21 +62,6 @@ func validGroupName(name string) (string, bool) {
 		}
 	}
 	return name, true
-}
-
-// groupNameKey maps a name to the key that must be unique: every rune is replaced by the
-// smallest member of its Unicode simple case-folding orbit, so "Ä" and "ä" (and "K" and
-// the Kelvin sign) share a key. The stored name keeps its original spelling.
-func groupNameKey(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		low := r
-		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
-			low = min(low, f)
-		}
-		b.WriteRune(low)
-	}
-	return b.String()
 }
 
 // userInGroup reports whether the user is a member of the group.
@@ -168,7 +153,7 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx,
 		"INSERT INTO groups (name, name_key, owner) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-		name, groupNameKey(name), owner)
+		name, names.GroupKey(name), owner)
 	if err != nil {
 		return Group{}, fmt.Errorf("insert group: %w", err)
 	}
@@ -341,7 +326,7 @@ func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	name, ok := validGroupName(d.Name)
 	if !ok {
 		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("name must be 1 to %d characters without control characters", maxGroupNameLen))
+			fmt.Sprintf("name must be 1 to %d characters without control characters", names.MaxGroupNameLen))
 		return
 	}
 	g, err := s.createGroup(r.Context(), name, userID(r))

@@ -22,6 +22,7 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/jwt"
+	"github.com/gira0/open-pages/internal/names"
 )
 
 // OpenID Connect sign-in (authorization code flow with PKCE, state and nonce). It is only
@@ -536,7 +537,7 @@ func (s *Server) oidcUser(ctx context.Context, id oidcIdentity) (int64, error) {
 // syncOIDCGroups makes the user's provider-managed memberships match the group names in
 // the token. Only existing groups are mapped (matched like group names everywhere: ignoring
 // case); unknown names are ignored. Memberships added by hand (oidc = 0) are never removed.
-func (s *Server) syncOIDCGroups(ctx context.Context, uid int64, names []string) error {
+func (s *Server) syncOIDCGroups(ctx context.Context, uid int64, groupNames []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -544,13 +545,13 @@ func (s *Server) syncOIDCGroups(ctx context.Context, uid int64, names []string) 
 	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	var want []int64
-	for _, name := range names {
+	for _, name := range groupNames {
 		name, ok := validGroupName(name)
 		if !ok {
 			continue
 		}
 		var gid int64
-		err := tx.QueryRowContext(ctx, "SELECT groupid FROM groups WHERE name_key = ?", groupNameKey(name)).Scan(&gid)
+		err := tx.QueryRowContext(ctx, "SELECT groupid FROM groups WHERE name_key = ?", names.GroupKey(name)).Scan(&gid)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

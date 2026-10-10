@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gira0/open-pages/internal/store"
 )
 
 // fetchURL sends a GET, with an optional bearer token, and returns status, body and headers.
@@ -395,7 +397,7 @@ func TestMigrateAddsVisibility(t *testing.T) {
 	}
 	db.Close()
 	for range 2 {
-		db, err = openDB(path)
+		db, err = store.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}

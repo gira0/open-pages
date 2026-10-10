@@ -2,7 +2,7 @@
 
 open-pages keeps its state in one SQLite file, `data.db`, in the data directory
 (`[paths] datapath`). The driver is the pure-Go `modernc.org/sqlite`. The schema is defined
-in `cmd/open-pages/db.go`: a `CREATE TABLE IF NOT EXISTS` script plus idempotent migration steps, both run
+in `internal/store/store.go`: a `CREATE TABLE IF NOT EXISTS` script plus idempotent migration steps, both run
 on every start. Site files are not in the database; see
 [getting-started.md](getting-started.md#data-directory-layout).
 
@@ -139,7 +139,7 @@ constraint (`sqlite_autoindex_docs_1`, `sqlite_autoindex_docs_2`). `session.toke
 
 ## Migrations
 
-There is no version table and no migration files. `openDB` does this on every start, in
+There is no version table and no migration files. `store.Open` does this on every start, in
 order:
 
 1. Runs the `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` script. On a fresh

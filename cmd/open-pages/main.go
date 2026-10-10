@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/store"
 	"github.com/gira0/open-pages/web"
 )
 
@@ -113,7 +114,7 @@ func newServer(cfg config.Config) (*Server, error) {
 	}
 	s.tmpl = tmpl
 
-	s.db, err = openDB(filepath.Join(cfg.DataPath, "data.db"))
+	s.db, err = store.Open(filepath.Join(cfg.DataPath, "data.db"))
 	if err != nil {
 		return nil, err
 	}

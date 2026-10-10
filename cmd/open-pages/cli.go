@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 // The "deploy" subcommand zips a directory and uploads it as a new version of a site:
@@ -60,7 +62,7 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 	}
 	site, dir := fl.Arg(0), fl.Arg(1)
 
-	if !validSiteName(site) {
+	if !names.ValidSite(site) {
 		return fmt.Errorf("invalid site name %q: use a DNS label (lowercase letters, digits, hyphens)", site)
 	}
 	token := strings.TrimSpace(getenv(envToken))

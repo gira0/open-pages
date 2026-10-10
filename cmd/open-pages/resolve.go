@@ -6,19 +6,8 @@ import (
 	"strings"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/names"
 )
-
-// reservedSiteNames can't be used as site names in either URL mode: in path mode they
-// would shadow API and UI routes on the base domain, in subdomain mode they collide with
-// hosts operators commonly point at the service itself (www.pages.corp, api.pages.corp).
-var reservedSiteNames = map[string]bool{
-	"v1": true, "index": true, "api": true, "www": true, "admin": true, "ui": true,
-	"static": true, "assets": true, "health": true, "healthz": true, "readyz": true, "metrics": true,
-	"login": true, "logout": true, "register": true, "auth": true, "user": true,
-	"users": true, "sites": true, "docs": true, "app": true, "mail": true,
-}
-
-func reservedSiteName(name string) bool { return reservedSiteNames[name] }
 
 // siteFromRequest works out which site a request is for and which file inside it.
 // site is "" when the request is not for a site (it belongs to the API or UI).
@@ -27,14 +16,14 @@ func (s *Server) siteFromRequest(r *http.Request) (site, filePath string) {
 	if s.cfg.URLMode == config.URLModeSubdomain {
 		// Subdomain mode: <site>.<base_domain>/<file path>
 		label, under := s.subdomainOf(r.Host)
-		if !under || !validSiteName(label) {
+		if !under || !names.ValidSite(label) {
 			return "", ""
 		}
 		return label, r.URL.Path
 	}
 	// Path mode: /<site>/<file path>
 	first, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
-	if !validSiteName(first) || reservedSiteName(first) {
+	if !names.ValidSite(first) || names.ReservedSite(first) {
 		return "", ""
 	}
 	return first, "/" + rest

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/gira0/open-pages/internal/names"
 )
 
 type siteCreate struct {
@@ -23,12 +25,12 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !validSiteName(d.Name) {
+	if !names.ValidSite(d.Name) {
 		writeError(w, http.StatusBadRequest,
 			"name must be a DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending with a hyphen")
 		return
 	}
-	if reservedSiteName(d.Name) {
+	if names.ReservedSite(d.Name) {
 		writeError(w, http.StatusBadRequest, "that site name is reserved")
 		return
 	}
@@ -67,7 +69,7 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 // writing the error response itself when it returns false.
 func (s *Server) authorizeSite(w http.ResponseWriter, r *http.Request) (Site, bool) {
 	name := r.PathValue("name")
-	if !validSiteName(name) {
+	if !names.ValidSite(name) {
 		writeError(w, http.StatusNotFound, errSiteNotFound.Error())
 		return Site{}, false
 	}
