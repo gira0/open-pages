@@ -74,12 +74,6 @@ image. Booleans written as anything other than a boolean silently fall back to t
 except the two security-relevant ones, `auth.local_login` and `oidc.enabled`, where a bad
 value fails startup. Integers that do not parse also fall back to the default.
 
-### Top level
-
-| Key | Default | Meaning |
-|---|---|---|
-| `app_mode` | none | Present in the shipped files but **not read by the code**; it has no effect |
-
 ### [server]
 
 | Key | Default | Meaning |
