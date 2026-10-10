@@ -54,15 +54,20 @@ type extractor struct {
 	files   int
 }
 
+// count records one archive entry, skipped ones included, and enforces MaxFiles.
+func (e *extractor) count() error {
+	e.files++
+	if e.files > e.limits.MaxFiles {
+		return fmt.Errorf("archive has more than %d entries", e.limits.MaxFiles)
+	}
+	return nil
+}
+
 // target validates an entry name and returns where it belongs on disk.
 func (e *extractor) target(name string) (string, error) {
 	local := filepath.FromSlash(name)
 	if !filepath.IsLocal(local) {
 		return "", fmt.Errorf("archive entry %q points outside the site", name)
-	}
-	e.files++
-	if e.files > e.limits.MaxFiles {
-		return "", fmt.Errorf("archive has more than %d entries", e.limits.MaxFiles)
 	}
 	return filepath.Join(e.dest, local), nil
 }
@@ -109,6 +114,9 @@ func extractZip(src io.ReaderAt, size int64, dest string, limits Limits) error {
 	}
 	e := &extractor{dest: dest, limits: limits}
 	for _, f := range zr.File {
+		if err := e.count(); err != nil {
+			return err
+		}
 		mode := f.Mode()
 		switch {
 		case mode.IsDir():
@@ -137,6 +145,9 @@ func extractTar(src io.Reader, dest string, limits Limits) error {
 		}
 		if err != nil {
 			return fmt.Errorf("read tar: %w", err)
+		}
+		if err := e.count(); err != nil {
+			return err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:

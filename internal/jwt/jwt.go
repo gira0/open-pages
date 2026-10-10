@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"strings"
 )
@@ -162,6 +163,10 @@ func (t *Token) Claims() (map[string]any, error) {
 	dec.UseNumber()
 	var claims map[string]any
 	if err := dec.Decode(&claims); err != nil || claims == nil {
+		return nil, ErrMalformed
+	}
+	// Anything but whitespace after the object makes the payload malformed.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, ErrMalformed
 	}
 	return claims, nil
