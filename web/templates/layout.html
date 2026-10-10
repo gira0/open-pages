@@ -1,0 +1,71 @@
+{{/* The shared page frame. A page defines "content" and runs {{template "layout" .}}. */}}
+{{define "head"}}
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{{.title}} · open-pages</title>
+	<link rel="stylesheet" href="{{.static}}patternfly/patternfly.min.css">
+	<link rel="stylesheet" href="{{.static}}open-pages.css">
+	{{/* Sets the theme class before the first paint, so dark mode doesn't flash. */}}
+	<script src="{{.static}}theme.js"></script>
+	<script src="{{.static}}app.js" defer></script>
+{{end}}
+
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+<div class="pf-v6-c-page">
+	<div class="pf-v6-c-skip-to-content">
+		<a class="pf-v6-c-button pf-m-primary" href="#main-content"><span class="pf-v6-c-button__text">Skip to content</span></a>
+	</div>
+	<header class="pf-v6-c-masthead">
+		<div class="pf-v6-c-masthead__main">
+			<span class="pf-v6-c-masthead__toggle">
+				<button class="pf-v6-c-button pf-m-plain" type="button" id="nav-toggle"
+					aria-label="Global navigation" aria-expanded="false" aria-controls="sidebar">
+					<span class="pf-v6-c-button__icon"><i class="fas fa-bars" aria-hidden="true"></i></span>
+				</button>
+			</span>
+			<div class="pf-v6-c-masthead__brand">
+				<a class="pf-v6-c-masthead__logo op-brand" href="/index">open-pages</a>
+			</div>
+		</div>
+		<div class="pf-v6-c-masthead__content">
+			<div class="pf-v6-c-toolbar pf-m-static">
+				<div class="pf-v6-c-toolbar__content">
+					<div class="pf-v6-c-toolbar__content-section">
+						<div class="pf-v6-c-toolbar__group pf-m-align-end">
+							<div class="pf-v6-c-toolbar__item">
+								<button class="pf-v6-c-button pf-m-plain" type="button" id="theme-toggle"
+									aria-label="Dark theme" aria-pressed="false">
+									<span class="pf-v6-c-button__icon"><i class="fas fa-moon" aria-hidden="true"></i></span>
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</header>
+	<div class="pf-v6-c-page__sidebar" id="sidebar">
+		<div class="pf-v6-c-page__sidebar-body">
+			<nav class="pf-v6-c-nav" aria-label="Global">
+				<ul class="pf-v6-c-nav__list" role="list">
+					<li class="pf-v6-c-nav__item">
+						{{if eq .nav "sites"}}<a href="/index" class="pf-v6-c-nav__link pf-m-current" aria-current="page">{{else}}<a href="/index" class="pf-v6-c-nav__link">{{end}}
+							<span class="pf-v6-c-nav__link-text">Sites</span>
+						</a>
+					</li>
+				</ul>
+			</nav>
+		</div>
+	</div>
+	<div class="pf-v6-c-page__main-container">
+		<main class="pf-v6-c-page__main" tabindex="-1" id="main-content">
+			{{template "content" .}}
+		</main>
+	</div>
+</div>
+</body>
+</html>
+{{end}}

@@ -44,8 +44,11 @@ jobs:
             mkdir -p "build/$name"
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
               go build -trimpath -ldflags="-s -w" -o "build/$name/open-pages" ./cmd/open-pages
-            # The UI templates are embedded in the binary; ship the sample settings alongside.
-            cp configs/settings.ini "build/$name/"
+            # The UI templates and assets are embedded in the binary; ship the sample settings
+            # and the notices of the embedded third-party fonts and CSS alongside.
+            cp configs/settings.ini NOTICE "build/$name/"
+            mkdir "build/$name/licenses"
+            cp web/static/patternfly/*.txt "build/$name/licenses/"
             tar -C build -czf "dist/$name.tar.gz" "$name"
           done
           (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)

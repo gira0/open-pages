@@ -19,10 +19,13 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini
 ```
 
-The UI template is embedded in the binary, so it can run from any working directory.
+The UI templates and assets (`web/`) are embedded in the binary, so it can run from any
+working directory and needs no internet access: the PatternFly CSS and fonts are vendored in
+`web/static/patternfly/` by `scripts/vendor-patternfly.sh`.
 
 **Release archive.** Pushing a `v*` tag publishes a GitHub release with `linux/amd64` and
-`linux/arm64` archives (binary and `settings.ini`) and a `SHA256SUMS` file.
+`linux/arm64` archives (binary, `settings.ini`, `NOTICE` and the third-party license texts in
+`licenses/`) and a `SHA256SUMS` file.
 
 **Container image.** `ghcr.io/gira0/open-pages`, tagged with the version (stable releases
 also get `major.minor` and `latest`). See [Containers](#containers).
@@ -57,7 +60,7 @@ curl localhost:8080/hello/
 
 ```text
 open-pages [-config settings.ini]                       run the server
-open-pages deploy [-server URL] [-create=false] <site> <dir>   deploy a directory
+open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>   deploy a directory
 ```
 
 `-config` defaults to `settings.ini` in the working directory. The server stops gracefully
@@ -73,12 +76,6 @@ The repository's [`configs/settings.ini`](../configs/settings.ini) documents the
 image. Booleans written as anything other than a boolean silently fall back to the default,
 except the two security-relevant ones, `auth.local_login` and `oidc.enabled`, where a bad
 value fails startup. Integers that do not parse also fall back to the default.
-
-### Top level
-
-| Key | Default | Meaning |
-|---|---|---|
-| `app_mode` | none | Present in the shipped files but **not read by the code**; it has no effect |
 
 ### [server]
 
@@ -291,9 +288,16 @@ open-pages deploy blog ./public                  # flags go before <site> <dir>
   `/v1/auth/sites/<site>/upload`, and the new version id is printed. Symlinks and other
   special files are an error; an empty directory is an error.
 - If the upload answers 404, the CLI creates the site and uploads again. `-create=false`
-  turns that off. **A site created this way is `public` with no group.** To keep it private,
-  create it first with the visibility you want, or change it afterwards with
-  `PUT /v1/auth/sites/<site>`.
+  turns that off. A site created this way has no group and is `public` unless
+  `-visibility` says otherwise.
+- `-visibility public|authenticated|restricted` creates the site with that visibility or
+  changes it (with `PUT /v1/auth/sites/<site>`). A change that narrows the audience (say
+  `public` to `restricted`) is made before the upload; one that widens it is made only
+  after the upload succeeded, so a failed deploy never exposes the old version more widely.
+  These are separate requests, so concurrent deploys to one site with different
+  `-visibility` values can still interleave. Without the flag the visibility is left as it
+  is.
+  See [auth.md](auth.md#site-visibility) for what each value means.
 - The token must belong to the site's owner (otherwise 403).
 - Plain `http` to a non-loopback host prints a warning, because the token travels in the
   clear. Redirects are never followed, so the token cannot be forwarded to another origin;

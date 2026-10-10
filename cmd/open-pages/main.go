@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
@@ -108,11 +107,14 @@ func newServer(cfg config.Config) (*Server, error) {
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
 
-	tmpl, err := template.ParseFS(web.Templates, "templates/*.html")
+	pages, err := parsePages(web.Templates)
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}
-	s.tmpl = tmpl
+	s.pages = pages
+	if s.static, err = loadStatic(); err != nil {
+		return nil, fmt.Errorf("load static assets: %w", err)
+	}
 
 	s.db, err = store.Open(filepath.Join(cfg.DataPath, "data.db"))
 	if err != nil {

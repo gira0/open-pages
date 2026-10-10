@@ -47,9 +47,10 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 	cfg.MetricsToken = "m"
 	s := &Server{cfg: cfg, oidc: &oidcClient{}}
 
+	// OpenAPI has no wildcard segments, so "{path...}" is documented as "{path}".
 	var registered []string
 	for _, r := range s.routeTable() {
-		registered = append(registered, r.pattern)
+		registered = append(registered, strings.ReplaceAll(r.pattern, "...}", "}"))
 	}
 	documented := specOperations(t)
 

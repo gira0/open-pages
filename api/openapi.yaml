@@ -59,6 +59,44 @@ paths:
               schema:
                 type: string
 
+  /static/{hash}/{path}:
+    get:
+      tags: [service]
+      operationId: getStaticAsset
+      summary: UI asset
+      description: |
+        A stylesheet, script, font or image embedded in the binary for the UI pages. Only
+        the current build's hash is served, with `Cache-Control: public, max-age=31536000,
+        immutable`; any other hash or unknown path is a plain-text 404 with
+        `Cache-Control: no-store`. Assets are gzip-encoded when the client accepts it.
+      security: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The content hash of the current build, as the UI pages link it.
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          description: The asset path; it may contain slashes.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The asset.
+          content:
+            "*/*":
+              schema:
+                type: string
+        "404":
+          description: Unknown hash or asset.
+          content:
+            text/plain:
+              schema:
+                type: string
+
   /v1/ping:
     get:
       tags: [service]
