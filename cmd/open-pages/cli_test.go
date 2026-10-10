@@ -6,6 +6,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -153,6 +155,133 @@ func TestDeployCommand(t *testing.T) {
 	}
 }
 
+func TestDeployVisibility(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	token := apiToken(t, ts, c)
+	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	visibility := func(name string) string {
+		t.Helper()
+		site, err := s.getSite(context.Background(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return site.Visibility
+	}
+	deploy := func(args ...string) {
+		t.Helper()
+		if err := deployCommand(context.Background(), args, env(token, ts.URL), &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A new site is created with the requested visibility.
+	deploy("-visibility", "restricted", "blog", dir)
+	if got := visibility("blog"); got != visRestricted {
+		t.Fatalf("new site visibility = %q, want restricted", got)
+	}
+	// Without the flag, a redeploy leaves it alone.
+	deploy("blog", dir)
+	if got := visibility("blog"); got != visRestricted {
+		t.Fatalf("visibility after plain redeploy = %q, want restricted", got)
+	}
+	// With the flag, an existing site's visibility changes.
+	deploy("-visibility", "authenticated", "blog", dir)
+	if got := visibility("blog"); got != visAuthenticated {
+		t.Fatalf("visibility = %q, want authenticated", got)
+	}
+	if versions, _ := s.Versions("blog"); len(versions) != 3 {
+		t.Fatalf("got versions %v, want 3", versions)
+	}
+	// Without the flag, a new site is public as before.
+	deploy("notes", dir)
+	if got := visibility("notes"); got != visPublic {
+		t.Fatalf("default visibility = %q, want public", got)
+	}
+}
+
+// TestDeployVisibilityOrder checks that a visibility change that narrows the audience is
+// made before the upload, one that widens it only after a successful upload, and that a
+// failed upload leaves the visibility alone.
+func TestDeployVisibilityOrder(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	token := apiToken(t, ts, c)
+	dir := writeTree(t, map[string]string{"index.html": "hi"})
+
+	// A proxy in front of the server records each request and can fail uploads.
+	target, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var (
+		log        []string
+		failUpload bool
+	)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upload := strings.HasSuffix(r.URL.Path, "/upload")
+		if upload {
+			log = append(log, "upload")
+			if failUpload {
+				http.Error(w, "nope", http.StatusInternalServerError)
+				return
+			}
+		} else if r.Method == http.MethodPut {
+			log = append(log, "put")
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	deploy := func(vis string) error {
+		log = nil
+		return deployCommand(context.Background(), []string{"-visibility", vis, "blog", dir}, env(token, front.URL), &bytes.Buffer{})
+	}
+	visibility := func() string {
+		t.Helper()
+		site, err := s.getSite(context.Background(), "blog")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return site.Visibility
+	}
+
+	if err := deploy(visAuthenticated); err != nil {
+		t.Fatal(err)
+	}
+	// Narrowing: the PUT comes first.
+	if err := deploy(visRestricted); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"put", "upload"}) || visibility() != visRestricted {
+		t.Fatalf("narrowing: requests %v, visibility %q", log, visibility())
+	}
+	// Widening with a failed upload: the visibility stays as it was.
+	failUpload = true
+	if err := deploy(visPublic); err == nil {
+		t.Fatal("deploy succeeded although the upload failed")
+	}
+	if !slices.Equal(log, []string{"upload"}) || visibility() != visRestricted {
+		t.Fatalf("failed widening: requests %v, visibility %q", log, visibility())
+	}
+	// Widening: the PUT comes after the upload.
+	failUpload = false
+	if err := deploy(visPublic); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"upload", "put"}) || visibility() != visPublic {
+		t.Fatalf("widening: requests %v, visibility %q", log, visibility())
+	}
+	// Unchanged: no PUT at all.
+	if err := deploy(visPublic); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"upload"}) {
+		t.Fatalf("unchanged: requests %v", log)
+	}
+}
+
 func TestDeployCommandFailures(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
@@ -174,6 +303,9 @@ func TestDeployCommandFailures(t *testing.T) {
 		"missing dir":     {[]string{"blog", filepath.Join(dir, "nope")}, token, "nope"},
 		"no create":       {[]string{"-create=false", "blog", dir}, token, "HTTP 404"},
 		"wrong arg count": {[]string{"blog"}, token, "usage"},
+		"bad visibility":  {[]string{"-visibility", "secret", "blog", dir}, token, "visibility must be"},
+		"no create, vis":  {[]string{"-create=false", "-visibility", "restricted", "blog", dir}, token, "HTTP 404"},
+		"foreign vis":     {[]string{"-visibility", "public", "theirs", dir}, token, "HTTP 403"},
 		"bad server":      {[]string{"-server", "ftp://x", "blog", dir}, token, "server URL"},
 		"unreachable":     {[]string{"-server", "http://127.0.0.1:1", "blog", dir}, token, "request failed"},
 	}
