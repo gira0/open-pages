@@ -19,19 +19,19 @@ serves them. Review for correctness and security first; style is handled by `gol
 
 ## Security-sensitive areas (look hardest here)
 
-- **Archive extraction and upload** (`extract.go`, `upload.go`): path traversal (`..`, absolute
+- **Archive extraction and upload** (`cmd/open-pages/extract.go`, `cmd/open-pages/upload.go`): path traversal (`..`, absolute
   paths), symlinks and hard links, zip bombs (size and entry-count limits), partial extraction
   left behind on failure.
-- **Auth** (`auth.go`, `tokens.go`): token and session handling, constant-time comparison,
+- **Auth** (`cmd/open-pages/auth.go`, `cmd/open-pages/tokens.go`): token and session handling, constant-time comparison,
   tokens never logged or returned twice, a malformed `Authorization` header must never fall
   back to the session cookie.
-- **Site names** (`sites.go`): must be hostname-valid and must not be a reserved name.
-- **Serving and URL resolution** (`serve.go`, `resolve.go`): check both `url_mode = path` and
+- **Site names** (`cmd/open-pages/sites.go`): must be hostname-valid and must not be a reserved name.
+- **Serving and URL resolution** (`cmd/open-pages/serve.go`, `cmd/open-pages/resolve.go`): check both `url_mode = path` and
   `url_mode = subdomain`; no escaping the site root; behaviour on unknown or reserved hosts.
 - **Log injection**: do not log raw unvalidated user input (request paths, hosts, headers,
   client addresses). CodeQL flags this; log IDs, matched route patterns and status instead.
   Values already validated to a bounded form, such as a site name (a DNS label), are fine.
-- **Redirects and outbound HTTP** (`cli.go`): never forward credentials across redirects.
+- **Redirects and outbound HTTP** (`cmd/open-pages/cli.go`): never forward credentials across redirects.
 
 ## Data and deploys
 

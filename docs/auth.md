@@ -185,7 +185,7 @@ the visibility.
 | `authenticated` | any logged-in user (session or API token) | no | yes, for every user |
 | `restricted` | the owner, and the members of the site's group | no | owner and group members |
 
-Exact rules (`canView` in `sites.go`):
+Exact rules (`canView` in `cmd/open-pages/sites.go`):
 
 1. `public`: allowed, for anonymous visitors too.
 2. Otherwise an anonymous request is refused.

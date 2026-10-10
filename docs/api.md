@@ -115,7 +115,7 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://pages.corp/metrics
 
 ### GET /index
 
-No authentication. Renders `templates/index.html`: a local login form (when local login is
+No authentication. Renders `cmd/open-pages/templates/index.html`: a local login form (when local login is
 enabled), a "Sign in with your company account" link (when OIDC is enabled) and a form that
 creates a site and uploads an archive to it. It is a test page, not a stable interface.
 
@@ -368,7 +368,7 @@ A site name is a DNS label: 1 to 63 lowercase letters, digits or hyphens, not st
 ending with a hyphen. These names are reserved in both URL modes and are refused with 400:
 `v1`, `index`, `api`, `www`, `admin`, `ui`, `static`, `assets`, `health`, `healthz`,
 `readyz`, `metrics`, `login`, `logout`, `register`, `auth`, `user`, `users`, `sites`,
-`docs`, `app`, `mail` (`reservedSiteNames` in `resolve.go`).
+`docs`, `app`, `mail` (`reservedSiteNames` in `cmd/open-pages/resolve.go`).
 
 Whoever creates a site owns it. Routes that change a site, or list or roll back its
 versions, are owner-only: `404 {"error":"site not found"}` for an unknown or invalid name,

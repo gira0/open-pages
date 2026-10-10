@@ -15,28 +15,26 @@ Pick one.
 **Build from source.** Needs Go 1.26 or newer. No C toolchain: SQLite is pure Go.
 
 ```sh
-go build -o open-pages .
+go build -o open-pages ./cmd/open-pages
 ./open-pages -config settings.ini
 ```
 
-The server reads the UI template from `./templates/` relative to its **working directory**,
-so run it from a directory that contains `templates/` (the repository root, or an unpacked
-release).
+The UI template is embedded in the binary, so it can run from any working directory.
 
 **Release archive.** Pushing a `v*` tag publishes a GitHub release with `linux/amd64` and
-`linux/arm64` archives (binary, `templates/`, `settings.ini`) and a `SHA256SUMS` file.
+`linux/arm64` archives (binary and `settings.ini`) and a `SHA256SUMS` file.
 
 **Container image.** `ghcr.io/gira0/open-pages`, tagged with the version (stable releases
 also get `major.minor` and `latest`). See [Containers](#containers).
 
 **CLI only.** The same binary deploys sites from CI; `go install
-github.com/gira0/open-pages@latest` installs it. See
+github.com/gira0/open-pages/cmd/open-pages@latest` installs it. See
 [Deploying with the CLI and CI](#deploying-with-the-cli-and-ci).
 
 ## Quick start
 
 ```sh
-go build -o open-pages .
+go build -o open-pages ./cmd/open-pages
 ./open-pages -config settings.ini &
 
 # create an account and log in
@@ -308,7 +306,7 @@ CI examples ready to copy, not run by this repository's CI:
 
 ```yaml
 # GitHub Actions step; the token is a repository secret, the URL a variable
-- run: go install github.com/gira0/open-pages@latest
+- run: go install github.com/gira0/open-pages/cmd/open-pages@latest
 - run: open-pages deploy blog ./public
   env:
     OPEN_PAGES_TOKEN: ${{ secrets.OPEN_PAGES_TOKEN }}
