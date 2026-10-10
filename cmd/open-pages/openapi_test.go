@@ -60,7 +60,12 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		}
 	}
 	for _, op := range documented {
-		if !slices.Contains(registered, op) {
+		// A GET pattern also serves HEAD, so a documented HEAD needs only the GET.
+		want := op
+		if path, ok := strings.CutPrefix(op, "HEAD "); ok {
+			want = "GET " + path
+		}
+		if !slices.Contains(registered, want) {
 			t.Errorf("api/openapi.yaml documents %q, which the server does not register", op)
 		}
 	}
