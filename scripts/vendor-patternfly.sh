@@ -5,8 +5,8 @@
 #   scripts/vendor-patternfly.sh
 #
 # To upgrade, change PF_VERSION and PF_SHA256 (the sha256 of the npm tarball), rerun the
-# script and commit the result. A major version renames every pf-vN class, so the templates
-# in web/templates/ must be updated too.
+# script (it also updates the version in NOTICE) and commit the result. A major version
+# renames every pf-vN class, so the templates in web/templates/ must be updated too.
 set -eu
 
 PF_VERSION=6.6.1
@@ -43,6 +43,9 @@ for f in RedHatDisplay/RedHatDisplayVF.woff2 RedHatDisplay/RedHatDisplayVF-Itali
 done
 cp "$pkg/assets/pficon/pf-v6-pficon.woff2" "$dest/assets/pficon/"
 echo "$PF_VERSION" > "$dest/VERSION"
+# Keep the version named in NOTICE in step.
+sed "s|@patternfly/patternfly [0-9][0-9.]*|@patternfly/patternfly $PF_VERSION|" NOTICE > "$tmp/NOTICE"
+cat "$tmp/NOTICE" > NOTICE
 
 # Every font the stylesheet points at must have been copied.
 grep -o 'url(assets/[^)]*)' "$dest/patternfly.min.css" | sed 's/^url(//; s/)$//' | sort -u |
