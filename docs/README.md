@@ -8,6 +8,7 @@ known limits.
 |---|---|
 | [getting-started.md](getting-started.md) | Install, configure (every settings key), run in a container, monitor, deploy from the CLI or CI, back up |
 | [api.md](api.md) | Look up a route: method, auth, request and response, status codes, `curl` example |
+| [`api/openapi.yaml`](../api/openapi.yaml) | Feed the API to tools: OpenAPI 3.1, also served at `/v1/openapi.yaml` |
 | [auth.md](auth.md) | Understand local accounts, sessions, API tokens, OIDC sign-in, groups and per-site visibility |
 | [schema.md](schema.md) | See every database table and column, the indexes, and how migrations work |
 

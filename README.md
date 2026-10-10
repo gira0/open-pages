@@ -52,7 +52,8 @@ All reference material is in [`docs/`](docs/README.md):
 - [Getting started and operations](docs/getting-started.md): install, every settings key,
   URL modes, containers, health and metrics, CLI and CI deploys, backups.
 - [API reference](docs/api.md): every route with auth, request and response shapes, status
-  codes and examples.
+  codes and examples. The OpenAPI 3.1 version is [`api/openapi.yaml`](api/openapi.yaml),
+  also served at `/v1/openapi.yaml`.
 - [Access control and authentication](docs/auth.md): accounts, sessions, API tokens, OIDC,
   groups, site visibility, known limits.
 - [Database schema](docs/schema.md): tables, columns, indexes, migrations.
@@ -64,11 +65,12 @@ go test -race ./...
 golangci-lint run      # lint + format check, config in .golangci.yml
 golangci-lint fmt      # apply gofmt/goimports
 go mod tidy -diff      # go.mod/go.sum must be tidy
+npx @redocly/cli@2.57.0 lint api/openapi.yaml   # OpenAPI lint, rules in redocly.yaml
 ```
 
 CI runs on every pull request: tidy check, golangci-lint (gofmt, goimports, vet,
 staticcheck, gosec, …), race-enabled tests with a 70% coverage floor (report in the job
-summary and as an artifact), govulncheck, and dependency review (blocking newly
+summary and as an artifact), an OpenAPI lint of `api/openapi.yaml`, govulncheck, and dependency review (blocking newly
 introduced dependencies with known moderate-or-higher vulnerabilities). The build,
 lint, tests, and vulnerability checks also run weekly and can be triggered manually.
 govulncheck deliberately uses the latest scanner and vulnerability database.

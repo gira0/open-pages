@@ -1,0 +1,6 @@
+# This file instructs Redocly's linter to ignore the rules contained for specific parts of your API.
+# See https://redocly.com/docs/cli/ for more information.
+# The OIDC login route only ever redirects (302) to the identity provider.
+api/openapi.yaml:
+  operation-2xx-response:
+    - '#/paths/~1v1~1auth~1oidc~1login/get/responses'

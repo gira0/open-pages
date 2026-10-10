@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/gira0/open-pages/api"
 	"github.com/gira0/open-pages/internal/config"
 )
 
@@ -29,50 +30,76 @@ type Server struct {
 	oidc     *oidcClient // nil unless [oidc] is enabled
 }
 
-func (s *Server) routes() http.Handler {
-	mux := http.NewServeMux()
+// route is one pattern the API mux registers.
+type route struct {
+	pattern string
+	handler http.Handler
+}
 
-	mux.HandleFunc("GET /index", s.handleIndex)
-	mux.HandleFunc("GET /static/{hash}/{path...}", s.handleStatic)
-	mux.HandleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
+// routeTable lists the routes the server registers with its current configuration. The
+// OpenAPI test checks it against api/openapi.yaml.
+func (s *Server) routeTable() []route {
+	var rt []route
+	handle := func(pattern string, h http.Handler) { rt = append(rt, route{pattern, h}) }
+	handleFunc := func(pattern string, h http.HandlerFunc) { handle(pattern, h) }
+
+	handleFunc("GET /index", s.handleIndex)
+	handleFunc("GET /static/{hash}/{path...}", s.handleStatic)
+	handleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 	})
-	mux.HandleFunc("GET /v1/sites", s.handlePublicSites)
-	mux.HandleFunc("GET /healthz", s.handleHealth)
+	handleFunc("GET /v1/openapi.yaml", handleOpenAPI)
+	handleFunc("GET /v1/sites", s.handlePublicSites)
+	handleFunc("GET /healthz", s.handleHealth)
 	if s.cfg.MetricsToken != "" {
-		mux.HandleFunc("GET /metrics", s.handleMetrics)
+		handleFunc("GET /metrics", s.handleMetrics)
 	}
 	if s.cfg.LocalLogin {
-		mux.HandleFunc("POST /v1/user/register", s.handleRegister)
-		mux.HandleFunc("POST /v1/user/login", s.handleLogin)
+		handleFunc("POST /v1/user/register", s.handleRegister)
+		handleFunc("POST /v1/user/login", s.handleLogin)
 	}
 	if s.oidc != nil {
-		mux.HandleFunc("GET /v1/auth/oidc/login", s.handleOIDCLogin)
-		mux.HandleFunc("GET /v1/auth/oidc/callback", s.handleOIDCCallback)
+		handleFunc("GET /v1/auth/oidc/login", s.handleOIDCLogin)
+		handleFunc("GET /v1/auth/oidc/callback", s.handleOIDCCallback)
 	}
 
-	mux.Handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
-	mux.Handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))
+	handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
+	handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))
 	// Token management needs a real session: an API token can't mint or revoke tokens.
-	mux.Handle("POST /v1/auth/tokens", s.requireSession(s.handleTokenCreate))
-	mux.Handle("GET /v1/auth/tokens", s.requireSession(s.handleTokenList))
-	mux.Handle("DELETE /v1/auth/tokens/{id}", s.requireSession(s.handleTokenRevoke))
-	mux.Handle("GET /v1/auth/groups", s.requireAuth(s.handleGroupList))
-	mux.Handle("POST /v1/auth/groups", s.requireAuth(s.handleGroupCreate))
-	mux.Handle("GET /v1/auth/groups/{id}", s.requireAuth(s.handleGroupGet))
-	mux.Handle("DELETE /v1/auth/groups/{id}", s.requireAuth(s.handleGroupDelete))
-	mux.Handle("POST /v1/auth/groups/{id}/members", s.requireAuth(s.handleMemberAdd))
-	mux.Handle("DELETE /v1/auth/groups/{id}/members/{uid}", s.requireAuth(s.handleMemberRemove))
-	mux.Handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
-	mux.Handle("GET /v1/auth/sites/{name}", s.requireAuth(s.handleSiteGet))
-	mux.Handle("PUT /v1/auth/sites/{name}", s.requireAuth(s.handleSiteUpdate))
-	mux.Handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
-	mux.Handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))
-	mux.Handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(s.handleRollback))
-	mux.Handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
-	mux.Handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
+	handle("POST /v1/auth/tokens", s.requireSession(s.handleTokenCreate))
+	handle("GET /v1/auth/tokens", s.requireSession(s.handleTokenList))
+	handle("DELETE /v1/auth/tokens/{id}", s.requireSession(s.handleTokenRevoke))
+	handle("GET /v1/auth/groups", s.requireAuth(s.handleGroupList))
+	handle("POST /v1/auth/groups", s.requireAuth(s.handleGroupCreate))
+	handle("GET /v1/auth/groups/{id}", s.requireAuth(s.handleGroupGet))
+	handle("DELETE /v1/auth/groups/{id}", s.requireAuth(s.handleGroupDelete))
+	handle("POST /v1/auth/groups/{id}/members", s.requireAuth(s.handleMemberAdd))
+	handle("DELETE /v1/auth/groups/{id}/members/{uid}", s.requireAuth(s.handleMemberRemove))
+	handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
+	handle("GET /v1/auth/sites/{name}", s.requireAuth(s.handleSiteGet))
+	handle("PUT /v1/auth/sites/{name}", s.requireAuth(s.handleSiteUpdate))
+	handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
+	handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))
+	handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(s.handleRollback))
+	handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
+	handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
+	return rt
+}
 
+func (s *Server) routes() http.Handler {
+	mux := http.NewServeMux()
+	for _, r := range s.routeTable() {
+		mux.Handle(r.pattern, r.handler)
+	}
 	return s.observe(s.cors(s.withSites(mux)))
+}
+
+// handleOpenAPI serves the embedded OpenAPI document. It needs no login.
+func handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml")
+	if _, err := w.Write(api.OpenAPI); err != nil {
+		ctxLogger(r.Context()).Warn("write openapi", "err", err)
+	}
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
