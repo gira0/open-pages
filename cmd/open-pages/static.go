@@ -125,10 +125,10 @@ func acceptsGzip(header string) bool {
 	for part := range strings.SplitSeq(header, ",") {
 		coding, params, _ := strings.Cut(part, ";")
 		q := 1.0
-		if k, v, ok := strings.Cut(params, "="); ok && strings.TrimSpace(k) == "q" {
+		if k, v, ok := strings.Cut(params, "="); ok && strings.EqualFold(strings.TrimSpace(k), "q") {
 			f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-			if err != nil {
-				continue
+			if err != nil || f < 0 || f > 1 {
+				continue // not a valid qvalue: ignore the entry
 			}
 			q = f
 		}

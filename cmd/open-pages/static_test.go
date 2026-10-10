@@ -166,6 +166,10 @@ func TestAcceptsGzip(t *testing.T) {
 		"*, gzip;q=0":         false,
 		"*;q=0, gzip":         true,
 		"gzip;q=bad":          false,
+		"gzip;Q=0":            false,
+		"gzip; q=0.0":         false,
+		"gzip;q=2":            false,
+		"gzip;q=-1, *":        true,
 	} {
 		if got := acceptsGzip(header); got != want {
 			t.Errorf("acceptsGzip(%q) = %v, want %v", header, got, want)

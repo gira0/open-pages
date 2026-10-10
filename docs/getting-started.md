@@ -24,7 +24,8 @@ working directory and needs no internet access: the PatternFly CSS and fonts are
 `web/static/patternfly/` by `scripts/vendor-patternfly.sh`.
 
 **Release archive.** Pushing a `v*` tag publishes a GitHub release with `linux/amd64` and
-`linux/arm64` archives (binary and `settings.ini`) and a `SHA256SUMS` file.
+`linux/arm64` archives (binary, `settings.ini`, `NOTICE` and the third-party license texts in
+`licenses/`) and a `SHA256SUMS` file.
 
 **Container image.** `ghcr.io/gira0/open-pages`, tagged with the version (stable releases
 also get `major.minor` and `latest`). See [Containers](#containers).
