@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/jwt"
 )
 
 // OpenID Connect sign-in (authorization code flow with PKCE, state and nonce). It is only
@@ -57,7 +58,7 @@ type oidcClient struct {
 
 	fetchMu     sync.Mutex // guards meta, keys and keysFetched; held while talking to the provider
 	meta        *oidcMeta
-	keys        []jwk
+	keys        []jwt.Key
 	keysFetched time.Time
 
 	mu      sync.Mutex // guards pending
@@ -152,7 +153,7 @@ func (c *oidcClient) signingKey(ctx context.Context, meta *oidcMeta, kid, alg st
 	}
 	if time.Since(c.keysFetched) >= oidcKeysCooldown {
 		var set struct {
-			Keys []jwk `json:"keys"`
+			Keys []jwt.Key `json:"keys"`
 		}
 		if err := c.getJSON(ctx, meta.JWKSURI, &set); err != nil {
 			return nil, fmt.Errorf("fetch keys: %w", err)
@@ -162,12 +163,12 @@ func (c *oidcClient) signingKey(ctx context.Context, meta *oidcMeta, kid, alg st
 	if key, ok := c.findKey(kid, alg); ok {
 		return key, nil
 	}
-	return nil, errTokenKey
+	return nil, jwt.ErrKey
 }
 
 func (c *oidcClient) findKey(kid, alg string) (crypto.PublicKey, bool) {
 	wantKty := map[string]string{"RS256": "RSA", "ES256": "EC"}[alg]
-	var match []jwk
+	var match []jwt.Key
 	for _, k := range c.keys {
 		if k.Kty == wantKty && (k.Use == "" || k.Use == "sig") && (k.Alg == "" || k.Alg == alg) && (kid == "" || k.Kid == kid) {
 			match = append(match, k)
@@ -177,28 +178,28 @@ func (c *oidcClient) findKey(kid, alg string) (crypto.PublicKey, bool) {
 	if len(match) != 1 && (kid == "" || len(match) == 0) {
 		return nil, false
 	}
-	key, err := match[0].publicKey()
+	key, err := match[0].PublicKey()
 	return key, err == nil
 }
 
 // idTokenClaims verifies raw (signature, issuer, audience, time bounds) and returns its claims.
 // The nonce check is left to the caller.
 func (c *oidcClient) idTokenClaims(ctx context.Context, meta *oidcMeta, raw string) (map[string]any, error) {
-	hdr, payload, signingInput, sig, err := splitJWT(raw)
+	tok, err := jwt.Parse(raw)
 	if err != nil {
 		return nil, err
 	}
-	if hdr.Alg != "RS256" && hdr.Alg != "ES256" {
-		return nil, errTokenAlg
+	if tok.Alg != "RS256" && tok.Alg != "ES256" {
+		return nil, jwt.ErrAlg
 	}
-	key, err := c.signingKey(ctx, meta, hdr.Kid, hdr.Alg)
+	key, err := c.signingKey(ctx, meta, tok.Kid, tok.Alg)
 	if err != nil {
 		return nil, err
 	}
-	if err := verifySignature(hdr.Alg, key, signingInput, sig); err != nil {
+	if err := tok.Verify(key); err != nil {
 		return nil, err
 	}
-	claims, err := decodeClaims(payload)
+	claims, err := tok.Claims()
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +274,7 @@ func (c *oidcClient) exchangeCode(ctx context.Context, meta *oidcMeta, code, ver
 		return "", fmt.Errorf("token request: %w", err)
 	}
 	if tok.IDToken == "" {
-		return "", errTokenMalformed
+		return "", jwt.ErrMalformed
 	}
 	return tok.IDToken, nil
 }
@@ -443,7 +444,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 // rejectionReason maps an error to a fixed string that is safe to log.
 func rejectionReason(err error) string {
-	for _, known := range []error{errTokenMalformed, errTokenAlg, errTokenKey, errTokenSignature,
+	for _, known := range []error{jwt.ErrMalformed, jwt.ErrAlg, jwt.ErrKey, jwt.ErrSignature,
 		errOIDCClaims, errOIDCNonce, errOIDCEmail, errOIDCDomain, errOIDCEmailTaken} {
 		if errors.Is(err, known) {
 			return known.Error()

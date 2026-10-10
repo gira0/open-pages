@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/jwt"
 )
 
 const (
@@ -78,7 +79,7 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	})
 	mux.HandleFunc("GET /jwks", func(w http.ResponseWriter, r *http.Request) {
 		pt, _ := p.ecKey.PublicKey.Bytes() // 0x04 || X || Y
-		writeJSON(w, http.StatusOK, map[string]any{"keys": []jwk{
+		writeJSON(w, http.StatusOK, map[string]any{"keys": []jwt.Key{
 			{Kty: "RSA", Kid: "rsa1", Use: "sig", Alg: "RS256",
 				N: b64(p.rsaKey.N.Bytes()), E: b64(big.NewInt(int64(p.rsaKey.E)).Bytes())},
 			{Kty: "EC", Kid: "ec1", Use: "sig", Crv: "P-256", X: b64(pt[1:33]), Y: b64(pt[33:])},
