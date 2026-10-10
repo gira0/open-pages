@@ -13,7 +13,7 @@ known limits.
 
 Other files in the repository:
 
-- [`settings.ini`](../settings.ini): commented example configuration.
+- [`configs/settings.ini`](../configs/settings.ini): commented example configuration.
 - [`deploy/settings.ini`](../deploy/settings.ini): defaults baked into the container image.
 - [`examples/`](../examples/): GitHub Actions and GitLab CI deploy pipelines.
 - [`SECURITY.md`](../SECURITY.md): supported versions and vulnerability reporting.

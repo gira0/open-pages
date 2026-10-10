@@ -6,7 +6,7 @@
 .golangci.yml
 .claude
 Dockerfile
-docker-compose.yml
+deploy/docker-compose.yml
 *.md
 *.db
 *.out
@@ -16,5 +16,5 @@ coverage.html
 /op_data
 /html
 /tmp
-# The host's settings.ini is not baked in; the image uses deploy/settings.ini.
-/settings.ini
+# The host's configs/settings.ini is not baked in; the image uses deploy/settings.ini.
+/configs/settings.ini
