@@ -123,7 +123,7 @@ creates a site and uploads an archive to it. It is a test page, not a stable int
 UI pages are sent with `Content-Security-Policy: default-src 'self'; base-uri 'none';
 form-action 'self'; frame-ancestors 'none'; object-src 'none'`, plus `X-Frame-Options: DENY`,
 `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. Hosted sites never get
-these headers.
+the CSP, `X-Frame-Options` or `Referrer-Policy` (they keep only their existing `nosniff`).
 
 ### GET /static/{hash}/{path}
 
