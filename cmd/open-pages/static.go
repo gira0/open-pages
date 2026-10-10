@@ -21,10 +21,11 @@ import (
 
 // staticFile is one embedded UI asset, with a gzip copy when compressing pays off.
 type staticFile struct {
-	body  []byte
-	gz    []byte // nil when not worth compressing (fonts are already compressed)
-	ctype string
-	etag  string
+	body   []byte
+	gz     []byte // nil when not worth compressing (fonts are already compressed)
+	ctype  string
+	etag   string
+	gzEtag string // of the gzip bytes, so the strong validator matches what is sent
 }
 
 // staticAssets serves web.Static under /static/<hash>/, where hash covers every file.
@@ -77,6 +78,9 @@ func newStaticAssets(fsys fs.FS) (*staticAssets, error) {
 			}
 			if len(f.gz) >= len(body) {
 				f.gz = nil
+			} else {
+				gzSum := sha256.Sum256(f.gz)
+				f.gzEtag = `"` + hex.EncodeToString(gzSum[:8]) + `"`
 			}
 		}
 		a.files[name] = f
@@ -150,6 +154,9 @@ func acceptsGzip(header string) bool {
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	f, ok := s.static.files[r.PathValue("path")]
 	if !ok || r.PathValue("hash") != s.static.hash {
+		// Never cache a miss: during a rolling deploy or rollback the asset may exist on
+		// another instance, or here a moment later.
+		w.Header().Set("Cache-Control", "no-store")
 		http.NotFound(w, r)
 		return
 	}
@@ -162,7 +169,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		h.Add("Vary", "Accept-Encoding")
 		if acceptsGzip(strings.Join(r.Header.Values("Accept-Encoding"), ",")) {
 			h.Set("Content-Encoding", "gzip")
-			body, etag = f.gz, strings.TrimSuffix(f.etag, `"`)+`-gz"`
+			body, etag = f.gz, f.gzEtag
 		}
 	}
 	h.Set("ETag", etag)

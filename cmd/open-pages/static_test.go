@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,6 +83,10 @@ func TestStaticGzip(t *testing.T) {
 	if plain.Header().Get("ETag") == gz.Header().Get("ETag") {
 		t.Error("both encodings share an ETag")
 	}
+	gzSum := sha256.Sum256(gz.Body.Bytes())
+	if want := `"` + hex.EncodeToString(gzSum[:8]) + `"`; gz.Header().Get("ETag") != want {
+		t.Errorf("gzip ETag %s, want %s (of the bytes sent)", gz.Header().Get("ETag"), want)
+	}
 	zr, err := gzip.NewReader(gz.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +125,12 @@ func TestStaticRejectsUnknown(t *testing.T) {
 		s.static.prefix() + "patternfly",           // a directory
 		"/static/app.js",                           // no hash at all
 	} {
-		if w := do(s, "GET", "", target); w.Code == http.StatusOK {
+		w := do(s, "GET", "", target)
+		if w.Code == http.StatusOK {
 			t.Errorf("%s: served", target)
+		}
+		if w.Code == http.StatusNotFound && w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: 404 is cacheable (Cache-Control %q)", target, w.Header().Get("Cache-Control"))
 		}
 	}
 }
