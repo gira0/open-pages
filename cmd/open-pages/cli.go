@@ -102,8 +102,9 @@ func deployCommand(ctx context.Context, args []string, getenv func(string) strin
 		base:  strings.TrimRight(base.String(), "/"),
 		token: token,
 	}
-	// The visibility is set before the upload, so content meant to be private is never
-	// served publicly, not even briefly.
+	// The visibility is set before the upload rather than after, so this deploy's content
+	// doesn't go live under the old visibility. It is a separate request, not atomic with
+	// the upload: another deploy to the same site in between can still change it.
 	created := false
 	if *visibility != "" {
 		if created, err = c.setVisibility(ctx, site, *visibility, *create); err != nil {
