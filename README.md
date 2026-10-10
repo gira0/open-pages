@@ -13,8 +13,8 @@ visible to any logged-in user, or restricted to its owner and a group.
 Needs Go 1.26 or newer; there is no C toolchain requirement (SQLite is pure Go).
 
 ```sh
-go build -o open-pages .
-./open-pages -config settings.ini     # run from the directory that contains templates/
+go build -o open-pages ./cmd/open-pages
+./open-pages -config settings.ini
 ```
 
 Then open http://localhost:8080/index, or use the API:

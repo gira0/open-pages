@@ -25,7 +25,7 @@ jobs:
         with:
           go-version: stable
       # Pin a release tag instead of @latest once you have one.
-      - run: go install github.com/gira0/open-pages@latest
+      - run: go install github.com/gira0/open-pages/cmd/open-pages@latest
       - name: Deploy
         run: open-pages deploy blog ./public
         env:

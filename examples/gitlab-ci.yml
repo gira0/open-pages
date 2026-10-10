@@ -10,5 +10,5 @@ deploy-pages:
   script:
     # Build your site into ./public first (or take it from an earlier job's artifacts).
     # Pin a release tag instead of @latest once you have one.
-    - go install github.com/gira0/open-pages@latest
+    - go install github.com/gira0/open-pages/cmd/open-pages@latest
     - $(go env GOPATH)/bin/open-pages deploy blog ./public

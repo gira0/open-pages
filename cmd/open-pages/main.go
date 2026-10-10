@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,6 +15,11 @@ import (
 	"syscall"
 	"time"
 )
+
+// templateFS holds the UI templates, so the binary does not depend on the working directory.
+//
+//go:embed templates/*.html
+var templateFS embed.FS
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deploy" {
@@ -104,7 +110,7 @@ func newServer(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
 
-	tmpl, err := template.ParseGlob("templates/*.html")
+	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}

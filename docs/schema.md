@@ -2,7 +2,7 @@
 
 open-pages keeps its state in one SQLite file, `data.db`, in the data directory
 (`[paths] datapath`). The driver is the pure-Go `modernc.org/sqlite`. The schema is defined
-in `db.go`: a `CREATE TABLE IF NOT EXISTS` script plus idempotent migration steps, both run
+in `cmd/open-pages/db.go`: a `CREATE TABLE IF NOT EXISTS` script plus idempotent migration steps, both run
 on every start. Site files are not in the database; see
 [getting-started.md](getting-started.md#data-directory-layout).
 
