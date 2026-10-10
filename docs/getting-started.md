@@ -19,7 +19,9 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini
 ```
 
-The UI template is embedded in the binary, so it can run from any working directory.
+The UI templates and assets (`web/`) are embedded in the binary, so it can run from any
+working directory and needs no internet access: the PatternFly CSS and fonts are vendored in
+`web/static/patternfly/` by `scripts/vendor-patternfly.sh`.
 
 **Release archive.** Pushing a `v*` tag publishes a GitHub release with `linux/amd64` and
 `linux/arm64` archives (binary and `settings.ini`) and a `SHA256SUMS` file.

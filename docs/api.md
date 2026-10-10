@@ -43,6 +43,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/index` | none | HTML test page (login form, upload form) |
+| GET | `/static/{hash}/{path}` | none | UI stylesheets, scripts and fonts |
 | GET | `/v1/ping` | none | Liveness |
 | GET | `/healthz` | none | Health check |
 | GET | `/metrics` | metrics token | Prometheus metrics (optional) |
@@ -118,6 +119,20 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://pages.corp/metrics
 No authentication. Renders `web/templates/index.html`: a local login form (when local login is
 enabled), a "Sign in with your company account" link (when OIDC is enabled) and a form that
 creates a site and uploads an archive to it. It is a test page, not a stable interface.
+
+UI pages are sent with `Content-Security-Policy: default-src 'self'; base-uri 'none';
+form-action 'self'; frame-ancestors 'none'; object-src 'none'`, plus `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. Hosted sites never get
+these headers.
+
+### GET /static/{hash}/{path}
+
+No authentication. Serves the files embedded from `web/static/`: the PatternFly stylesheet and
+fonts, `open-pages.css`, `theme.js` and `app.js`. `{hash}` covers the content of every file, so
+it changes whenever an asset does, and responses carry
+`Cache-Control: public, max-age=31536000, immutable`. Any other hash is a `404`. Text assets are
+sent gzip-compressed when the request's `Accept-Encoding` allows it. `static` is a reserved site
+name, so in path mode no site can shadow this route.
 
 ### GET /v1/sites
 

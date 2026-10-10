@@ -77,8 +77,9 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		switch {
 		case rec.status >= http.StatusInternalServerError:
 			level = slog.LevelError
-		case strings.HasSuffix(r.Pattern, " /healthz") || strings.HasSuffix(r.Pattern, " /metrics"):
-			level = slog.LevelDebug // probes and scrapes would drown the log
+		case strings.HasSuffix(r.Pattern, " /healthz") || strings.HasSuffix(r.Pattern, " /metrics"),
+			strings.HasPrefix(r.Pattern, "GET /static/"):
+			level = slog.LevelDebug // probes, scrapes and UI assets would drown the log
 		}
 		slog.Log(r.Context(), level, "request", "request_id", id, "method", method,
 			"route", r.Pattern, "status", rec.status, "duration", elapsed)

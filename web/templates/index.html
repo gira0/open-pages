@@ -1,62 +1,74 @@
-<html>
-	<head>
-	</head>
-	<h1>
-		{{ .title }}
-	</h1>
-	{{ if .oidc }}
-	<p><a href="/v1/auth/oidc/login">Sign in with your company account</a></p>
-	{{ end }}
-	{{ if .localLogin }}
-	<form action="/v1/user/login" method="post">
-		<label for="email">email:</label>
-		<input type="text" id="email" name="email"><br><br>
-		<label for="password">password:</label>
-		<input type="password" id="password" name="password"><br><br>
-		<input type="submit" value="Submit">
-	  </form>
-	{{ end }}
+{{template "layout" .}}
 
-	  <br><br>
-	  <form id='form'>
-		<label for="name">site name:</label>
-		<input type="text" id="name" name="name" required><br><br>
-        <input type='file' name='file' accept=".zip,.tar.gz" required>
-        <button>
-            Upload
-        </button>
-        <progress id='progress' value='0' max='100'></progress>
-        <pre id='result'></pre>
-    </form>
-    <script>
-        // Creates the site (an existing one is fine) and then uploads the archive to it.
-        document.getElementById('form').addEventListener('submit', async function (evt) {
-          evt.preventDefault();
-          const result = document.getElementById('result');
-          const progress = document.getElementById('progress');
-          const name = this.elements['name'].value;
-          const file = this.elements['file'].files[0];
-          progress.value = 0;
-          result.textContent = '';
-          const created = await fetch('/v1/auth/sites', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({name: name})
-          });
-          if (!created.ok && created.status !== 409) {
-            result.textContent = 'create site failed: ' + await created.text();
-            return;
-          }
-          const data = new FormData();
-          data.append('file', file);
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', '/v1/auth/sites/' + encodeURIComponent(name) + '/formupload');
-          xhr.upload.onprogress = function (e) {
-            if (e.lengthComputable) { progress.value = e.loaded / e.total * 100; }
-          };
-          xhr.onload = function () { result.textContent = xhr.status + ' ' + xhr.responseText; };
-          xhr.onerror = function () { result.textContent = 'upload failed'; };
-          xhr.send(data);
-        });
-    </script>
-</html>
+{{define "content"}}
+<section class="pf-v6-c-page__main-section">
+	<div class="pf-v6-c-page__main-body">
+		<h1 class="pf-v6-c-title pf-m-2xl">{{.title}}</h1>
+	</div>
+</section>
+{{if or .oidc .localLogin}}
+<section class="pf-v6-c-page__main-section">
+	<div class="pf-v6-c-page__main-body">
+		<h2 class="pf-v6-c-title pf-m-lg">Sign in</h2>
+		{{if .oidc}}
+		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/oidc/login"><span class="pf-v6-c-button__text">Sign in with your company account</span></a></p>
+		{{end}}
+		{{if .localLogin}}
+		<form class="pf-v6-c-form op-narrow" action="/v1/user/login" method="post">
+			<div class="pf-v6-c-form__group">
+				<div class="pf-v6-c-form__group-label">
+					<label class="pf-v6-c-form__label" for="email"><span class="pf-v6-c-form__label-text">Email</span></label>
+				</div>
+				<div class="pf-v6-c-form__group-control">
+					<span class="pf-v6-c-form-control"><input type="email" id="email" name="email" autocomplete="username" required></span>
+				</div>
+			</div>
+			<div class="pf-v6-c-form__group">
+				<div class="pf-v6-c-form__group-label">
+					<label class="pf-v6-c-form__label" for="password"><span class="pf-v6-c-form__label-text">Password</span></label>
+				</div>
+				<div class="pf-v6-c-form__group-control">
+					<span class="pf-v6-c-form-control"><input type="password" id="password" name="password" autocomplete="current-password" required></span>
+				</div>
+			</div>
+			<div class="pf-v6-c-form__group pf-m-action">
+				<div class="pf-v6-c-form__actions">
+					<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Sign in</span></button>
+				</div>
+			</div>
+		</form>
+		{{end}}
+	</div>
+</section>
+{{end}}
+<section class="pf-v6-c-page__main-section">
+	<div class="pf-v6-c-page__main-body">
+		<h2 class="pf-v6-c-title pf-m-lg">Upload a site</h2>
+		<form class="pf-v6-c-form op-narrow" id="upload-form">
+			<div class="pf-v6-c-form__group">
+				<div class="pf-v6-c-form__group-label">
+					<label class="pf-v6-c-form__label" for="name"><span class="pf-v6-c-form__label-text">Site name</span></label>
+				</div>
+				<div class="pf-v6-c-form__group-control">
+					<span class="pf-v6-c-form-control"><input type="text" id="name" name="name" required></span>
+				</div>
+			</div>
+			<div class="pf-v6-c-form__group">
+				<div class="pf-v6-c-form__group-label">
+					<label class="pf-v6-c-form__label" for="file"><span class="pf-v6-c-form__label-text">Archive (.zip or .tar.gz)</span></label>
+				</div>
+				<div class="pf-v6-c-form__group-control">
+					<input type="file" id="file" name="file" accept=".zip,.tar.gz" required>
+				</div>
+			</div>
+			<div class="pf-v6-c-form__group pf-m-action">
+				<div class="pf-v6-c-form__actions">
+					<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Upload</span></button>
+				</div>
+			</div>
+			<progress id="upload-progress" value="0" max="100"></progress>
+			<pre id="upload-result"></pre>
+		</form>
+	</div>
+</section>
+{{end}}
