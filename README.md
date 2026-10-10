@@ -1,311 +1,61 @@
 # open-pages
 
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
+People log in (local accounts or the company identity provider over OIDC), create a site,
+and upload a `.zip`, `.tar.gz` or `.tar` archive, from a browser, `curl` or CI. Each upload
+becomes a new version that goes live atomically and can be rolled back. A site is public,
+visible to any logged-in user, or restricted to its owner and a group.
 
-> Status: early prototype. Users can register, log in, upload a site archive (or deploy from
-> CI with an API token) and have it served, publicly or restricted to a group.
+> Status: pre-release. The documentation describes what exists today, including known limits.
 
-## Requirements
+## Quick start
 
-- Go 1.26 or newer. No C toolchain is needed: SQLite is the pure-Go `modernc.org/sqlite`.
-
-## Run
+Needs Go 1.26 or newer; there is no C toolchain requirement (SQLite is pure Go).
 
 ```sh
 go build -o open-pages .
-./open-pages -config settings.ini
+./open-pages -config settings.ini     # run from the directory that contains templates/
 ```
 
-Open http://localhost:8080/index for the test page. Settings are documented in
-[`settings.ini`](settings.ini). The database (`data.db`) and extracted sites (`op_data/`)
-are created under `datapath`.
-
-## Container
-
-A multi-stage `Dockerfile` builds a static binary into a minimal `scratch` image that runs as
-a non-root user (uid 65532). The image listens on all interfaces, port 8080, and keeps the
-database and sites in the `/data` volume.
+Then open http://localhost:8080/index, or use the API:
 
 ```sh
-docker compose up --build        # see docker-compose.yml
-# or
+curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"change-me-please"}'
+curl -c cookies -X POST localhost:8080/v1/user/login -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"change-me-please"}'
+curl -b cookies -X POST localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
+  -d '{"name":"hello"}'
+curl -b cookies -X POST --data-binary @site.zip localhost:8080/v1/auth/sites/hello/upload
+curl localhost:8080/hello/
+```
+
+As a container:
+
+```sh
+docker compose up --build
+# or, without Compose:
 docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
 
-Defaults come from [`deploy/settings.ini`](deploy/settings.ini) inside the image. To change
-them, mount your own file over `/etc/open-pages/settings.ini` (keep `datapath` and `tmppath`
-under `/data`). The image sets `TMPDIR=/data/tmp` because it has no `/tmp`, so large
-uploads are spooled on the volume. There are no environment variables: configuration is the settings file plus
-the `-config` flag. A bind-mounted data directory must be writable by uid 65532.
-
-Pushing a `v*` tag runs the release workflow: it publishes a GitHub release with
-`linux/amd64` and `linux/arm64` archives (binary, `templates/`, `settings.ini`, and
-`SHA256SUMS`) and pushes a multi-arch image to `ghcr.io/gira0/open-pages` tagged with the
-version (stable releases also get `major.minor` and `latest`).
-
-## API
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/v1/ping` | | Liveness: answers `pong` without touching anything |
-| GET | `/healthz` | | Health: pings the database and checks that `op_data/` and the staging `tmp/` are writable; `200 {"status":"ok",...}` or `503 {"status":"fail",...}` with a per-check `ok`/`fail` (reasons go to the log) |
-| GET | `/metrics` | token | Prometheus metrics; off unless configured, see [Operations](#operations) |
-| GET | `/v1/sites` | | List the public sites (`name`, `description`); authenticated and restricted sites never appear |
-| POST | `/v1/user/register` | | Create a user (JSON or form: `email`, `password`) |
-| POST | `/v1/user/login` | | Log in and receive a session cookie |
-| GET | `/v1/auth/oidc/login` | | Start OIDC sign-in: redirects to the identity provider; optional `return_to` (a path on this server). Only with `[oidc]` enabled |
-| GET | `/v1/auth/oidc/callback` | | Finish OIDC sign-in and set the session cookie (the redirect URL registered at the provider). Only with `[oidc]` enabled |
-| GET | `/v1/auth/user` | ✓ | Current user: account data, groups, owned and viewable docs |
-| POST | `/v1/auth/logout` | session | End the session |
-| POST | `/v1/auth/tokens` | session | Create an API token: `name`, optional `expires_in_days` (1 to 3650, absent for no expiry); the token is returned once |
-| GET | `/v1/auth/tokens` | session | List your tokens (name, prefix, created, expires; never the token) |
-| DELETE | `/v1/auth/tokens/{id}` | session | Revoke one of your tokens |
-| GET | `/v1/auth/groups` | ✓ | List the groups you belong to |
-| POST | `/v1/auth/groups` | ✓ | Create a group (`name`); you become its owner and first member |
-| GET | `/v1/auth/groups/{id}` | ✓ | The group and its members (id, email); members only |
-| DELETE | `/v1/auth/groups/{id}` | ✓ | Delete the group and its memberships; owner only, and only while no site uses it |
-| POST | `/v1/auth/groups/{id}/members` | ✓ | Add a member by `email`; owner only |
-| DELETE | `/v1/auth/groups/{id}/members/{userid}` | ✓ | Remove a member; owner only, or yourself to leave |
-| POST | `/v1/auth/sites` | ✓ | Create a site (`name`, optional `description`, `group` id and `visibility`); the name must be a DNS label |
-| GET | `/v1/auth/sites/{name}` | ✓ | Site metadata (description, owner, group, visibility, current version); anyone who may view the site, others get 403 |
-| PUT | `/v1/auth/sites/{name}` | ✓ | Change `description`, `group` and/or `visibility` (JSON, absent fields are kept, `"group": 0` clears it); owner only |
-| DELETE | `/v1/auth/sites/{name}` | ✓ | Delete the site, all its versions and its database row; owner only |
-| POST | `/v1/auth/sites/{name}/upload` | ✓ | Deploy a `.zip`, `.tar.gz` or `.tar` (raw body) as a new version; owner only |
-| POST | `/v1/auth/sites/{name}/formupload` | ✓ | Same, with the archive in the multipart field `file` |
-| GET | `/v1/auth/sites/{name}/versions` | ✓ | List kept versions (newest first) and the `current` one; owner only |
-| POST | `/v1/auth/sites/{name}/rollback` | ✓ | Make a kept version live: `{"version": "<id>"}`; owner only |
-
-Auth "✓" means a session cookie or an API token (see below); "session" means a login
-session only.
-
-Whoever creates a site owns it. Only the owner can update, delete, redeploy, list versions
-of or roll back a site: other users get 403, unknown sites 404. A `group` must be the id of
-an existing group (otherwise 400) that the site owner is a member of (otherwise 403).
-
-Groups: any logged-in user can create one and owns it. Only the owner can delete the group
-or add and remove other members; any member can leave, and the owner can't be removed (delete
-the group instead). Non-members get 403 on a group's details, unknown groups 404. A group
-that is still the `group` of a site can't be deleted (409), so a site never silently loses
-its group; move or delete the sites first. Group names are unique ignoring case (Unicode simple case folding, so `Ä` and `ä` clash). Groups
-created before owners existed have no owner and can't be changed through the API.
-
-Redeploying is just uploading again: each upload becomes a new version and goes live. Roll
-back with the version id from the upload response or the versions list. Versions older
-than `keep_versions` are deleted and can no longer be rolled back to.
-
-Each upload is extracted into `op_data/<site>/versions/<id>/` and the
-`op_data/<site>/current` symlink is switched to it with an atomic rename, so a site is never
-half-deployed. The newest `keep_versions` versions (default 5, `[sites]` in `settings.ini`)
-are kept; older ones are deleted.
-
-Uploads are limited in size, file count and uncompressed size (see `[limits]` in
-`settings.ini`). Entries that would land outside the site directory are rejected.
-
-## API tokens and deploying from CI
-
-An API token lets a pipeline call the API as you without a browser session. Create one while
-logged in (the token is shown once, so store it right away), then send it as
-`Authorization: Bearer <token>`:
+Deploy a directory from CI with the same binary:
 
 ```sh
-curl -b cookies -X POST https://pages.corp/v1/auth/tokens \
-  -H 'Content-Type: application/json' -d '{"name": "ci", "expires_in_days": 90}'
+OPEN_PAGES_TOKEN=opt_... open-pages deploy -server https://pages.corp blog ./public
 ```
 
-Tokens are random, stored only as a SHA-256 hash (plus a short prefix for the list), and can
-be revoked at any time or set to expire. A token acts as its user with that user's full
-rights, so keep it in the CI secret store; per-site scoping is not supported yet. Tokens
-cannot create or revoke tokens or log out; those need a real login session. Each user can
-hold at most 50 tokens.
+## Documentation
 
-The same binary deploys a directory:
+All reference material is in [`docs/`](docs/README.md):
 
-```sh
-export OPEN_PAGES_TOKEN=opt_...                  # read from the environment only
-export OPEN_PAGES_URL=https://pages.corp         # or: -server https://pages.corp
-open-pages deploy blog ./public                  # flags go before <site> <dir>
-```
-
-It zips the directory (files are read inside it only; symlinks and other special files are
-rejected), uploads it to `/v1/auth/sites/blog/upload`, and creates the site first if it does
-not exist (`-create=false` turns that off). Install it with
-`go install github.com/gira0/open-pages@latest`. Example pipelines for
-[GitHub Actions](examples/github-actions.yml) and [GitLab CI](examples/gitlab-ci.yml) are in
-[`examples/`](examples/); they are examples only and are not run by this repository's CI.
-
-## Access control
-
-Every site has a `visibility`, set when it is created or later by its owner (default `public`):
-
-- `public`: served to everyone and listed by `GET /v1/sites`.
-- `authenticated`: served to any logged-in user (session cookie or API token); anonymous
-  visitors get a 404. Not listed by `GET /v1/sites`.
-- `restricted`: served only to the owner and the members of the site's `group`. A restricted
-  site without a group is private to its owner.
-
-A site's group counts for access only while the **site owner is a member of it**. Assigning a
-site to a group its owner is not in is refused (403), and if the owner later leaves the group
-the other members lose access at once (the owner keeps it). Both session cookies and API tokens
-(`Authorization: Bearer ...`) are honoured, in both URL modes.
-
-Refusals: when serving, anyone who may not view a non-public site, anonymous visitors included,
-gets the same plain 404 as a site that does not exist (both `Cache-Control: no-store`), so
-nothing leaks about which such sites exist. Everything served for a non-public site, 404 pages
-and redirects included, carries `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
-There is no IP-based "intranet" level; restrict that at the reverse proxy. On the JSON API a
-logged-in user who may not view a site gets 403, as for every other site endpoint. Editing,
-uploading, rolling back and version listing remain owner-only whatever the visibility.
-
-In subdomain mode the session cookie is host-only and never reaches `<site>.<base_domain>`, so
-browsers cannot open restricted sites there yet; they can be fetched with an API token. Use path
-mode if restricted sites must work in a browser.
-
-## Corporate sign-in (OIDC)
-
-Besides local accounts, people can sign in with the company identity provider over OpenID
-Connect (Keycloak, Entra ID, ADFS and other standards-compliant providers). It is off by
-default and the server starts unchanged without an `[oidc]` section. LDAP is not supported.
-
-```ini
-[oidc]
-enabled = true
-issuer = https://sso.example.com/realms/corp
-client_id = open-pages
-client_secret = ...
-redirect_url = https://pages.example.com/v1/auth/oidc/callback
-scopes = openid email profile
-email_claim = email
-groups_claim = groups
-allowed_email_domain = corp.example
-```
-
-`issuer` and `redirect_url` must be https (plain http only for localhost). The issuer must be
-exactly what the provider reports in `<issuer>/.well-known/openid-configuration`, which is
-fetched on the first sign-in, so the server starts even while the provider is down. The client
-secret is read from the settings file only (there is no environment override) and is never
-logged; make the file readable only by the service user.
-
-Setup with Keycloak: create an OpenID Connect client with "Client authentication" on, the
-standard flow enabled and the valid redirect URI above; copy its secret from the Credentials
-tab; to send groups add a "Group Membership" mapper to the client's dedicated scope, with
-"Full group path" off and "Add to ID token" on. Other providers: register a web application
-with the same redirect URL, authorization code flow and client-secret authentication; for Entra
-ID use the `https://login.microsoftonline.com/<tenant>/v2.0` issuer and add a groups claim in the
-app registration's token configuration.
-
-How it works: `GET /v1/auth/oidc/login` redirects the browser to the provider using the
-authorization code flow with PKCE (S256), `state` and `nonce`. The callback checks the state
-(single use, tied to the browser by a short-lived cookie), exchanges the code, then verifies the
-ID token: RS256 or ES256 signature against the provider's JWKS (any other algorithm is refused),
-issuer, audience (and `azp` when there are several), expiry, not-before and nonce. It then starts
-the same session as local login (7 days, same cookie), so API tokens, groups and site access work
-as for any user. Verification is implemented on the standard library; there is no JWT or OAuth
-dependency. Use `?return_to=/some/path` on the login URL to be redirected there afterwards;
-without it the callback answers `{"status": "successful login"}`.
-
-**How identities relate to local users.** Accounts have no separate username; the email is the
-account name. An OIDC user is identified by issuer plus subject, never by email, and its email
-is taken from the token at first sign-in and then kept. On first sign-in a user is created with
-no password, so local login can never be used for it. If the email already belongs to any other
-account (a local one, or another identity; compared ignoring case) the sign-in is refused with
-409: accounts are never linked or taken over by matching email, so a local account must be
-removed or renamed by an operator first. A token without a valid email, with `email_verified`
-false, or outside `allowed_email_domain` is refused with 403.
-
-**Groups.** `groups_claim` (default `groups`; a list of names or a single name; empty turns
-mapping off) is mapped onto existing open-pages groups with the same name, ignoring case. Names
-that match no group are ignored: groups are never created from the token, so the provider cannot
-fill the server with groups. At every sign-in the user is added to the matching groups and
-removed from groups it was added to by an earlier sign-in that the token no longer lists.
-Memberships added by hand through the API are never removed by this; if the owner removes a
-provider-managed member, the next sign-in adds them back.
-
-**OIDC-only setups.** `[auth] local_login = false` leaves `/v1/user/register` and
-`/v1/user/login` unregistered, so those requests are rejected (default `true`; a value that isn't `true` or `false` fails startup). It requires `[oidc]` to be enabled.
-Existing local sessions and API tokens keep working.
-
-In subdomain mode the session cookie is host-only (see Access control), so signing in does not
-let a browser open restricted sites there.
-
-## Serving sites
-
-A deployed site is served from its live version (`op_data/<site>/current`). How a request
-names its site is one setting in `settings.ini`:
-
-```ini
-[sites]
-url_mode = path        # path (default) or subdomain
-base_domain = pages.corp
-```
-
-The API and UI stay on the bare `base_domain` in both modes. Site names that could collide
-with the API, the UI or service hosts are reserved in both modes and can't be created
-(`v1`, `index`, `api`, `www`, `admin`, `ui`, `static`, `assets`, `health`, `metrics`, `login`
-and a few similar ones; the full list is `reservedSiteNames` in `resolve.go`). Site names are DNS labels, so
-switching modes needs no data migration.
-
-**Path mode** (`url_mode = path`): `https://pages.corp/<site>/...`. It needs one DNS name and
-one certificate and nothing else. The API and UI live on the same host, which is why those
-names are reserved.
-
-Caveats of path mode:
-
-- A site lives under `/<site>/`, so **root-absolute links break**: `<link href="/css/app.css">`
-  asks for `/css/app.css`, which is not part of the site. Build sites with a base path
-  (Hugo `baseURL = "https://pages.corp/<site>/"`, Vite `base: "/<site>/"`, Jekyll `baseurl`, ...)
-  or use relative links.
-- All sites share one origin, so they share cookies and local storage and can script each
-  other. Don't host untrusted content in this mode.
-
-**Subdomain mode** (`url_mode = subdomain`): `https://<site>.pages.corp/...`. `base_domain` is
-required and must be a bare host name without a port. It needs wildcard DNS (`*.pages.corp`
-and `pages.corp` both pointing at this server) and a wildcard certificate. Root-absolute
-links just work, and every site gets its own origin (own cookies and local storage), which
-is the safer choice for content you don't trust. Requests for any host that is not
-`base_domain` or a single-label subdomain of it get a 404. Behind a reverse proxy, pass the
-original `Host` header through. The session cookie is host-only, so sites on subdomains
-never see it.
-
-What gets served (both modes):
-
-- `index.html` for a directory (`/<site>/docs` redirects to `/<site>/docs/`); there are no
-  directory listings.
-- The site's own `404.html`, sent with status 404, or a plain 404 page.
-- Content types from the file extension, `ETag` and `Last-Modified` with conditional and
-  range requests, and `Cache-Control: no-cache` so browsers always revalidate (cheap with
-  the ETag) and a new deploy or rollback shows up at once. `HEAD` works.
-- Requests can't leave the site: `..` segments are cleaned, and the files are opened
-  through `os.Root`, which also refuses symlinks inside a site that point outside it.
-
-## Operations
-
-**Logging.** `[log]` in `settings.ini` sets `level` (`debug`, `info`, `warn`, `error`) and
-`format` (`text` or `json`, one object per line). Every response carries an `X-Request-Id`
-header, generated by the server (an incoming `X-Request-Id` is ignored), and the request
-log line and handler error lines include the same `request_id`, so a client report can be
-matched to the log. Request lines record the request ID, method, matched route pattern,
-status and duration; they do not record raw URLs or client addresses. Requests to
-`/healthz` and `/metrics` are logged at `debug`, 5xx responses at `error`.
-
-**Metrics.** Prometheus text format, hand-written to avoid a client library dependency.
-Disabled by default; enable one or both of:
-
-- `[metrics] listen = 127.0.0.1:9100` serves only `/metrics` on its own address; limit who
-  can reach it with the bind address or firewall.
-- `[metrics] token = <16+ characters>` serves `/metrics` on the main listener, readable only
-  with `Authorization: Bearer <token>`. If `listen` is also set, the token is required there
-  too.
-
-| Metric | Labels | Meaning |
-|---|---|---|
-| `openpages_http_requests_total` | `method`, `code` (`2xx`...) | Requests served; unusual methods count as `OTHER` |
-| `openpages_http_request_duration_seconds` | `le` | Histogram of request durations |
-| `openpages_deploys_total` | `result` (`ok`, `rejected`, `failed`) | Archive uploads by outcome |
-| `openpages_errors_total` | | Responses with a 5xx status |
-
-Requests are never labelled by path or site, so the number of series stays fixed.
-`healthz`, `readyz` and `metrics` are reserved site names in path mode.
+- [Getting started and operations](docs/getting-started.md): install, every settings key,
+  URL modes, containers, health and metrics, CLI and CI deploys, backups.
+- [API reference](docs/api.md): every route with auth, request and response shapes, status
+  codes and examples.
+- [Access control and authentication](docs/auth.md): accounts, sessions, API tokens, OIDC,
+  groups, site visibility, known limits.
+- [Database schema](docs/schema.md): tables, columns, indexes, migrations.
 
 ## Development
 

@@ -22,7 +22,7 @@ import (
 )
 
 // OpenID Connect sign-in (authorization code flow with PKCE, state and nonce). It is only
-// wired up when [oidc] enabled = true; see README.md for how identities map to users.
+// wired up when [oidc] enabled = true; see docs/auth.md for how identities map to users.
 
 const (
 	oidcStateCookie  = "oidc_state"
