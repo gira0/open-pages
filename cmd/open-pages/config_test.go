@@ -57,7 +57,7 @@ func TestLoadConfigMissingFile(t *testing.T) {
 
 // The shipped settings.ini must stay loadable.
 func TestLoadShippedConfig(t *testing.T) {
-	if _, err := loadConfig("../../settings.ini"); err != nil {
+	if _, err := loadConfig("../../configs/settings.ini"); err != nil {
 		t.Fatal(err)
 	}
 }

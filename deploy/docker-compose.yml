@@ -1,8 +1,12 @@
-# Example deployment. `docker compose up --build` builds locally; to use a released
-# image instead, replace `build: .` with image: ghcr.io/gira0/open-pages:<version>.
+# Example deployment. From the repository root, `docker compose -f deploy/docker-compose.yml
+# up --build` builds locally; to use a released image instead, replace the `build:` block
+# with image: ghcr.io/gira0/open-pages:<version>.
 services:
   open-pages:
-    build: .
+    build:
+      # The repository root, so the Dockerfile can copy go.mod and the sources.
+      context: ..
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     volumes:
@@ -10,7 +14,7 @@ services:
       # non-root user (uid 65532); a bind mount must be chowned to that uid first.
       - open-pages-data:/data
       # Optional: override the defaults baked into the image (see deploy/settings.ini).
-      # - ./settings.ini:/etc/open-pages/settings.ini:ro
+      # - ./my-settings.ini:/etc/open-pages/settings.ini:ro
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
