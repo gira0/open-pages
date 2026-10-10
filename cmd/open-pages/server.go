@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
 	"slices"
 	"sync"
 
@@ -13,11 +16,12 @@ import (
 )
 
 type Server struct {
-	db    *sql.DB
-	cfg   config.Config
-	tmpl  *template.Template
-	sites string // directory holding extracted uploads
-	tmp   string // staging directory for extraction
+	db     *sql.DB
+	cfg    config.Config
+	pages  map[string]*template.Template // UI pages by file name, each with the layout
+	static *staticAssets
+	sites  string // directory holding extracted uploads
+	tmp    string // staging directory for extraction
 
 	deployMu sync.Mutex // serializes switching and pruning versions
 	metrics  *metrics
@@ -29,6 +33,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /index", s.handleIndex)
+	mux.HandleFunc("GET /static/{hash}/{path...}", s.handleStatic)
 	mux.HandleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 	})
@@ -71,10 +76,58 @@ func (s *Server) routes() http.Handler {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{"title": "Posts", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil}
-	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		ctxLogger(r.Context()).Error("render index", "err", err)
+	s.render(w, r, "index.html", map[string]any{
+		"title": "Sites", "nav": "sites", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil,
+	})
+}
+
+// uiCSP is the Content-Security-Policy of the UI pages. It is never sent with hosted
+// sites: in path mode they share this origin, and their authors decide what they load.
+const uiCSP = "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+
+// render executes a UI page with the security headers every page gets. data must be a
+// map; render adds the asset URL prefix as "static".
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
+	data["static"] = s.static.prefix()
+	var buf bytes.Buffer
+	if err := s.pages[page].ExecuteTemplate(&buf, page, data); err != nil {
+		ctxLogger(r.Context()).Error("render page", "page", page, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Security-Policy", uiCSP)
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "same-origin")
+	h.Set("Cache-Control", "no-cache")
+	_, _ = buf.WriteTo(w)
+}
+
+// parsePages parses each page template together with the shared layout.
+func parsePages(fsys fs.FS) (map[string]*template.Template, error) {
+	layout, err := template.ParseFS(fsys, "templates/layout.html")
+	if err != nil {
+		return nil, err
+	}
+	files, err := fs.Glob(fsys, "templates/*.html")
+	if err != nil {
+		return nil, err
+	}
+	pages := map[string]*template.Template{}
+	for _, f := range files {
+		name := path.Base(f)
+		if name == "layout.html" {
+			continue
+		}
+		t, err := template.Must(layout.Clone()).ParseFS(fsys, f)
+		if err != nil {
+			return nil, err
+		}
+		pages[name] = t
+	}
+	return pages, nil
 }
 
 // cors allows the configured origins to call the API with credentials.

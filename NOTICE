@@ -1,0 +1,22 @@
+open-pages includes third-party assets in web/static/patternfly/, vendored from the npm
+package @patternfly/patternfly 6.6.1 by scripts/vendor-patternfly.sh and embedded in the
+binary. Their license texts are next to them in the source tree, in licenses/ in the release
+archives and in /usr/share/doc/open-pages/ in the container image.
+
+PatternFly CSS and the PatternFly icon font (pf-v6-pficon.woff2)
+  Copyright (c) Red Hat, Inc.
+  MIT License: web/static/patternfly/LICENSE-PatternFly.txt
+  https://github.com/patternfly/patternfly
+
+Red Hat Display, Red Hat Text and Red Hat Mono fonts (assets/fonts/RedHat*)
+  Copyright 2021 The Red Hat Project Authors
+  SIL Open Font License 1.1: web/static/patternfly/OFL-RedHatFont.txt
+  https://github.com/RedHatOfficial/RedHatFont
+
+Font Awesome Free, solid style (assets/fonts/webfonts/fa-solid-900.woff2)
+  Font Awesome by Fonticons, Inc. - https://fontawesome.com
+  Font: SIL Open Font License 1.1; icons: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  License summary: web/static/patternfly/LICENSE-FontAwesome.txt
+
+The PatternFly and Red Hat logos are trademarks of Red Hat, Inc. They are not included, and
+open-pages is not affiliated with or endorsed by Red Hat.
