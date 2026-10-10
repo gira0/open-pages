@@ -19,7 +19,7 @@ serves them. Review for correctness and security first; style is handled by `gol
 
 ## Security-sensitive areas (look hardest here)
 
-- **Archive extraction and upload** (`cmd/open-pages/extract.go`, `cmd/open-pages/upload.go`): path traversal (`..`, absolute
+- **Archive extraction and upload** (`internal/extract/extract.go`, `cmd/open-pages/upload.go`): path traversal (`..`, absolute
   paths), symlinks and hard links, zip bombs (size and entry-count limits), partial extraction
   left behind on failure.
 - **Auth** (`cmd/open-pages/auth.go`, `cmd/open-pages/tokens.go`): token and session handling, constant-time comparison,
