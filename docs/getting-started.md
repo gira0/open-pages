@@ -57,7 +57,7 @@ curl localhost:8080/hello/
 
 ```text
 open-pages [-config settings.ini]                       run the server
-open-pages deploy [-server URL] [-create=false] <site> <dir>   deploy a directory
+open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>   deploy a directory
 ```
 
 `-config` defaults to `settings.ini` in the working directory. The server stops gracefully
@@ -291,9 +291,12 @@ open-pages deploy blog ./public                  # flags go before <site> <dir>
   `/v1/auth/sites/<site>/upload`, and the new version id is printed. Symlinks and other
   special files are an error; an empty directory is an error.
 - If the upload answers 404, the CLI creates the site and uploads again. `-create=false`
-  turns that off. **A site created this way is `public` with no group.** To keep it private,
-  create it first with the visibility you want, or change it afterwards with
-  `PUT /v1/auth/sites/<site>`.
+  turns that off. A site created this way has no group and is `public` unless
+  `-visibility` says otherwise.
+- `-visibility public|authenticated|restricted` sets the site's visibility before the
+  upload (with `PUT /v1/auth/sites/<site>`), or creates the site with it, so new content is
+  never served more widely than asked. Without the flag the visibility is left as it is.
+  See [auth.md](auth.md#site-visibility) for what each value means.
 - The token must belong to the site's owner (otherwise 403).
 - Plain `http` to a non-loopback host prints a warning, because the token travels in the
   clear. Redirects are never followed, so the token cannot be forwarded to another origin;

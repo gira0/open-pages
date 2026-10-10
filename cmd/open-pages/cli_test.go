@@ -153,6 +153,51 @@ func TestDeployCommand(t *testing.T) {
 	}
 }
 
+func TestDeployVisibility(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	token := apiToken(t, ts, c)
+	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	visibility := func(name string) string {
+		t.Helper()
+		site, err := s.getSite(context.Background(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return site.Visibility
+	}
+	deploy := func(args ...string) {
+		t.Helper()
+		if err := deployCommand(context.Background(), args, env(token, ts.URL), &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A new site is created with the requested visibility.
+	deploy("-visibility", "restricted", "blog", dir)
+	if got := visibility("blog"); got != visRestricted {
+		t.Fatalf("new site visibility = %q, want restricted", got)
+	}
+	// Without the flag, a redeploy leaves it alone.
+	deploy("blog", dir)
+	if got := visibility("blog"); got != visRestricted {
+		t.Fatalf("visibility after plain redeploy = %q, want restricted", got)
+	}
+	// With the flag, an existing site's visibility changes.
+	deploy("-visibility", "authenticated", "blog", dir)
+	if got := visibility("blog"); got != visAuthenticated {
+		t.Fatalf("visibility = %q, want authenticated", got)
+	}
+	if versions, _ := s.Versions("blog"); len(versions) != 3 {
+		t.Fatalf("got versions %v, want 3", versions)
+	}
+	// Without the flag, a new site is public as before.
+	deploy("notes", dir)
+	if got := visibility("notes"); got != visPublic {
+		t.Fatalf("default visibility = %q, want public", got)
+	}
+}
+
 func TestDeployCommandFailures(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
@@ -174,6 +219,9 @@ func TestDeployCommandFailures(t *testing.T) {
 		"missing dir":     {[]string{"blog", filepath.Join(dir, "nope")}, token, "nope"},
 		"no create":       {[]string{"-create=false", "blog", dir}, token, "HTTP 404"},
 		"wrong arg count": {[]string{"blog"}, token, "usage"},
+		"bad visibility":  {[]string{"-visibility", "secret", "blog", dir}, token, "visibility must be"},
+		"no create, vis":  {[]string{"-create=false", "-visibility", "restricted", "blog", dir}, token, "HTTP 404"},
+		"foreign vis":     {[]string{"-visibility", "public", "theirs", dir}, token, "HTTP 403"},
 		"bad server":      {[]string{"-server", "ftp://x", "blog", dir}, token, "server URL"},
 		"unreachable":     {[]string{"-server", "http://127.0.0.1:1", "blog", dir}, token, "request failed"},
 	}
