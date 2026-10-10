@@ -154,7 +154,6 @@ paths:
         configured.
       security:
         - metricsToken: []
-        - {}
       responses:
         "200":
           description: Prometheus text format.
@@ -321,8 +320,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-        "500":
-          $ref: "#/components/responses/InternalError"
 
   /v1/auth/oidc/callback:
     get:
