@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/tls"
@@ -122,10 +121,10 @@ func newSAMLClient(cfg config.SAMLConfig) (*samlClient, error) {
 		if !ok {
 			return nil, errors.New("saml key_file: unsupported private key")
 		}
-		switch signer.Public().(type) {
-		case *rsa.PublicKey, *ecdsa.PublicKey:
-		default:
-			return nil, errors.New("saml key_file: only RSA and ECDSA keys are supported")
+		// RSA only: goxmldsig signs ECDSA through crypto.Signer, which yields ASN.1 DER instead
+		// of the fixed-width r||s that XML signatures need, so IdPs would reject the requests.
+		if _, ok := signer.Public().(*rsa.PublicKey); !ok {
+			return nil, errors.New("saml key_file: only RSA keys are supported")
 		}
 		c.signer = &saml2.KeyStore{Signer: signer, Cert: pair.Certificate[0]}
 		c.cert = pair.Certificate[0]
@@ -179,7 +178,10 @@ func (c *samlClient) provider(ctx context.Context) (*saml2.SAMLServiceProvider, 
 	if c.sp == nil && now.Before(c.retryFrom) {
 		return nil, errors.New("metadata: recent fetch failed")
 	}
-	sp, err := c.loadProvider(ctx)
+	// The fetch must not depend on the login request that triggered it: a client that
+	// disconnects would otherwise fail the fetch and delay sign-in or certificate refresh for
+	// everyone. The HTTP client's own timeout still bounds it.
+	sp, err := c.loadProvider(context.WithoutCancel(ctx))
 	if err != nil {
 		if c.sp != nil {
 			c.fetched = now.Add(samlRetryAfter - samlMetadataTTL)
@@ -254,9 +256,6 @@ func (c *samlClient) loadProvider(ctx context.Context) (*saml2.SAMLServiceProvid
 		}
 		sp.SignAuthnRequests = true
 		sp.SignAuthnRequestsAlgorithm = dsig.RSASHA256SignatureMethod
-		if _, ok := c.signer.Signer.Public().(*ecdsa.PublicKey); ok {
-			sp.SignAuthnRequestsAlgorithm = dsig.ECDSASHA256SignatureMethod
-		}
 	}
 	return sp, nil
 }

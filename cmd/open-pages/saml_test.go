@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -837,6 +840,58 @@ func TestSAMLBadKeyFiles(t *testing.T) {
 	noFile.IDPMetadataURL, noFile.IDPMetadataFile = "", filepath.Join(t.TempDir(), "idp.xml")
 	if _, err := newSAMLClient(noFile); err == nil {
 		t.Error("a missing metadata file must fail startup")
+	}
+}
+
+func TestSAMLRejectsECDSAKey(t *testing.T) {
+	dir := t.TempDir()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile, certFile := filepath.Join(dir, "sp.key"), filepath.Join(dir, "sp.crt")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = newSAMLClient(config.SAMLConfig{Enabled: true, IDPMetadataURL: "https://idp.example/m", EntityID: "sp",
+		ACSURL: "https://p.example/acs", KeyFile: keyFile, CertFile: certFile})
+	if err == nil || !strings.Contains(err.Error(), "only RSA keys are supported") {
+		t.Fatalf("err = %v, want the RSA-only error", err)
+	}
+}
+
+func TestSAMLMetadataFetchIgnoresCancelledRequest(t *testing.T) {
+	idp := newFakeSAMLIdP(t)
+	c, err := newSAMLClient(config.SAMLConfig{Enabled: true, IDPMetadataURL: idp.srv.URL + "/metadata", EntityID: "sp",
+		ACSURL: "https://p.example/acs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A login request whose client has gone away still fetches the metadata, so it cannot
+	// put sign-in into the failed-fetch back-off for everyone else.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := c.provider(ctx); err != nil {
+		t.Fatalf("provider with a cancelled request context: %v", err)
+	}
+	if !c.retryFrom.IsZero() || c.fetched.IsZero() {
+		t.Fatalf("retryFrom = %v, fetched = %v; want a successful fetch and no back-off", c.retryFrom, c.fetched)
+	}
+	if _, err := c.provider(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 

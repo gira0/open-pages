@@ -185,7 +185,7 @@ Every key is described in [getting-started.md](getting-started.md#saml). The ess
   `/v1/auth/saml/acs` on this server, registered at the IdP exactly like that.
 - `GET /v1/auth/saml/metadata` serves SP metadata (entity ID, ACS URL, signing certificate if
   any) that most IdPs can import. It needs no login and works while the IdP is down.
-- Optional `key_file` and `cert_file` (PEM, RSA or ECDSA, both or neither) sign the
+- Optional `key_file` and `cert_file` (PEM, RSA only, both or neither) sign the
   AuthnRequests (redirect-binding query signature) and publish the certificate in the SP
   metadata. Without them requests are sent unsigned, which most IdPs accept. They are not
   used to decrypt anything. Keep the key readable only by the service user.

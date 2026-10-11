@@ -172,7 +172,7 @@ flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
 | `groups_attribute` | `groups` | Attribute holding group names; empty turns group mapping off |
 | `nameid_attribute` | empty | When set, the user is identified by this attribute instead of the NameID |
 | `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
-| `key_file`, `cert_file` | empty | PEM private key (RSA or ECDSA) and certificate used to sign AuthnRequests. Set both or neither; without them requests are unsigned. The certificate is published in the SP metadata |
+| `key_file`, `cert_file` | empty | PEM RSA private key (ECDSA is not supported) and certificate used to sign AuthnRequests. Set both or neither; without them requests are unsigned. The certificate is published in the SP metadata |
 
 ### Startup checks
 
