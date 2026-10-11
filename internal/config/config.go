@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -73,6 +74,9 @@ const (
 	URLModeSubdomain = "subdomain" // <site>.<base_domain>/...
 )
 
+// maxTimeoutSecs is the longest timeout in seconds that fits a time.Duration.
+const maxTimeoutSecs = int(math.MaxInt64 / int64(time.Second))
+
 // minMetricsTokenLen keeps an obviously guessable token from being configured.
 const minMetricsTokenLen = 16
 
@@ -131,6 +135,9 @@ func Load(path string) (Config, error) {
 	timeoutSecs, err := positiveInt(limits, "deploy_timeout_seconds", int(cfg.DeployTimeout/time.Second))
 	if err != nil {
 		return cfg, err
+	}
+	if timeoutSecs > maxTimeoutSecs {
+		return cfg, fmt.Errorf("limits.deploy_timeout_seconds: must be at most %d", maxTimeoutSecs)
 	}
 	cfg.DeployTimeout = time.Duration(timeoutSecs) * time.Second
 

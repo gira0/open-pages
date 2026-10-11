@@ -279,6 +279,7 @@ func TestLoadDeployLimitErrors(t *testing.T) {
 		"max_concurrent_deploys = -1",
 		"deploy_timeout_seconds = 10m",
 		"deploy_timeout_seconds = 0",
+		"deploy_timeout_seconds = 9223372037",
 	} {
 		path := filepath.Join(t.TempDir(), "settings.ini")
 		if err := os.WriteFile(path, []byte("[limits]\n"+line+"\n"), 0o600); err != nil {

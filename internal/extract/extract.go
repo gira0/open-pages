@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -150,9 +151,18 @@ func (e *extractor) file(name string, r io.Reader) error {
 	return nil
 }
 
-// checkZipDirectory reads the entry count from the end-of-central-directory record, and
-// the zip64 record when the count overflows, so that an archive with millions of entries
-// is refused before zip.NewReader parses them all into memory.
+// int64Of converts a size read from an archive, reporting false if it cannot be a file offset.
+func int64Of(v uint64) (int64, bool) {
+	if v > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(v), true
+}
+
+// checkZipDirectory refuses a zip with too many entries before zip.NewReader parses its
+// central directory into memory. The counts in the end records are attacker-controlled
+// (archive/zip keeps reading headers past the declared count), so it also walks the real
+// directory headers, which costs one small read per entry and stops at MaxFiles+1.
 func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 	const eocdLen, maxComment = 22, 1<<16 - 1
 	tailLen := min(size, eocdLen+maxComment)
@@ -173,37 +183,80 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 		return errors.New("read zip: no end of central directory")
 	}
 	eocd := tail[i:]
+	endAt := size - tailLen + int64(i) // where the end record that holds the directory fields starts
 	entries := uint64(binary.LittleEndian.Uint16(eocd[10:]))
 	dirSize := uint64(binary.LittleEndian.Uint32(eocd[12:]))
 	dirOffset := uint64(binary.LittleEndian.Uint32(eocd[16:]))
 	if entries == 0xffff || dirSize == 0xffffffff || dirOffset == 0xffffffff {
 		// zip64: the locator sits right before the end record and points at the real one.
-		eocdAt := size - tailLen + int64(i)
-		if eocdAt < 20 {
+		if endAt < 20 {
 			return errors.New("read zip: bad zip64 locator")
 		}
 		var loc [20]byte
-		if _, err := src.ReadAt(loc[:], eocdAt-20); err != nil || !bytes.HasPrefix(loc[:], []byte("PK\x06\x07")) {
+		if _, err := src.ReadAt(loc[:], endAt-20); err != nil || !bytes.HasPrefix(loc[:], []byte("PK\x06\x07")) {
 			return errors.New("read zip: bad zip64 locator")
 		}
-		at := binary.LittleEndian.Uint64(loc[8:])
+		at, ok := int64Of(binary.LittleEndian.Uint64(loc[8:]))
 		var rec [56]byte
-		if at > uint64(size) || size-int64(at) < int64(len(rec)) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
+		if !ok || at > size || size-at < int64(len(rec)) {
 			return errors.New("read zip: bad zip64 record")
 		}
-		if _, err := src.ReadAt(rec[:], int64(at)); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
+		if _, err := src.ReadAt(rec[:], at); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) {
 			return errors.New("read zip: bad zip64 record")
 		}
+		endAt = at
 		entries = binary.LittleEndian.Uint64(rec[32:])
 		dirSize = binary.LittleEndian.Uint64(rec[40:])
+		dirOffset = binary.LittleEndian.Uint64(rec[48:])
 	}
-	if entries > uint64(limits.MaxFiles) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
-		return fmt.Errorf("archive has more than %d entries", limits.MaxFiles)
+	tooMany := fmt.Errorf("archive has more than %d entries", limits.MaxFiles)
+	if n, ok := int64Of(entries); !ok || n > int64(limits.MaxFiles) {
+		return tooMany
 	}
-	if dirSize > uint64(limits.MaxFiles)*maxDirEntryBytes+maxDirEntryBytes { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
-		return errors.New("read zip: central directory is too large")
+	// archive/zip starts at the declared offset, or at the end record minus the declared
+	// size when data was prepended to the file. Walk both.
+	starts := []uint64{dirOffset}
+	if ds, ok := int64Of(dirSize); ok && ds <= endAt {
+		starts = append(starts, uint64(endAt-ds))
+	}
+	for _, start := range starts {
+		off, ok := int64Of(start)
+		if !ok {
+			continue
+		}
+		n, err := walkDirectory(src, size, off, limits)
+		if err != nil {
+			return err
+		}
+		if n > limits.MaxFiles {
+			return tooMany
+		}
 	}
 	return nil
+}
+
+// walkDirectory counts the central directory headers that follow one another from off,
+// stopping at the first position that is not a header or after MaxFiles+1 of them.
+func walkDirectory(src io.ReaderAt, size, off int64, limits Limits) (int, error) {
+	const headerLen = 46
+	end := off + int64(limits.MaxFiles+1)*maxDirEntryBytes
+	var hdr [headerLen]byte
+	n := 0
+	for n <= limits.MaxFiles {
+		if off < 0 || size-off < headerLen {
+			break
+		}
+		if _, err := src.ReadAt(hdr[:], off); err != nil || !bytes.HasPrefix(hdr[:], []byte("PK\x01\x02")) {
+			break
+		}
+		off += headerLen + int64(binary.LittleEndian.Uint16(hdr[28:])) +
+			int64(binary.LittleEndian.Uint16(hdr[30:])) + int64(binary.LittleEndian.Uint16(hdr[32:]))
+		if off > end {
+			return n, errors.New("read zip: central directory is too large")
+		}
+		n++
+	}
+	return n, nil
 }
 
 func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, limits Limits) error {
@@ -216,12 +269,13 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 	}
 	// Declared sizes can lie, which the byte count in file() still catches; this just
 	// turns away the honest oversized archive without writing anything.
-	var declared uint64
+	var declared int64
 	for _, f := range zr.File {
-		declared += f.UncompressedSize64
-		if declared > uint64(limits.MaxBytes) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
+		size, ok := int64Of(f.UncompressedSize64)
+		if !ok || size > limits.MaxBytes-declared {
 			return fmt.Errorf("archive expands to more than %d MiB", limits.MaxBytes>>20)
 		}
+		declared += size
 	}
 	e := &extractor{ctx: ctx, dest: dest, limits: limits}
 	for _, f := range zr.File {

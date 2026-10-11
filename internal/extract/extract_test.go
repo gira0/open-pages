@@ -366,3 +366,37 @@ func TestCanceledContextStopsExtraction(t *testing.T) {
 		}
 	}
 }
+
+// The counts in the end record are attacker-controlled; the real directory decides.
+func TestZipForgedCountStillCaught(t *testing.T) {
+	var es []entry
+	for i := range 200 {
+		es = append(es, entry{name: fmt.Sprintf("f%03d", i)})
+	}
+	data := zipBytes(t, es...)
+	limits := Limits{MaxBytes: 1 << 20, MaxFiles: 100}
+	forge := func(b []byte) []byte {
+		at := bytes.LastIndex(b, []byte("PK\x05\x06"))
+		binary.LittleEndian.PutUint16(b[at+8:], 1)
+		binary.LittleEndian.PutUint16(b[at+10:], 1)
+		return b
+	}
+	plain := forge(slices.Clone(data))
+	prepended := forge(slices.Concat([]byte(strings.Repeat("junk", 100)), data))
+	for name, b := range map[string][]byte{"plain": plain, "prepended": prepended} {
+		err := checkZipDirectory(bytes.NewReader(b), int64(len(b)), limits)
+		if err == nil || !strings.Contains(err.Error(), "more than 100 entries") {
+			t.Errorf("%s: err = %v, want entry count error", name, err)
+		}
+	}
+}
+
+func TestZipDeclaredSizeSumCannotWrap(t *testing.T) {
+	data := zipBytes(t, entry{name: "a", body: "a"}, entry{name: "b", body: "b"})
+	// Declare a near-maximum size in the second central directory header.
+	second := bytes.LastIndex(data, []byte("PK\x01\x02"))
+	binary.LittleEndian.PutUint32(data[second+24:], 0xffffffff)
+	if _, err := run(t, data, Limits{MaxBytes: 1 << 20, MaxFiles: 10}); err == nil {
+		t.Fatal("oversized declared entry accepted")
+	}
+}
