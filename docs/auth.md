@@ -391,7 +391,7 @@ an `Authorization` header never falls back to cookies.
 
 The path prefix `/__open-pages/` is reserved on site hosts: it is handled before any file
 lookup, so a site's own files cannot shadow it, and anything under it except
-`GET /__open-pages/auth` is a `404`.
+`GET` or `HEAD /__open-pages/auth` is a `404`.
 
 ### Site ownership
 

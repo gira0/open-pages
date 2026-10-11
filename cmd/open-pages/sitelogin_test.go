@@ -616,7 +616,7 @@ func TestSiteReservedPrefix(t *testing.T) {
 			}
 		}
 	}
-	// Only GET redeems.
+	// GET and HEAD redeem; an invalid code is a 404 for both.
 	if w := do(e.s, "HEAD", siteHost("open"), "/__open-pages/auth?code=x"); w.Code != http.StatusNotFound {
 		t.Errorf("HEAD: %d", w.Code)
 	}
