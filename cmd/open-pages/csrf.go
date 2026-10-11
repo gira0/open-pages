@@ -22,9 +22,9 @@ func (s *Server) csrf(next http.Handler) http.Handler {
 	}
 	cop.AddInsecureBypassPattern("POST " + samlACSPath)
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Warn("cross-origin request rejected", "method", r.Method, "path", r.URL.Path,
-			"origin", r.Header.Get("Origin"), "sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
-			"request_id", requestIDOf(w))
+		// Only the method is logged: the other values are attacker-controlled, and the
+		// request log line with the same request_id carries the route.
+		slog.Warn("cross-origin request rejected", "method", r.Method, "request_id", requestIDOf(w))
 		writeError(w, http.StatusForbidden, "cross-origin request rejected")
 	}))
 	return cop.Handler(next)
