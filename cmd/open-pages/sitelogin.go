@@ -36,7 +36,8 @@ const (
 	siteStateCookie    = "site_login_state" // login CSRF nonce, see handleSiteLogin
 	siteSessionTTL     = time.Hour
 	siteLoginCodeTTL   = time.Minute
-	siteLoginStateTTL  = 5 * time.Minute
+	siteLoginStateTTL  = 10 * time.Minute // as long as the UI keeps `next` across a single sign-on round trip
+	maxSameNameCookies = 4                // cookies of one name tried per request, see namedCookies
 	siteLoginPath      = "/v1/auth/site-login"
 	reservedPrefix     = "/__open-pages"
 	siteRedeemPath     = reservedPrefix + "/auth"
@@ -103,6 +104,14 @@ func noStoreRedirect(w http.ResponseWriter, location string) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// namedCookies returns the first few cookies of the request with the given base name. A
+// request may carry many of one name (a sibling site can plant them without cookie_secure),
+// and each one costs a database lookup, so only a handful are tried.
+func (s *Server) namedCookies(r *http.Request, base string) []*http.Cookie {
+	all := r.CookiesNamed(s.cookieName(base))
+	return all[:min(maxSameNameCookies, len(all))]
+}
+
 // siteUser returns the user behind the request on the content host of site: an API token if
 // the request carries a bearer header (never falling back to a cookie), otherwise the site
 // cookie. The app session cookie is not looked at. It returns 0 for no valid credentials.
@@ -115,7 +124,7 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 	}
 	// Without cookie_secure a sibling site can plant a cookie of the same name that comes
 	// first, so every one is tried.
-	for _, c := range r.CookiesNamed(s.cookieName(siteSessionCookie)) {
+	for _, c := range s.namedCookies(r, siteSessionCookie) {
 		var uid int64
 		err := s.db.QueryRowContext(r.Context(),
 			`SELECT ss.userid FROM site_session ss JOIN session ON session.sessionid = ss.sessionid
@@ -226,7 +235,7 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
-	states := r.CookiesNamed(s.cookieName(siteStateCookie))
+	states := s.namedCookies(r, siteStateCookie)
 	var (
 		codeSite, stateHash, returnTo string
 		siteID, uid, sid, expires     int64

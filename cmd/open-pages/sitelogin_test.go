@@ -166,7 +166,7 @@ func TestSiteLoginHandoff(t *testing.T) {
 			}
 			st := cookieNamed(w, s.cookieName(siteStateCookie))
 			if st == nil || st.Value != q.Get("state") || !st.HttpOnly || st.Secure != secure || st.Domain != "" || st.Path != "/" ||
-				st.MaxAge <= 0 || st.MaxAge > 300 || st.SameSite != http.SameSiteLaxMode {
+				st.MaxAge <= 0 || st.MaxAge > int(siteLoginStateTTL.Seconds()) || st.SameSite != http.SameSiteLaxMode {
 				t.Fatalf("state cookie = %+v", st)
 			}
 			if strings.HasPrefix(st.Name, "__Host-") != secure {
@@ -755,5 +755,21 @@ func TestSiteLoginStaleHandoffKeepsStateCookie(t *testing.T) {
 	}
 	if c := cookieNamed(w, siteStateCookie); c == nil || c.MaxAge >= 0 {
 		t.Errorf("state cookie not cleared after a matched redeem: %v", c)
+	}
+}
+
+// Only a handful of same-named cookies are tried, so a flood of them can't turn one request
+// into hundreds of lookups; a real cookie within the first few still works.
+func TestSiteLoginCapsSameNameCookies(t *testing.T) {
+	e := newLoginEnv(t, false)
+	name := e.s.cookieName(siteSessionCookie)
+	good := e.signIn(t, e.member, "secret")
+
+	junk := strings.Repeat(name+"=junk; ", maxSameNameCookies)
+	if w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", junk+good); w.Code == http.StatusOK {
+		t.Error("a cookie beyond the cap was still tried")
+	}
+	if w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", strings.Repeat(name+"=junk; ", maxSameNameCookies-1)+good); w.Code != http.StatusOK {
+		t.Errorf("a cookie within the cap was ignored: %d", w.Code)
 	}
 }

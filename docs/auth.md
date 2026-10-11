@@ -356,7 +356,7 @@ host never sees the app session:
 1. A `GET` or `HEAD` for the site without a valid site cookie or `Authorization` header is
    redirected (`302`, `Cache-Control: no-store`) to
    `https://<app_host>/v1/auth/site-login?site=<name>&return=<path>&state=<nonce>`. The site
-   host also sets a 5 minute `HttpOnly` cookie `site_login_state` (`__Host-` prefixed with
+   host also sets a 10 minute `HttpOnly` cookie `site_login_state` (`__Host-` prefixed with
    `cookie_secure`) holding the nonce, which defends against login CSRF: a code is only
    redeemable by the browser that started the login. `return` is the requested path and query.
 2. `site-login` on the app host needs the app session; without one it redirects to
