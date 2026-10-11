@@ -104,15 +104,14 @@ func notFoundNoStore(w http.ResponseWriter, r *http.Request) {
 
 // viewerMaySee resolves who sent the request (API token or the site's cookie, 0 if neither
 // is valid) and whether that user may view site. signedIn reports whether the request
-// carries valid credentials, or a bearer header at all: only a request that does not is sent
+// carries valid credentials, or an Authorization header at all: only a request that does not is sent
 // to log in. A missing site is never viewable.
 func (s *Server) viewerMaySee(r *http.Request, name string, site Site, missing bool) (ok, signedIn bool, err error) {
 	uid, err := s.siteUser(r, name)
 	if err != nil {
 		return false, false, err
 	}
-	_, bearer := bearerToken(r)
-	signedIn = uid != 0 || bearer
+	signedIn = uid != 0 || r.Header.Get("Authorization") != "" // any scheme counts as an attempt
 	if missing {
 		return false, signedIn, nil
 	}

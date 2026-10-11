@@ -664,3 +664,31 @@ func TestSiteLoginIgnoresShadowCookies(t *testing.T) {
 		t.Errorf("redeem shadowed by a junk state cookie: status %d", w.Code)
 	}
 }
+
+// Any Authorization header is an authentication attempt: it is never answered by a cookie
+// and never redirected, so a Basic header next to a valid site cookie gets the plain 404.
+func TestSiteLoginAnyAuthorizationHeaderBlocksCookie(t *testing.T) {
+	e := newLoginEnv(t, false)
+	cookie := e.signIn(t, e.member, "secret")
+	expectStatus(t, do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie).Code, http.StatusOK)
+	for _, auth := range []string{"Basic dTpw", "Token abc", "Bearer nope"} {
+		w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie, "Authorization", auth)
+		expectStatus(t, w.Code, http.StatusNotFound)
+		w = do(e.s, "GET", siteHost("secret"), "/", "Authorization", auth)
+		expectStatus(t, w.Code, http.StatusNotFound)
+	}
+}
+
+// Every outcome of the app-host route is uncacheable, including errors.
+func TestSiteLoginNoStoreEverywhere(t *testing.T) {
+	e := newLoginEnv(t, false)
+	for _, target := range []string{
+		siteLoginPath + "?site=Bad_Name&state=x",
+		siteLoginPath + "?site=secret&state=short",
+	} {
+		w := do(e.s, "GET", testAppHost, target)
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control %q", target, got)
+		}
+	}
+}

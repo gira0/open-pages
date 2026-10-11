@@ -1157,7 +1157,7 @@ func TestIndexShowsSAMLSignIn(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.LocalLogin = false })
 	_, body, _ := oidcGet(t, browser(t), ts.ts.URL+"/index")
-	if !strings.Contains(body, `href="/v1/auth/saml/login"`) || strings.Contains(body, "oidc/login") ||
+	if !strings.Contains(body, `href="/v1/auth/saml/login?return_to=/index"`) || strings.Contains(body, "oidc/login") ||
 		strings.Contains(body, `action="/v1/user/login"`) || strings.Contains(body, "(SAML)") {
 		t.Errorf("SAML-only page wrong:\n%s", body)
 	}
@@ -1171,7 +1171,7 @@ func TestIndexShowsSAMLSignIn(t *testing.T) {
 		}
 	})
 	_, body, _ = oidcGet(t, browser(t), ts.ts.URL+"/index")
-	for _, want := range []string{`href="/v1/auth/saml/login"`, `href="/v1/auth/oidc/login"`, "(SAML)", "(OpenID Connect)"} {
+	for _, want := range []string{`href="/v1/auth/saml/login?return_to=/index"`, `href="/v1/auth/oidc/login?return_to=/index"`, "(SAML)", "(OpenID Connect)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
 		}

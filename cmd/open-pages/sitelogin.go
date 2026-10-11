@@ -110,6 +110,9 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 	if token, ok := bearerToken(r); ok {
 		return s.tokenUser(r.Context(), token)
 	}
+	if r.Header.Get("Authorization") != "" {
+		return 0, nil // an attempt with another scheme is rejected, not answered by a cookie
+	}
 	// Without cookie_secure a sibling site can plant a cookie of the same name that comes
 	// first, so every one is tried.
 	for _, c := range r.CookiesNamed(s.cookieName(siteSessionCookie)) {
@@ -142,6 +145,7 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request, site st
 // handleSiteLogin runs on the app host. It issues a login code for the signed-in user and
 // sends the browser on to the site, or to the UI to sign in first.
 func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store") // whatever the outcome
 	q := r.URL.Query()
 	site, state, ret := q.Get("site"), q.Get("state"), siteReturnPath(q.Get("return"))
 	if !names.ValidSite(site) {

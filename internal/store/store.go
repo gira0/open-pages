@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS site_login_code (
 	FOREIGN KEY (sessionid) REFERENCES session(sessionid) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS site_login_code_expires ON site_login_code (expires);
+
 CREATE TABLE IF NOT EXISTS site_session (
 	sitesessionid INTEGER PRIMARY KEY,
 	hash          CHAR(64) NOT NULL UNIQUE,
@@ -59,6 +61,7 @@ CREATE TABLE IF NOT EXISTS site_session (
 );
 
 CREATE INDEX IF NOT EXISTS site_session_session ON site_session (sessionid);
+CREATE INDEX IF NOT EXISTS site_session_expires ON site_session (expires);
 
 CREATE TABLE IF NOT EXISTS api_token (
 	tokenid INTEGER PRIMARY KEY,
