@@ -271,3 +271,21 @@ func TestEmptyGroupsKeyDisablesMapping(t *testing.T) {
 		t.Fatalf("empty keys: groups_attribute = %q, groups_claim = %q, want mapping off", cfg.SAML.GroupsAttribute, cfg.OIDC.GroupsClaim)
 	}
 }
+
+func TestLoadDeployLimitErrors(t *testing.T) {
+	for _, line := range []string{
+		"max_concurrent_deploys = many",
+		"max_concurrent_deploys = 0",
+		"max_concurrent_deploys = -1",
+		"deploy_timeout_seconds = 10m",
+		"deploy_timeout_seconds = 0",
+	} {
+		path := filepath.Join(t.TempDir(), "settings.ini")
+		if err := os.WriteFile(path, []byte("[limits]\n"+line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("%q: expected an error", line)
+		}
+	}
+}

@@ -175,7 +175,8 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 	eocd := tail[i:]
 	entries := uint64(binary.LittleEndian.Uint16(eocd[10:]))
 	dirSize := uint64(binary.LittleEndian.Uint32(eocd[12:]))
-	if entries == 0xffff || dirSize == 0xffffffff {
+	dirOffset := uint64(binary.LittleEndian.Uint32(eocd[16:]))
+	if entries == 0xffff || dirSize == 0xffffffff || dirOffset == 0xffffffff {
 		// zip64: the locator sits right before the end record and points at the real one.
 		eocdAt := size - tailLen + int64(i)
 		if eocdAt < 20 {

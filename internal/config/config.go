@@ -125,8 +125,14 @@ func Load(path string) (Config, error) {
 	cfg.MaxUploadBytes = limits.Key("max_upload_mb").MustInt64(cfg.MaxUploadBytes>>20) << 20
 	cfg.MaxExtractSize = limits.Key("max_extract_mb").MustInt64(cfg.MaxExtractSize>>20) << 20
 	cfg.MaxExtractFile = limits.Key("max_extract_files").MustInt(cfg.MaxExtractFile)
-	cfg.MaxDeploys = max(limits.Key("max_concurrent_deploys").MustInt(cfg.MaxDeploys), 1)
-	cfg.DeployTimeout = time.Duration(max(limits.Key("deploy_timeout_seconds").MustInt(int(cfg.DeployTimeout/time.Second)), 1)) * time.Second
+	if cfg.MaxDeploys, err = positiveInt(limits, "max_concurrent_deploys", cfg.MaxDeploys); err != nil {
+		return cfg, err
+	}
+	timeoutSecs, err := positiveInt(limits, "deploy_timeout_seconds", int(cfg.DeployTimeout/time.Second))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DeployTimeout = time.Duration(timeoutSecs) * time.Second
 
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
@@ -187,6 +193,19 @@ func strictBool(sec *ini.Section, name string, def bool) (bool, error) {
 	v, err := sec.Key(name).Bool()
 	if err != nil {
 		return def, fmt.Errorf("%s.%s: must be true or false", sec.Name(), name)
+	}
+	return v, nil
+}
+
+// positiveInt reads an integer key that must be at least 1, failing on a malformed or
+// non-positive value instead of silently using the default.
+func positiveInt(sec *ini.Section, name string, def int) (int, error) {
+	if !sec.HasKey(name) {
+		return def, nil
+	}
+	v, err := sec.Key(name).Int()
+	if err != nil || v < 1 {
+		return def, fmt.Errorf("%s.%s: must be a whole number of at least 1", sec.Name(), name)
 	}
 	return v, nil
 }

@@ -290,6 +290,25 @@ func TestZip64EntryCount(t *testing.T) {
 	}
 }
 
+// archive/zip also takes the zip64 record when only the directory offset is saturated.
+func TestZip64SaturatedOffsetOnly(t *testing.T) {
+	le := binary.LittleEndian
+	rec := make([]byte, 56)
+	copy(rec, "PK\x06\x06")
+	le.PutUint64(rec[32:], 1_000_000)
+	loc := make([]byte, 20)
+	copy(loc, "PK\x06\x07")
+	eocd := make([]byte, 22)
+	copy(eocd, "PK\x05\x06")
+	le.PutUint16(eocd[10:], 1)
+	le.PutUint32(eocd[16:], 0xffffffff)
+	data := slices.Concat(rec, loc, eocd)
+	err := checkZipDirectory(bytes.NewReader(data), int64(len(data)), Limits{MaxBytes: 1 << 20, MaxFiles: 100})
+	if err == nil || !strings.Contains(err.Error(), "more than 100 entries") {
+		t.Fatalf("err = %v, want entry count error", err)
+	}
+}
+
 // A record forged inside the archive comment must be read the way archive/zip reads it,
 // or the pre-check could approve a count that zip.NewReader never sees.
 func TestZipForgedRecordMatchesReader(t *testing.T) {
