@@ -472,6 +472,27 @@ func TestOIDCGroupMapping(t *testing.T) {
 	}
 }
 
+func TestOIDCMappingOffKeepsManagedMemberships(t *testing.T) {
+	idp := newFakeIDP(t)
+	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "" })
+	eng := newGroupVia(t, ts, loggedInClient(t, ts), "eng")
+	idp.update(func(s *idpSettings) { s.groups = []string{"eng"} })
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var uid int64
+	if err := s.db.QueryRow("SELECT userid FROM user WHERE oidc_subject = 'sub-1'").Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	// A membership an earlier, mapping-on configuration managed.
+	if _, err := s.db.Exec("INSERT INTO user_group (uid, gid, oidc) VALUES (?, ?, 1)", uid, eng); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_group WHERE uid = ? AND oidc = 1", uid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("provider-managed memberships = %d (%v), want 1 kept with mapping off", n, err)
+	}
+}
+
 func TestOIDCGroupsClaimAsString(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "roles" })

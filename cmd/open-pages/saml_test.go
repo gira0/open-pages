@@ -734,6 +734,27 @@ func TestSAMLNameIDAttributeWithTransientNameID(t *testing.T) {
 	}
 }
 
+func TestSAMLMappingOffKeepsManagedMemberships(t *testing.T) {
+	idp := newFakeSAMLIdP(t)
+	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.GroupsAttribute = "" })
+	eng := newGroupVia(t, ts.ts, loggedInClient(t, ts.ts), "eng")
+	idp.update(func(s *samlSettings) { s.groups = []string{"eng"} })
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
+	var uid int64
+	if err := ts.s.db.QueryRow("SELECT userid FROM user WHERE oidc_subject IS NOT NULL").Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	// A membership an earlier, mapping-on configuration managed.
+	if _, err := ts.s.db.Exec("INSERT INTO user_group (uid, gid, oidc) VALUES (?, ?, 1)", uid, eng); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
+	var n int
+	if err := ts.s.db.QueryRow("SELECT COUNT(*) FROM user_group WHERE uid = ? AND oidc = 1", uid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("provider-managed memberships = %d (%v), want 1 kept with mapping off", n, err)
+	}
+}
+
 func TestSAMLGroupsAttributeMultiValued(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.GroupsAttribute = "memberOf" })

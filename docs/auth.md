@@ -140,7 +140,8 @@ dependency.
 ### Group mapping
 
 `groups_claim` (default `groups`) names the ID token claim holding group names, either a
-list of strings or a single string. Setting it empty turns mapping off.
+list of strings or a single string. Setting it empty turns mapping off; memberships an earlier sign-in added are then left as
+they are.
 
 - Names are matched to **existing** open-pages groups with the same name, ignoring case.
   Names that match no group are ignored. Groups are never created from a token.
@@ -254,7 +255,8 @@ XML parsing and signature verification are done by
 
 ### Group mapping
 
-`groups_attribute` (default `groups`; empty turns mapping off) names the attribute whose
+`groups_attribute` (default `groups`; empty turns mapping off and leaves memberships an earlier sign-in added
+as they are) names the attribute whose
 values are group names. The rules are those of [OIDC group mapping](#group-mapping): existing
 groups only, matched ignoring case, provider-managed memberships follow each sign-in, manual
 ones are never removed, at most 500 names are read. OIDC and SAML share the same marker, so

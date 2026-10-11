@@ -412,7 +412,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var uid int64
 		if uid, err = s.federatedUser(r.Context(), id); err == nil {
-			if err = s.syncFederatedGroups(r.Context(), uid, id.groups); err == nil {
+			// With mapping off (empty groups_claim), provider-managed memberships stay as they are.
+			if s.oidc.cfg.GroupsClaim != "" {
+				err = s.syncFederatedGroups(r.Context(), uid, id.groups)
+			}
+			if err == nil {
 				err = s.startSession(w, r, uid)
 			}
 		}

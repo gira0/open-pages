@@ -431,7 +431,12 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 	var uid int64
 	if err = checkEmail(id.email, s.saml.cfg.AllowedEmailDomain); err == nil {
 		if uid, err = s.federatedUser(r.Context(), id); err == nil {
-			if err = s.syncFederatedGroups(r.Context(), uid, id.groups); err == nil {
+			// With mapping off (empty groups_attribute), provider-managed memberships stay as
+			// they are.
+			if s.saml.cfg.GroupsAttribute != "" {
+				err = s.syncFederatedGroups(r.Context(), uid, id.groups)
+			}
+			if err == nil {
 				err = s.startSession(w, r, uid)
 			}
 		}
