@@ -241,7 +241,7 @@ XML parsing and signature verification are done by
 
 - A SAML user is identified by the IdP's entity ID plus the subject (stored in `oidc_issuer`
   and `oidc_subject`, see [schema.md](schema.md#user)), never by email. The subject is the
-  NameID, or the value of `nameid_attribute` if set. Without `nameid_attribute`, a `transient`
+  NameID, or the value of `nameid_attribute` if set (the NameID may then be absent). Without `nameid_attribute`, a `transient`
   NameID is refused, since it would create a new account at every login; configure the IdP
   to send a persistent one, or point `nameid_attribute` at a stable attribute.
 - The email comes from `email_attribute`, or from an email-format NameID, at first sign-in and

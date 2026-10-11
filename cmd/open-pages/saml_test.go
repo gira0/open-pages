@@ -48,6 +48,7 @@ type samlAttr struct {
 // field means "behave correctly".
 type samlSettings struct {
 	nameID, nameIDFormat string
+	noNameID             bool   // a Subject with only the bearer SubjectConfirmation
 	email                string // sent as the "email" attribute unless noEmail
 	noEmail              bool
 	groups               []string
@@ -325,10 +326,16 @@ func (p *fakeSAMLIdP) build(t *testing.T, req sentRequest, requestID string) str
 	if s.audience == "-" {
 		audXML = ""
 	}
+	nameIDXML := func(nameID string) string {
+		if s.noNameID {
+			return ""
+		}
+		return `<saml:NameID Format="` + format + `">` + esc(nameID) + `</saml:NameID>`
+	}
 	assertion := func(id, nameID string) string {
 		return `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="` + id + `" Version="2.0" IssueInstant="` + now.Format(samlTimeFormat) + `">` +
 			`<saml:Issuer>` + esc(issuer) + `</saml:Issuer>` +
-			`<saml:Subject><saml:NameID Format="` + format + `">` + esc(nameID) + `</saml:NameID>` +
+			`<saml:Subject>` + nameIDXML(nameID) +
 			`<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData` + irtAttr +
 			` NotOnOrAfter="` + now.Add(na).Format(samlTimeFormat) + `" Recipient="` + esc(recipient) + `"/></saml:SubjectConfirmation></saml:Subject>` +
 			`<saml:Conditions NotBefore="` + now.Add(nb).Format(samlTimeFormat) + `" NotOnOrAfter="` + now.Add(na).Format(samlTimeFormat) + `">` + audXML + `</saml:Conditions>` +
@@ -680,6 +687,33 @@ func TestSAMLNameIDAttribute(t *testing.T) {
 	// The attribute is required once configured, even though a NameID is present.
 	idp.update(func(s *samlSettings) { s.attrs = nil })
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
+}
+
+func TestSAMLNoNameID(t *testing.T) {
+	// Without nameid_attribute the NameID is the subject, so an assertion without one fails.
+	idp := newFakeSAMLIdP(t)
+	ts := newSAMLTestServer(t, idp, nil)
+	idp.update(func(s *samlSettings) { s.noNameID = true })
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
+
+	// With nameid_attribute a Subject that only carries the bearer confirmation is fine.
+	idp2 := newFakeSAMLIdP(t)
+	ts2 := newSAMLTestServer(t, idp2, func(c *config.Config) { c.SAML.NameIDAttribute = "employeeNumber" })
+	idp2.update(func(s *samlSettings) {
+		s.noNameID = true
+		s.attrs = []samlAttr{{"employeeNumber", []string{"E-7"}}}
+	})
+	expectStatus(t, ts2.signIn(t, browser(t)), http.StatusOK)
+	var subject string
+	if err := ts2.s.db.QueryRow("SELECT oidc_subject FROM user").Scan(&subject); err != nil || subject != "E-7" {
+		t.Fatalf("subject = %q (%v), want the attribute value", subject, err)
+	}
+	// No email attribute and no NameID to fall back on: refused for the missing email, not a panic.
+	idp2.update(func(s *samlSettings) {
+		s.noEmail = true
+		s.attrs = []samlAttr{{"employeeNumber", []string{"E-8"}}}
+	})
+	expectStatus(t, ts2.signIn(t, browser(t)), http.StatusForbidden)
 }
 
 func TestSAMLNameIDAttributeWithTransientNameID(t *testing.T) {

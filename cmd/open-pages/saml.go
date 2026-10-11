@@ -491,7 +491,7 @@ func (c *samlClient) accept(sp *saml2.SAMLServiceProvider, encoded, cookie strin
 	if !resp.SignatureValidated && !a.SignatureValidated {
 		return samlResult{}, errSAMLUnsigned
 	}
-	if a.ID == "" || len(a.ID) > 256 || a.Subject == nil || a.Subject.NameID == nil || a.Subject.SubjectConfirmation == nil ||
+	if a.ID == "" || len(a.ID) > 256 || a.Subject == nil || a.Subject.SubjectConfirmation == nil ||
 		a.Subject.SubjectConfirmation.SubjectConfirmationData == nil {
 		return samlResult{}, errSAMLShape
 	}
@@ -530,6 +530,9 @@ func (c *samlClient) accept(sp *saml2.SAMLServiceProvider, encoded, cookie strin
 		// The configured attribute is the stable identifier, so the NameID format does not matter.
 		id.subject = firstAttribute(a, attr)
 	} else {
+		if nameID == nil {
+			return samlResult{}, errSAMLSubject // the NameID is the subject
+		}
 		if nameID.Format == nameIDTransient {
 			return samlResult{}, errSAMLSubject // a different value at every login
 		}
@@ -539,7 +542,7 @@ func (c *samlClient) accept(sp *saml2.SAMLServiceProvider, encoded, cookie strin
 		return samlResult{}, errSAMLSubject
 	}
 	id.email = firstAttribute(a, c.cfg.EmailAttribute)
-	if id.email == "" && nameID.Format == nameIDEmailAddress {
+	if id.email == "" && nameID != nil && nameID.Format == nameIDEmailAddress {
 		id.email = strings.TrimSpace(nameID.Value)
 	}
 	if c.cfg.GroupsAttribute != "" {
