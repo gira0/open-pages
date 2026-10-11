@@ -310,7 +310,7 @@ Auth: none. Optional query `return_to`: as for OIDC login.
 
 | Status | Meaning |
 |---|---|
-| 302 | Redirect to the identity provider with an AuthnRequest (HTTP-Redirect binding); sets the short-lived `saml_request` cookie (`Path=/v1/auth/saml`, 10 minutes, `SameSite=None; Secure` over https) |
+| 302 | Redirect to the identity provider with an AuthnRequest (HTTP-Redirect binding); sets the short-lived `saml_request` cookie (`Path=/v1/auth/saml`, 10 minutes, `SameSite=None; Secure` over https, where it is named `__Host-saml_request` with `Path=/`) |
 | 400 | `{"error":"return_to must be a path on this server"}` |
 | 502 | `{"error":"identity provider unavailable"}` (the IdP metadata could not be loaded) |
 | 503 | `{"error":"too many sign-in attempts, try again later"}` (10000 attempts pending) |

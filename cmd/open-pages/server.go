@@ -176,7 +176,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Expose-Headers", requestIDHeader)
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Authorization, X-CSRF-Token")
+				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Authorization")
 				h.Set("Access-Control-Max-Age", "43200")
 				w.WriteHeader(http.StatusNoContent)
 				return

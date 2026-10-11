@@ -353,12 +353,27 @@ func (c *samlClient) markUsed(id string, until time.Time) error {
 // 10 minutes. Being sent cross-site does not expose anything new: it is a random value that
 // is useless without a response from the provider that names the matching request ID.
 func (s *Server) setSAMLCookie(w http.ResponseWriter, value string, maxAge int) {
-	secure := s.saml.secureCookie || s.cfg.CookieSecure
-	sameSite := http.SameSiteLaxMode
+	secure := s.samlCookieSecure()
+	sameSite, name, path := http.SameSiteLaxMode, samlRequestCookie, samlCookiePath
 	if secure {
-		sameSite = http.SameSiteNoneMode
+		// __Host- stops a sibling host planting its own value (with a more specific Path)
+		// and then replaying its own IdP response here; it requires Secure and Path=/.
+		sameSite, name, path = http.SameSiteNoneMode, "__Host-"+samlRequestCookie, "/"
 	}
-	s.setCookieAttrs(w, samlRequestCookie, samlCookiePath, value, maxAge, secure, sameSite)
+	s.setCookieAttrs(w, name, path, value, maxAge, secure, sameSite)
+}
+
+// samlCookieSecure reports whether the request-tracking cookie is set with Secure (and
+// therefore under its __Host- name).
+func (s *Server) samlCookieSecure() bool {
+	return s.saml.secureCookie || s.cfg.CookieSecure
+}
+
+func (s *Server) samlCookieName() string {
+	if s.samlCookieSecure() {
+		return "__Host-" + samlRequestCookie
+	}
+	return samlRequestCookie
 }
 
 // handleSAMLLogin sends the browser to the IdP with a (possibly signed) AuthnRequest. An
@@ -401,7 +416,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// Without the cookie this response cannot belong to a login this browser started. This
 	// also refuses IdP-initiated and unsolicited responses before any XML is parsed.
-	cookie, err := r.Cookie(samlRequestCookie)
+	cookie, err := r.Cookie(s.samlCookieName())
 	if err != nil || cookie.Value == "" {
 		writeError(w, http.StatusBadRequest, errSAMLState.Error())
 		return

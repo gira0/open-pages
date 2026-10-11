@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -204,6 +205,24 @@ func TestSAMLACSAcceptsCrossSitePost(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.Header.Set("Origin", "https://idp.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	expectStatus(t, resp.StatusCode, http.StatusBadRequest)
+}
+
+func TestSAMLIgnoresUnprefixedCookieWhenSecure(t *testing.T) {
+	idp := newFakeSAMLIdP(t)
+	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.CookieSecure = true })
+	// A response for a login this browser started, with the cookie value planted under the
+	// plain name (as a sibling host could), is not accepted: only __Host-saml_request counts.
+	loc := ts.start(t, browser(t), "")
+	req, _ := http.NewRequest(http.MethodPost, ts.ts.URL+"/v1/auth/saml/acs",
+		strings.NewReader("SAMLResponse="+url.QueryEscape(idp.respond(t, loc))))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: samlRequestCookie, Value: "planted"})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

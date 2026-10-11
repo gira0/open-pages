@@ -24,7 +24,7 @@ info:
       (`Sec-Fetch-Site` other than `same-origin` or `none`, or an `Origin` that does not
       match `Host`) is answered `403 {"error": "cross-origin request rejected"}` before the
       route runs (the `CrossOrigin` response). Origins in `cors_origins` and the SAML ACS
-      are exempt; requests without these headers (curl, CI, API tokens) are not affected.
+      are exempt; requests without these headers (curl, CI, scripts sending a Bearer token) are not affected.
       Routes with a JSON body also answer `415` unless the request is `Content-Type:
       application/json`.
     - Some routes exist only when configured (marked "optional"): `/metrics` needs
@@ -425,7 +425,8 @@ paths:
           description: |
             Redirect to the identity provider with an AuthnRequest (HTTP-Redirect binding).
             Sets the short-lived `saml_request` cookie (`Path=/v1/auth/saml`, 10 minutes,
-            `SameSite=None; Secure` over https, `SameSite=Lax` over plain http).
+            `SameSite=None; Secure` over https, `SameSite=Lax` over plain http). Over https the cookie
+            is named `__Host-saml_request` with `Path=/`.
           headers:
             Location:
               schema:

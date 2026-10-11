@@ -37,7 +37,9 @@ token stored in the `session` table with an expiry 7 days ahead, sent to the bro
 - With `cookie_secure = false` (plain HTTP) the name stays `auth_cookie` and the server logs
   a warning at startup: the cookie is not protected against sibling hosts. Sessions are
   not carried over when you change the setting; users sign in again.
-- State-changing requests from a browser must be same-origin; see "Cross-origin
+- State-changing requests from a browser must be same-origin. A reverse proxy must pass the
+  `Host` header through unchanged, because the fallback check for browsers without
+  `Sec-Fetch-Site` compares `Origin` with `Host`; see "Cross-origin
   protection" in [api.md](api.md).
 - Sessions do not slide: the expiry is fixed at login. Expired rows are deleted at the next
   login by anyone; until then they are ignored but remain in the table.
@@ -236,7 +238,9 @@ to the client and turn on "Sign assertions".
 3. It finds or creates the local user, maps groups, and starts the same 7-day session as a
    local login. The response is a `303` to `return_to`, or `200 {"status":"successful login"}`.
 
-The `saml_request` cookie is `HttpOnly`, `Path=/v1/auth/saml`, 10 minutes. Because the IdP
+The `saml_request` cookie is `HttpOnly`, `Path=/v1/auth/saml`, 10 minutes. Over https it is named
+`__Host-saml_request` with `Path=/`, so a sibling host cannot plant its own value and then post
+its own IdP response to the ACS (login CSRF). Because the IdP
 delivers the response with a cross-site POST, a `SameSite=Lax` cookie (as `oidc_state` is)
 would not be sent back. Over https (an `https` `acs_url`, or `cookie_secure = true`) the cookie
 is therefore `SameSite=None; Secure`. Over plain http it falls back to `Lax`, which works only
