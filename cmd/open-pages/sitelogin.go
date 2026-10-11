@@ -226,9 +226,6 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
 	states := r.CookiesNamed(s.cookieName(siteStateCookie))
-	if len(states) > 0 {
-		s.setCookie(w, siteStateCookie, "/", "", -1) // one attempt per nonce
-	}
 	var (
 		codeSite, stateHash, returnTo string
 		uid, sid, expires             int64
@@ -246,9 +243,16 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 		return
 	}
 	now := time.Now()
-	if expires <= now.Unix() || codeSite != site || !slices.ContainsFunc(states, func(c *http.Cookie) bool {
+	if !slices.ContainsFunc(states, func(c *http.Cookie) bool {
 		return subtle.ConstantTimeCompare([]byte(hashToken(c.Value)), []byte(stateHash)) == 1
 	}) {
+		// Not this browser's login (a stale or foreign code). The state cookie stays, so it
+		// can't cancel a handoff that is still in progress, for example in another tab.
+		notFoundNoStore(w, r)
+		return
+	}
+	s.setCookie(w, siteStateCookie, "/", "", -1) // one attempt per nonce
+	if expires <= now.Unix() || codeSite != site {
 		notFoundNoStore(w, r)
 		return
 	}

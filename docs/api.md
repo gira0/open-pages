@@ -253,8 +253,8 @@ single `/`, at most 2048 bytes; anything else becomes `/`).
 | 400 | `{"error":"invalid state"}` |
 | 404 | Plain text: invalid or unknown site, or the user may not view it (indistinguishable) |
 
-Every response is `Cache-Control: no-store`. Logging out deletes the site cookies issued from
-that session.
+Every response is `Cache-Control: no-store`. Logging out invalidates the site sessions issued from
+that session: the browser keeps the cookies until they expire, but they no longer work.
 
 ### GET /v1/auth/user
 

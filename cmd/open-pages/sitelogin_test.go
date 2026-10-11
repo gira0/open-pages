@@ -692,3 +692,24 @@ func TestSiteLoginNoStoreEverywhere(t *testing.T) {
 		}
 	}
 }
+
+// A stale code arriving first (two tabs logging in to the same site) fails without cancelling
+// the handoff whose state cookie the browser now holds.
+func TestSiteLoginStaleHandoffKeepsStateCookie(t *testing.T) {
+	e := newLoginEnv(t, false)
+	codeA, _ := e.handoff(t, e.member, "secret")
+	codeB, stB := e.handoff(t, e.member, "secret") // the browser's cookie is now B's
+
+	w := e.redeem("secret", codeA, stB)
+	expectStatus(t, w.Code, http.StatusNotFound)
+	if c := cookieNamed(w, siteStateCookie); c != nil {
+		t.Errorf("a failed redeem touched the state cookie: %v", c)
+	}
+	w = e.redeem("secret", codeB, stB)
+	if cookieNamed(w, e.s.cookieName(siteSessionCookie)) == nil {
+		t.Errorf("the newer handoff was cancelled: status %d", w.Code)
+	}
+	if c := cookieNamed(w, siteStateCookie); c == nil || c.MaxAge >= 0 {
+		t.Errorf("state cookie not cleared after a matched redeem: %v", c)
+	}
+}
