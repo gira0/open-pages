@@ -46,6 +46,9 @@ func run(configPath string) error {
 		return err
 	}
 	defer srv.db.Close()
+	if !cfg.CookieSecure {
+		slog.Warn("cookie_secure is false: the session cookie is sent without the Secure flag and without the __Host- prefix, so pages on sibling hosts can overwrite it; set cookie_secure = true when serving over HTTPS")
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

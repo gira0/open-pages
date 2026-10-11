@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -107,6 +108,9 @@ func Load(path string) (Config, error) {
 	if origins := server.Key("cors_origins").String(); origins != "" {
 		for _, o := range strings.Split(origins, ",") {
 			if o = strings.TrimSpace(o); o != "" {
+				if err := http.NewCrossOriginProtection().AddTrustedOrigin(o); err != nil {
+					return cfg, fmt.Errorf("cors_origins entry %q: %w", o, err)
+				}
 				cfg.CORSOrigins = append(cfg.CORSOrigins, o)
 			}
 		}

@@ -369,7 +369,7 @@ func oidcUnavailable(w http.ResponseWriter, msg string) {
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	q := r.URL.Query()
-	cookie, err := r.Cookie(oidcStateCookie)
+	cookie, err := r.Cookie(s.cookieName(oidcStateCookie))
 	state := q.Get("state")
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
 		writeError(w, http.StatusBadRequest, errOIDCState.Error())

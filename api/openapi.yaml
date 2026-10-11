@@ -20,6 +20,13 @@ info:
       listed separately.
     - A request with an `Authorization: Bearer` header is judged on the token alone and
       never falls back to the session cookie. A rejected session cookie is cleared.
+    - Cross-origin protection: any POST, PUT or DELETE sent by a browser from another origin
+      (`Sec-Fetch-Site` other than `same-origin` or `none`, or an `Origin` that does not
+      match `Host`) is answered `403 {"error": "cross-origin request rejected"}` before the
+      route runs (the `CrossOrigin` response). Origins in `cors_origins` and the SAML ACS
+      are exempt; requests without these headers (curl, CI, API tokens) are not affected.
+      Routes with a JSON body also answer `415` unless the request is `Content-Type:
+      application/json`.
     - Some routes exist only when configured (marked "optional"): `/metrics` needs
       `[metrics] token`, register and login need `[auth] local_login`, the OIDC routes
       need `[oidc] enabled` and the SAML routes need `[saml] enabled`. An unregistered route answers like any unknown path.
@@ -616,6 +623,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -726,6 +735,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -831,6 +842,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -949,6 +962,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1038,6 +1053,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/SiteNotFound"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
@@ -1142,6 +1159,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1234,7 +1253,9 @@ components:
       type: apiKey
       in: cookie
       name: auth_cookie
-      description: Session cookie from local login, OIDC or SAML sign-in, valid 7 days.
+      description: >-
+        Session cookie from local login, OIDC or SAML sign-in, valid 7 days. With
+        `cookie_secure = true` it is named `__Host-auth_cookie` instead.
     bearerAuth:
       type: http
       scheme: bearer
@@ -1312,6 +1333,22 @@ components:
           description: Expires `auth_cookie`, sent only when the request carried a rejected session cookie.
           schema:
             type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    CrossOrigin:
+      description: >-
+        `cross-origin request rejected`: a browser sent an unsafe request from another origin
+        (`Sec-Fetch-Site` is not `same-origin` or `none`, or `Origin` does not match `Host`).
+        Origins in `cors_origins` are exempt. Requests with neither header, such as curl and
+        CI, are not affected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: "`Content-Type must be application/json`."
       content:
         application/json:
           schema:

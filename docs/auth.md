@@ -28,8 +28,17 @@ There is no API to delete users, change a password, or change an email.
 token stored in the `session` table with an expiry 7 days ahead, sent to the browser as the
 `auth_cookie` cookie.
 
-- The cookie is `HttpOnly`, `SameSite=Lax`, `Path=/`. It has the `Secure` flag only when
-  `[server] cookie_secure = true`; set that whenever the service is reached over HTTPS.
+- The cookie is `HttpOnly`, `SameSite=Lax`, `Path=/`. With `[server] cookie_secure = true`
+  it has the `Secure` flag and is named `__Host-auth_cookie` (the OIDC state cookie becomes
+  `__Host-oidc_state` with `Path=/`). Browsers refuse to let any other host set or overwrite a
+  `__Host-` cookie, which stops a page on a sibling host (`evil.corp.example`) from planting
+  its own session cookie in your browser ("cookie tossing"). Set `cookie_secure = true`
+  whenever the service is reached over HTTPS.
+- With `cookie_secure = false` (plain HTTP) the name stays `auth_cookie` and the server logs
+  a warning at startup: the cookie is not protected against sibling hosts. Sessions are
+  not carried over when you change the setting; users sign in again.
+- State-changing requests from a browser must be same-origin; see "Cross-origin
+  protection" in [api.md](api.md).
 - Sessions do not slide: the expiry is fixed at login. Expired rows are deleted at the next
   login by anyone; until then they are ignored but remain in the table.
 - `POST /v1/auth/logout` deletes the session and clears the cookie. A request that arrives
@@ -108,7 +117,7 @@ registration's token configuration.
 ### The flow
 
 1. A browser opens `GET /v1/auth/oidc/login` (optionally with `?return_to=/some/path`). The
-   server stores a pending attempt, sets the `oidc_state` cookie and redirects to the
+   server stores a pending attempt, sets the `oidc_state` cookie (`__Host-oidc_state` with `cookie_secure`) and redirects to the
    provider using the authorization code flow with PKCE (S256), `state` and `nonce`.
    Attempts expire after 10 minutes; at most 10000 are kept in memory.
 2. The provider redirects back to `/v1/auth/oidc/callback`. The server checks that the
