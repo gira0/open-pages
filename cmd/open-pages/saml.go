@@ -76,7 +76,7 @@ type samlClient struct {
 	secureCookie bool
 
 	fetchMu   sync.Mutex // guards sp and fetched; held while talking to the provider
-	sp        *saml2.SAMLServiceProvider
+	sp        *samlProviders
 	fetched   time.Time
 	retryFrom time.Time // after a failed refresh, no new attempt before this
 
@@ -169,7 +169,7 @@ func (c *samlClient) readMetadata(ctx context.Context) ([]byte, error) {
 // fetching it on first use (so the server starts while the IdP is down) and refreshing it
 // every samlMetadataTTL to pick up certificate rotation. A failed refresh keeps the old
 // metadata.
-func (c *samlClient) provider(ctx context.Context) (*saml2.SAMLServiceProvider, error) {
+func (c *samlClient) provider(ctx context.Context) (*samlProviders, error) {
 	c.fetchMu.Lock()
 	defer c.fetchMu.Unlock()
 	now := time.Now()
@@ -195,7 +195,7 @@ func (c *samlClient) provider(ctx context.Context) (*saml2.SAMLServiceProvider, 
 	return sp, nil
 }
 
-func (c *samlClient) loadProvider(ctx context.Context) (*saml2.SAMLServiceProvider, error) {
+func (c *samlClient) loadProvider(ctx context.Context) (*samlProviders, error) {
 	raw, err := c.readMetadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: %w", err)
@@ -238,31 +238,42 @@ func (c *samlClient) loadProvider(ctx context.Context) (*saml2.SAMLServiceProvid
 		return nil, errors.New("metadata: no signing certificate")
 	}
 
-	sp := &saml2.SAMLServiceProvider{
-		IdentityProviderSSOURL:      ssoURL,
-		IdentityProviderSSOBinding:  saml2.BindingHttpRedirect,
-		IdentityProviderIssuer:      md.EntityID,
-		ServiceProviderIssuer:       c.cfg.EntityID,
-		AudienceURI:                 c.cfg.EntityID,
-		AssertionConsumerServiceURL: c.cfg.ACSURL,
-		IDPCertificateStore:         &dsig.MemoryX509CertificateStore{Roots: roots},
-		// gosaml2 checks SubjectConfirmationData/@NotOnOrAfter against this clock with no skew
-		// of its own, so it runs samlClockSkew behind. That also loosens the certificate
-		// validity check by the same minute; the Conditions times are checked in accept.
-		Clock: dsig.NewFakeClock(skewedClock{Clock: clockwork.NewRealClock(), skew: samlClockSkew}),
-		// Groups are optional, and the checks on the assertion are made in accept.
-		AllowMissingAttributes: true,
+	newSP := func() *saml2.SAMLServiceProvider {
+		return &saml2.SAMLServiceProvider{
+			IdentityProviderSSOURL:      ssoURL,
+			IdentityProviderSSOBinding:  saml2.BindingHttpRedirect,
+			IdentityProviderIssuer:      md.EntityID,
+			ServiceProviderIssuer:       c.cfg.EntityID,
+			AudienceURI:                 c.cfg.EntityID,
+			AssertionConsumerServiceURL: c.cfg.ACSURL,
+			IDPCertificateStore:         &dsig.MemoryX509CertificateStore{Roots: roots},
+			// Groups are optional, and the checks on the assertion are made in accept.
+			AllowMissingAttributes: true,
+		}
 	}
+	// Requests and metadata use the real clock (AuthnRequest/@IssueInstant comes from it).
+	request := newSP()
 	if c.signer != nil {
-		// Only the signing key is set, never the encryption key: with no decryption key an
-		// EncryptedAssertion is refused rather than read.
-		if err := sp.SetSPSigningKeyStore(c.signer); err != nil {
+		if err := request.SetSPSigningKeyStore(c.signer); err != nil {
 			return nil, err
 		}
-		sp.SignAuthnRequests = true
-		sp.SignAuthnRequestsAlgorithm = dsig.RSASHA256SignatureMethod
+		request.SignAuthnRequests = true
+		request.SignAuthnRequestsAlgorithm = dsig.RSASHA256SignatureMethod
 	}
-	return sp, nil
+	// Responses are validated by a second provider whose clock runs samlClockSkew behind:
+	// gosaml2 checks SubjectConfirmationData/@NotOnOrAfter against it with no skew of its own.
+	// The same clock is used for the signing certificate's validity, which is shifted by that
+	// minute too; the Conditions times are checked in accept. It never has a key, so an
+	// EncryptedAssertion is refused rather than read.
+	response := newSP()
+	response.Clock = dsig.NewFakeClock(skewedClock{Clock: clockwork.NewRealClock(), skew: samlClockSkew})
+	return &samlProviders{request: request, response: response}, nil
+}
+
+// samlProviders are the service provider configurations built from one metadata fetch.
+type samlProviders struct {
+	request  *saml2.SAMLServiceProvider // builds AuthnRequests; real clock
+	response *saml2.SAMLServiceProvider // validates responses; clock samlClockSkew behind
 }
 
 // begin records a login attempt for the AuthnRequest id and returns the cookie value that
@@ -363,13 +374,13 @@ func (s *Server) handleSAMLLogin(w http.ResponseWriter, r *http.Request) {
 		oidcUnavailable(w, "saml metadata")
 		return
 	}
-	doc, err := sp.BuildAuthRequestDocumentNoSig() // the redirect binding signs the query instead
+	doc, err := sp.request.BuildAuthRequestDocumentNoSig() // the redirect binding signs the query instead
 	if err != nil || doc.Root() == nil {
 		internalError(w, "saml authn request", errors.New("build failed"))
 		return
 	}
 	reqID := doc.Root().SelectAttrValue("ID", "")
-	redirect, err := sp.BuildAuthURLRedirect("", doc)
+	redirect, err := sp.request.BuildAuthURLRedirect("", doc)
 	if reqID == "" || err != nil {
 		internalError(w, "saml authn request", errors.New("build failed"))
 		return
@@ -410,7 +421,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		oidcUnavailable(w, "saml metadata")
 		return
 	}
-	res, err := s.saml.accept(sp, encoded, cookie.Value)
+	res, err := s.saml.accept(sp.response, encoded, cookie.Value)
 	if err != nil {
 		if errors.Is(err, errSAMLState) {
 			writeError(w, http.StatusBadRequest, errSAMLState.Error())

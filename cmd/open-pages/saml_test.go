@@ -85,7 +85,7 @@ type fakeSAMLIdP struct {
 	metaCode int // status served for the metadata, 200 by default
 }
 
-type sentRequest struct{ id, acs, issuer, destination string }
+type sentRequest struct{ id, acs, issuer, destination, issueInstant string }
 
 func newTestCert(t *testing.T, key *rsa.PrivateKey, notAfter time.Time) []byte {
 	t.Helper()
@@ -199,9 +199,10 @@ func (p *fakeSAMLIdP) readRequest(t *testing.T, location string) (sentRequest, u
 	}
 	root := doc.Root()
 	req := sentRequest{
-		id:          root.SelectAttrValue("ID", ""),
-		acs:         root.SelectAttrValue("AssertionConsumerServiceURL", ""),
-		destination: root.SelectAttrValue("Destination", ""),
+		id:           root.SelectAttrValue("ID", ""),
+		acs:          root.SelectAttrValue("AssertionConsumerServiceURL", ""),
+		destination:  root.SelectAttrValue("Destination", ""),
+		issueInstant: root.SelectAttrValue("IssueInstant", ""),
 	}
 	if iss := root.SelectElement("Issuer"); iss != nil {
 		req.issuer = iss.Text()
@@ -590,6 +591,20 @@ func TestSAMLClockSkewOnExpiry(t *testing.T) {
 	// Two minutes behind is too much.
 	idp.update(func(s *samlSettings) { s.notBefore, s.notOnOrAfter = -5*time.Minute, -2*time.Minute })
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
+}
+
+func TestSAMLAuthnRequestIssueInstant(t *testing.T) {
+	// The skewed clock is only for validating responses; requests carry the real time.
+	idp := newFakeSAMLIdP(t)
+	ts := newSAMLTestServer(t, idp, nil)
+	req, _ := idp.readRequest(t, ts.start(t, browser(t), ""))
+	at, err := time.Parse(time.RFC3339, req.issueInstant)
+	if err != nil {
+		t.Fatalf("IssueInstant %q: %v", req.issueInstant, err)
+	}
+	if d := time.Since(at); d < -5*time.Second || d > 5*time.Second {
+		t.Fatalf("IssueInstant is %v off the current time", d)
+	}
 }
 
 func TestSAMLUnsolicitedResponses(t *testing.T) {
