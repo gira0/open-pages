@@ -14,6 +14,12 @@ SQLite's default (rollback journal); the code does not enable WAL.
 ```mermaid
 erDiagram
     user ||--o{ session : "has"
+    user ||--o{ site_session : "signed in as"
+    user ||--o{ site_login_code : "issued to"
+    session ||--o{ site_session : "backs"
+    session ||--o{ site_login_code : "issued in"
+    docs ||--o{ site_session : "valid for"
+    docs ||--o{ site_login_code : "issued for"
     user ||--o{ api_token : "has"
     user ||--o{ groups : "owns (owner)"
     user ||--o{ docs : "owns (uowner)"
@@ -26,6 +32,12 @@ As plain text:
 
 ```text
 user 1---* session        (session.userid)
+user 1---* site_session   (site_session.userid)
+user 1---* site_login_code (site_login_code.userid)
+session 1---* site_session     (site_session.sessionid, ON DELETE CASCADE)
+session 1---* site_login_code  (site_login_code.sessionid, ON DELETE CASCADE)
+docs 1---* site_session        (site_session.siteid, ON DELETE CASCADE)
+docs 1---* site_login_code     (site_login_code.siteid, ON DELETE CASCADE)
 user 1---* api_token      (api_token.userid)
 user 1---* groups         (groups.owner, nullable)
 user 1---* docs           (docs.uowner, nullable)
@@ -34,7 +46,8 @@ groups 1---* docs         (docs.ugroup, nullable)
 ```
 
 "docs" is the table of sites: one row per site. `user_group` is the many-to-many link
-between users and groups. No foreign key has an `ON DELETE` action, so SQLite refuses to
+between users and groups. Apart from the four cascading keys above (`site_session` and `site_login_code`, to
+`session` and to `docs`), no foreign key has an `ON DELETE` action, so SQLite refuses to
 delete a referenced row (the default `NO ACTION`); the application deletes memberships
 before groups and never deletes users.
 
@@ -78,6 +91,45 @@ Login sessions, one row per live cookie.
 | `expires` | BIGINT | NOT NULL | Unix time. Set to login time plus 7 days |
 
 Expired rows are ignored when reading and deleted whenever someone logs in.
+
+### site_login_code
+
+One-time codes of the browser login for non-public sites (see
+[auth.md](auth.md#signing-in-to-a-site)).
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `codeid` | INTEGER | PRIMARY KEY | |
+| `hash` | CHAR(64) | NOT NULL, UNIQUE | Hex SHA-256 of the 64 character code. The code itself is never stored |
+| `site` | VARCHAR(256) | NOT NULL | The site it can be redeemed on |
+| `userid` | INTEGER | NOT NULL, FK `user(userid)` | |
+| `siteid` | INTEGER | NOT NULL, FK `docs(docid)` ON DELETE CASCADE | The site it was issued for; deleting the site deletes the code |
+| `sessionid` | INTEGER | NOT NULL, FK `session(sessionid)` ON DELETE CASCADE | The app session it was issued for |
+| `state_hash` | CHAR(64) | NOT NULL | Hex SHA-256 of the login nonce that must match the browser's state cookie |
+| `return_to` | TEXT | NOT NULL | Validated path to redirect to afterwards |
+| `expires` | BIGINT | NOT NULL | Unix time; 60 seconds after issue |
+
+Indexes `site_login_code_session` on `(sessionid)`, `site_login_code_site` on `(siteid)` and `site_login_code_expires` on `(expires)`.
+
+Deleted when redeemed (whatever the outcome); expired rows are deleted whenever a code is
+issued. Also deleted when the site is deleted or the session ends.
+
+### site_session
+
+Per-site browser sessions made by redeeming a login code.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `sitesessionid` | INTEGER | PRIMARY KEY | |
+| `hash` | CHAR(64) | NOT NULL, UNIQUE | Hex SHA-256 of the cookie value (`site_session`, or `__Host-site_session` with `cookie_secure`), a random token unrelated to `session.token` |
+| `site` | VARCHAR(256) | NOT NULL | The one site the cookie is valid for |
+| `userid` | INTEGER | NOT NULL, FK `user(userid)` | |
+| `siteid` | INTEGER | NOT NULL, FK `docs(docid)` ON DELETE CASCADE | The site it is valid for; a site recreated under the same name has a new id, so old cookies stop working |
+| `sessionid` | INTEGER | NOT NULL, FK `session(sessionid)` ON DELETE CASCADE | The app session it came from; logout deletes these rows |
+| `expires` | BIGINT | NOT NULL | Unix time: at most 1 hour after redeeming, never later than the app session's expiry |
+
+Indexes `site_session_session` on `(sessionid)`, `site_session_site` on `(siteid)` and `site_session_expires` on `(expires)`. Expired rows are ignored when reading and
+deleted whenever a login code is issued, and when the site is deleted.
 
 ### api_token
 

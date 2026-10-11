@@ -655,7 +655,7 @@ func TestIndexShowsEnabledSignInMethods(t *testing.T) {
 			if got := strings.Contains(body, `action="/v1/user/login"`); got != tc.local {
 				t.Errorf("local form shown = %v, want %v", got, tc.local)
 			}
-			if !strings.Contains(body, `href="/v1/auth/oidc/login"`) {
+			if !strings.Contains(body, `href="/v1/auth/oidc/login?return_to=/index"`) {
 				t.Error("OIDC sign-in link missing")
 			}
 		})

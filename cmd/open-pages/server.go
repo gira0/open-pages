@@ -70,6 +70,7 @@ func (s *Server) routeTable() []route {
 		handleFunc("GET /v1/auth/saml/metadata", s.handleSAMLMetadata)
 	}
 
+	handleFunc("GET /v1/auth/site-login", s.handleSiteLogin)
 	handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
 	handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))
 	// Token management needs a real session: an API token can't mint or revoke tokens.

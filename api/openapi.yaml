@@ -31,7 +31,12 @@ info:
       `[metrics] token`, register and login need `[auth] local_login`, the OIDC routes
       need `[oidc] enabled` and the SAML routes need `[saml] enabled`. An unregistered route answers like any unknown path.
     - Deployed sites are served outside this API, on their own hosts
-      `<site>.<content_domain>/...` over GET and HEAD, never on the API host. Every route
+      `<site>.<content_domain>/...` over GET and HEAD, never on the API host. A browser
+      opens a non-public site through `GET /v1/auth/site-login`; the site host's own
+      `GET /__open-pages/auth?code=...` (the path prefix `/__open-pages/` is reserved on site hosts)
+      redeems the one-time code and sets the per-site cookie `site_session`
+      (`__Host-site_session` with `cookie_secure`), `HttpOnly`, `SameSite=Lax`, valid 1 hour.
+      It is not part of the API and is described in `docs/auth.md`. Every route
       in this document is served on `app_host` only; a request for any other host is a
       404, except `GET /healthz`, which answers on any host that is not a site host.
 servers:
@@ -291,6 +296,63 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           $ref: "#/components/responses/CrossOrigin"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/site-login:
+    get:
+      tags: [accounts]
+      operationId: siteLogin
+      summary: Sign in to a non-public site
+      description: |
+        Step two of the browser login for sites that are not public. A site host sends a
+        browser here when it has no valid site cookie. If the browser has a session and may
+        view the site, it is redirected to `<site>.<content_domain>/__open-pages/auth?code=...`
+        (`https` with `cookie_secure`, the port of this request kept) with a one-time code
+        (64 hex characters, valid 60 seconds, stored hashed, bound to the site, the user,
+        `return` and `state`). Without a session it is redirected to
+        `/index?next=<this request>` and the UI continues here after sign-in. Every response
+        is `Cache-Control: no-store`; the redirect to the site also has
+        `Referrer-Policy: no-referrer`.
+      security: []
+      parameters:
+        - name: site
+          in: query
+          required: true
+          description: A site name.
+          schema:
+            type: string
+        - name: return
+          in: query
+          description: |
+            Where to land on the site afterwards: a path starting with a single `/`, at
+            most 2048 bytes, no backslash or control characters, not under `/__open-pages/`.
+            Anything else becomes `/`.
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          description: The nonce (64 lowercase hex characters) the site host also put in its short-lived state cookie. Redeeming the code needs that cookie.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the site host with a code, or to `/index` to sign in first.
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          description: "`invalid state`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: |
+            Plain text. The site name is invalid or no such site exists, or the signed-in user
+            may not view it; the three look the same.
         "500":
           $ref: "#/components/responses/InternalError"
 

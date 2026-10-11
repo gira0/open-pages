@@ -93,7 +93,50 @@
     });
   }
 
+  // Sign-in for non-public sites: a site sends the browser to /index?next=/v1/auth/site-login?...
+  // and expects to be sent back there after signing in. Only that one relative path is ever
+  // followed. Single sign-on leaves the page, so next is kept in sessionStorage meanwhile.
+  var nextKey = 'open-pages-next';
+  var nextPrefix = '/v1/auth/site-login?';
+  function safeNext(v) {
+    return typeof v === 'string' && v.indexOf(nextPrefix) === 0 && !/[\\\u0000-\u001f\u007f]/.test(v) ? v : null;
+  }
+  function takeNext() {
+    var next = safeNext(new URLSearchParams(location.search).get('next'));
+    try {
+      if (next) { sessionStorage.setItem(nextKey, JSON.stringify({next: next, at: Date.now()})); }
+      var saved = JSON.parse(sessionStorage.getItem(nextKey) || 'null');
+      next = saved && Date.now() - saved.at < 600000 ? safeNext(saved.next) : null;
+    } catch (e) { /* storage blocked */ }
+    return next;
+  }
+  function goNext(next) {
+    try { sessionStorage.removeItem(nextKey); } catch (e) { /* storage blocked */ }
+    if (next) { location.assign(next); } else { location.reload(); }
+  }
+  function setupLogin() {
+    if (!document.getElementById('sign-in')) { return; } // only the index page
+    var form = document.getElementById('login-form');
+    var next = takeNext();
+    if (next && !new URLSearchParams(location.search).has('next')) {
+      // Back from single sign-on: continue if the sign-in worked.
+      fetch('/v1/auth/user').then(function (r) { if (r.ok) { goNext(next); } });
+    }
+    if (!form) { return; }
+    var result = document.getElementById('login-result');
+    form.addEventListener('submit', async function (evt) {
+      evt.preventDefault();
+      var resp = await fetch(form.action, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: form.elements.email.value, password: form.elements.password.value})
+      });
+      if (resp.ok) { goNext(next); } else { result.textContent = 'sign-in failed: ' + await resp.text(); }
+    });
+  }
+
   setupTheme();
   setupNav();
+  setupLogin();
   setupUpload();
 })();

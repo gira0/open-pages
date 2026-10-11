@@ -37,25 +37,30 @@ func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// fetchSite sends a GET for path of site to the test server on the site's content host.
-// The client's cookies for the app are sent along. A browser would not do that (the
-// session cookie is host-only), so this checks what the server does with such a request,
-// and the bearer token is the way a browser-less client really gets in.
-func fetchSite(t *testing.T, c *http.Client, w *accessWorld, site, path, bearer string) (int, string, http.Header) {
+// siteResp is a response from a content host, with its Set-Cookie cookies.
+type siteResp struct {
+	status  int
+	body    string
+	header  http.Header
+	cookies []*http.Cookie
+}
+
+// siteGet sends one GET to the test server with the Host of site, without following redirects.
+// target is a path and query. It reaches the app host when site is "".
+func siteGet(t *testing.T, w *accessWorld, site, target, bearer string, cookies []*http.Cookie) siteResp {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, w.ts.URL+path, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, w.ts.URL+target, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Host = siteHost(site)
+	if site != "" {
+		req.Host = siteHost(site)
+	}
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	if c.Jar != nil {
-		appURL, _ := url.Parse(w.ts.URL)
-		for _, ck := range c.Jar.Cookies(appURL) {
-			req.AddCookie(ck)
-		}
+	for _, ck := range cookies {
+		req.AddCookie(ck)
 	}
 	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
@@ -66,7 +71,61 @@ func fetchSite(t *testing.T, c *http.Client, w *accessWorld, site, path, bearer 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode, string(b), resp.Header
+	return siteResp{resp.StatusCode, string(b), resp.Header, resp.Cookies()}
+}
+
+// browseSite plays what a browser does for GET path of site, with the cookies c holds for
+// the app: the site redirects to the app host, which redirects back with a code, which the
+// site redeems for its own cookie before the page is requested. The first answer that is not
+// a redirect to the next step is returned, so a visitor who may not sign in sees the app
+// host's 404, and one with no session cookie (or no jar) the first redirect.
+func browseSite(t *testing.T, c *http.Client, w *accessWorld, site, path string) siteResp {
+	t.Helper()
+	first := siteGet(t, w, site, path, "", nil)
+	if c.Jar == nil || first.status != http.StatusFound {
+		return first
+	}
+	appURL, _ := url.Parse(w.ts.URL)
+	toApp := mustLocation(t, first)
+	if toApp.Path != siteLoginPath {
+		t.Fatalf("redirect to %q, want the app host's %s", toApp, siteLoginPath)
+	}
+	back := siteGet(t, w, "", toApp.RequestURI(), "", c.Jar.Cookies(appURL))
+	if back.status != http.StatusFound {
+		return back
+	}
+	toSite := mustLocation(t, back)
+	if toSite.Hostname() != siteHost(site) || toSite.Path != siteRedeemPath {
+		t.Fatalf("redirect back to %q", toSite)
+	}
+	redeemed := siteGet(t, w, site, toSite.RequestURI(), "", first.cookies)
+	if redeemed.status != http.StatusFound {
+		return redeemed
+	}
+	return siteGet(t, w, site, path, "", redeemed.cookies)
+}
+
+func mustLocation(t *testing.T, r siteResp) *url.URL {
+	t.Helper()
+	u, err := url.Parse(r.header.Get("Location"))
+	if err != nil || r.header.Get("Location") == "" {
+		t.Fatalf("bad Location %q", r.header.Get("Location"))
+	}
+	return u
+}
+
+// fetchSite sends a GET for path of site to the test server on the site's content host. A
+// bearer token is sent as is; otherwise a client with a cookie jar signs in through the
+// browser handoff (see browseSite) and an anonymous one gets the first redirect.
+func fetchSite(t *testing.T, c *http.Client, w *accessWorld, site, path, bearer string) (int, string, http.Header) {
+	t.Helper()
+	var r siteResp
+	if bearer != "" {
+		r = siteGet(t, w, site, path, bearer, nil)
+	} else {
+		r = browseSite(t, c, w, site, path)
+	}
+	return r.status, r.body, r.header
 }
 
 // accessWorld is a server with three users, a group holding the owner and the member, a
@@ -117,7 +176,6 @@ func TestRestrictedSiteServing(t *testing.T) {
 	w := newAccessWorld(t)
 	site := "secret"
 
-	_, missing, _ := fetchSite(t, w.anon, w, "nonexistent", "/", "")
 	cases := []struct {
 		name   string
 		client *http.Client
@@ -129,7 +187,8 @@ func TestRestrictedSiteServing(t *testing.T) {
 		{"group member token", w.anon, w.memberTok, http.StatusOK},
 		{"non-member session", w.outsider, "", http.StatusNotFound},
 		{"non-member token", w.anon, w.outsiderTok, http.StatusNotFound},
-		{"anonymous", w.anon, "", http.StatusNotFound},
+		// A browser without credentials is sent to sign in; it is never served.
+		{"anonymous", w.anon, "", http.StatusFound},
 		{"bogus token", w.anon, "opt_nope", http.StatusNotFound},
 		// A bearer header never falls back to the cookie, even a valid one.
 		{"bogus token with valid cookie", w.member, "opt_nope", http.StatusNotFound},
@@ -149,12 +208,13 @@ func TestRestrictedSiteServing(t *testing.T) {
 				}
 				return
 			}
-			// A refusal looks exactly like a site that does not exist, and is not cacheable.
+			// A refusal looks exactly like a missing site to the same visitor, and is not cacheable.
 			if cc := h.Get("Cache-Control"); cc != "no-store" {
 				t.Errorf("refusal Cache-Control = %q, want no-store", cc)
 			}
-			if body != missing {
-				t.Errorf("refusal body %q differs from missing-site body %q", body, missing)
+			wantStatus, missing, _ := fetchSite(t, tc.client, w, "nonexistent", "/", tc.bearer)
+			if status != wantStatus || body != missing {
+				t.Errorf("refusal %d %q differs from missing-site %d %q", status, body, wantStatus, missing)
 			}
 		})
 	}
@@ -377,13 +437,9 @@ func TestRestrictedSiteOnContentHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Credentials: a session cookie or an API token per user.
+	// Credentials: a site cookie or an API token per user.
 	for email, id := range ids {
-		tok := "tok-" + email
-		exp := time.Now().Add(time.Hour).Unix()
-		if _, err := s.db.ExecContext(ctx, "INSERT INTO session (userid, token, expires) VALUES (?, ?, ?)", id, tok, exp); err != nil {
-			t.Fatal(err)
-		}
+		addSiteSession(t, s, id, "secret", "tok-"+email)
 		if _, err := s.db.ExecContext(ctx,
 			"INSERT INTO api_token (userid, name, prefix, hash, created) VALUES (?, 'ci', 'opt_', ?, ?)",
 			id, hashToken("opt_"+email), time.Now().Unix()); err != nil {
@@ -394,12 +450,14 @@ func TestRestrictedSiteOnContentHost(t *testing.T) {
 		who, header, value string
 		status             int
 	}{
-		{"owner cookie", "Cookie", sessionCookie + "=tok-owner@example.com", 200},
-		{"member cookie", "Cookie", sessionCookie + "=tok-member@example.com", 200},
+		{"owner cookie", "Cookie", siteSessionCookie + "=tok-owner@example.com", 200},
+		{"member cookie", "Cookie", siteSessionCookie + "=tok-member@example.com", 200},
 		{"member token", "Authorization", "Bearer opt_member@example.com", 200},
-		{"outsider cookie", "Cookie", sessionCookie + "=tok-outsider@example.com", 404},
+		{"outsider cookie", "Cookie", siteSessionCookie + "=tok-outsider@example.com", 404},
 		{"outsider token", "Authorization", "Bearer opt_outsider@example.com", 404},
-		{"anonymous", "X-Anything", "x", 404},
+		// The app session cookie means nothing on a content host.
+		{"app session cookie", "Cookie", sessionCookie + "=tok-owner@example.com", 302},
+		{"anonymous", "X-Anything", "x", 302},
 	} {
 		t.Run(tc.who, func(t *testing.T) {
 			if w := do(s, "GET", siteHost("secret"), "/", tc.header, tc.value); w.Code != tc.status {
@@ -408,8 +466,25 @@ func TestRestrictedSiteOnContentHost(t *testing.T) {
 		})
 	}
 	// HEAD is checked the same way.
-	if w := do(s, "HEAD", siteHost("secret"), "/"); w.Code != 404 {
+	if w := do(s, "HEAD", siteHost("secret"), "/"); w.Code != 302 {
 		t.Errorf("anonymous HEAD: %d", w.Code)
+	}
+}
+
+// addSiteSession gives uid an app session and a site session for site whose cookie value
+// is token.
+func addSiteSession(t *testing.T, s *Server, uid int64, site, token string) {
+	t.Helper()
+	exp := time.Now().Add(time.Hour).Unix()
+	res, err := s.db.ExecContext(t.Context(), "INSERT INTO session (userid, token, expires) VALUES (?, ?, ?)", uid, "app-"+token, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, _ := res.LastInsertId()
+	if _, err := s.db.ExecContext(t.Context(),
+		"INSERT INTO site_session (hash, site, siteid, userid, sessionid, expires) VALUES (?, ?, (SELECT docid FROM docs WHERE name = ?), ?, ?, ?)",
+		hashToken(token), site, site, uid, sid, exp); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -509,7 +584,6 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	expectStatus(t, post(t, w.owner, w.ts.URL+"/v1/auth/sites/members/upload", "application/zip",
 		zipArchive(t, map[string]string{"index.html": "members only"})), http.StatusOK)
 	site := "members"
-	_, missing, _ := fetchSite(t, w.anon, w, "nonexistent", "/", "")
 
 	for _, tc := range []struct {
 		name   string
@@ -521,7 +595,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 		{"member session", w.member, "", http.StatusOK},
 		{"outsider session, no group needed", w.outsider, "", http.StatusOK},
 		{"outsider token", w.anon, w.outsiderTok, http.StatusOK},
-		{"anonymous", w.anon, "", http.StatusNotFound},
+		{"anonymous", w.anon, "", http.StatusFound},
 		{"bogus token", w.anon, "opt_nope", http.StatusNotFound},
 		{"bogus token with valid cookie", w.outsider, "opt_nope", http.StatusNotFound},
 	} {
@@ -530,8 +604,11 @@ func TestAuthenticatedVisibility(t *testing.T) {
 			if status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
-			if status == http.StatusNotFound && body != missing {
-				t.Errorf("refusal body %q differs from missing-site body %q", body, missing)
+			if status != http.StatusOK {
+				wantStatus, missing, _ := fetchSite(t, tc.client, w, "nonexistent", "/", tc.bearer)
+				if status != wantStatus || body != missing {
+					t.Errorf("refusal %d %q differs from missing-site %d %q", status, body, wantStatus, missing)
+				}
 			}
 		})
 	}
@@ -598,17 +675,14 @@ func TestAuthenticatedSiteSubdomainMode(t *testing.T) {
 	if _, err := deployNamed(t, s, "intra", writeZip(t, map[string]string{"index.html": "hi"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, "INSERT INTO session (userid, token, expires) VALUES (?, 'tok', ?)",
-		uid, time.Now().Add(time.Hour).Unix()); err != nil {
-		t.Fatal(err)
-	}
-	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", sessionCookie+"=tok"); w.Code != 200 {
+	addSiteSession(t, s, uid, "intra", "tok")
+	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", siteSessionCookie+"=tok"); w.Code != 200 {
 		t.Errorf("logged in: %d", w.Code)
 	}
-	if w := do(s, "GET", siteHost("intra"), "/"); w.Code != 404 {
+	if w := do(s, "GET", siteHost("intra"), "/"); w.Code != 302 {
 		t.Errorf("anonymous: %d", w.Code)
 	}
-	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", sessionCookie+"=expired"); w.Code != 404 {
+	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", siteSessionCookie+"=expired"); w.Code != 302 {
 		t.Errorf("unknown session: %d", w.Code)
 	}
 }

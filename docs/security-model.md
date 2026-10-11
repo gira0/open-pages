@@ -23,7 +23,17 @@ hold, and what is not covered yet.
 - **The app session never reaches content hosts.** The session cookie is set without a
   `Domain` attribute (host-only), so a browser sends it to `app_host` and nowhere else,
   and it is `HttpOnly` and `SameSite=Lax`, so script on a site host can neither read it nor
-  receive it.
+  receive it. The server also ignores it on a content host.
+- **Private sites work in browsers through per-site cookies.** A visitor to an
+  `authenticated` or `restricted` site is sent through a login handoff on the app host and
+  gets a cookie valid for that one site (host-only, `HttpOnly`, `SameSite=Lax`, `__Host-`
+  prefixed with `cookie_secure`, at most 1 hour, a random token unrelated to the app
+  session and stored hashed). Access is checked against the database on every request, so
+  group and visibility changes apply at once, a cookie of one site is useless on another,
+  and logging out of the app revokes every site cookie that came from that session. The
+  one-time login code is short-lived, single use, bound to site, user and the browser that
+  started the login (state cookie), and the return path cannot leave the site. See
+  [Signing in to a site](auth.md#signing-in-to-a-site).
 - **Requests are routed by host, and unknown hosts reach nothing.** The `Host` header
   (case-insensitive, port and one trailing dot ignored) decides what a request is. A host
   that is neither `app_host` nor `<valid site name>.<content_domain>` gets a `404`, so a
@@ -62,12 +72,6 @@ hold, and what is not covered yet.
 
 ## What is not covered yet
 
-- **There is no per-site sign-in.** A site that is not `public` is checked against the
-  session cookie or an API token (`Authorization: Bearer`) on the content host. Because the
-  session cookie is host-only and never reaches a content host, a browser cannot open an
-  `authenticated` or `restricted` site by signing in to the app: it gets the same `404` as
-  for a site that does not exist. Command-line clients can use an API token. Browser
-  sign-in for sites is planned separately.
 - **Public means public.** Anyone who can reach the content host can read a `public` site,
   and a malicious site can still do what any web page can do from its own origin (phish,
   mine, call other origins), without access to the app's session. Review who may create

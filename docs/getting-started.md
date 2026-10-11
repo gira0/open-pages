@@ -238,9 +238,12 @@ path is just a file of that site. `/metrics` is served on `app_host` only (with 
 or on the dedicated metrics listener, which has no host rule.
 
 **Sessions on the content domain.** The session cookie is host-only, so the browser never
-sends it to a site host. Until per-site sign-in exists, `authenticated` and `restricted`
-sites cannot be opened in a browser; API tokens work (see [auth.md](auth.md#known-limits)).
-See the [security model](security-model.md) for what this protects.
+sends it to a site host. A browser opening an `authenticated` or `restricted` site is sent to
+`app_host` to sign in and comes back with a cookie for that one site (1 hour); see
+[Signing in to a site](auth.md#signing-in-to-a-site). The redirect uses `https` when
+`cookie_secure` is set and `http` otherwise, so set it behind a TLS proxy. The path prefix
+`/__open-pages/` is reserved on site hosts. API tokens work too. See the
+[security model](security-model.md) for what this protects.
 
 ## Containers
 
