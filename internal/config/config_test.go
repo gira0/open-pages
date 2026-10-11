@@ -141,7 +141,7 @@ func TestCheckURL(t *testing.T) {
 			t.Errorf("%q rejected: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "/cb", "http://sso.example", "ftp://sso.example", "https://sso.example/#frag", "https://"} {
+	for _, bad := range []string{"", "/cb", "http://sso.example", "ftp://sso.example", "https://sso.example/#frag", "https://", "https://:443/acs"} {
 		if err := CheckURL("k", bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

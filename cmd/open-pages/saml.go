@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonboulle/clockwork"
 	saml2 "github.com/russellhaering/gosaml2"
 	"github.com/russellhaering/gosaml2/types"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -245,6 +246,10 @@ func (c *samlClient) loadProvider(ctx context.Context) (*saml2.SAMLServiceProvid
 		AudienceURI:                 c.cfg.EntityID,
 		AssertionConsumerServiceURL: c.cfg.ACSURL,
 		IDPCertificateStore:         &dsig.MemoryX509CertificateStore{Roots: roots},
+		// gosaml2 checks SubjectConfirmationData/@NotOnOrAfter against this clock with no skew
+		// of its own, so it runs samlClockSkew behind. That also loosens the certificate
+		// validity check by the same minute; the Conditions times are checked in accept.
+		Clock: dsig.NewFakeClock(skewedClock{Clock: clockwork.NewRealClock(), skew: samlClockSkew}),
 		// Groups are optional, and the checks on the assertion are made in accept.
 		AllowMissingAttributes: true,
 	}
@@ -554,6 +559,14 @@ func (c *samlClient) accept(sp *saml2.SAMLServiceProvider, encoded, cookie strin
 	}
 	return samlResult{identity: id, returnTo: pending.returnTo}, nil
 }
+
+// skewedClock is the real clock running skew behind, for gosaml2's expiry checks.
+type skewedClock struct {
+	clockwork.Clock
+	skew time.Duration
+}
+
+func (c skewedClock) Now() time.Time { return c.Clock.Now().Add(-c.skew) }
 
 // validNow checks NotBefore and NotOnOrAfter with a little clock skew.
 func validNow(cond *types.Conditions, now time.Time) bool {

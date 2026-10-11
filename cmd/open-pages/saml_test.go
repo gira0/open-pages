@@ -580,6 +580,18 @@ func TestSAMLClockSkew(t *testing.T) {
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
 }
 
+func TestSAMLClockSkewOnExpiry(t *testing.T) {
+	idp := newFakeSAMLIdP(t)
+	// An IdP clock 30 seconds behind: the assertion and its SubjectConfirmationData expired
+	// 30 seconds ago by our clock, which the skew tolerates.
+	idp.update(func(s *samlSettings) { s.notBefore, s.notOnOrAfter = -5*time.Minute, -30*time.Second })
+	ts := newSAMLTestServer(t, idp, nil)
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
+	// Two minutes behind is too much.
+	idp.update(func(s *samlSettings) { s.notBefore, s.notOnOrAfter = -5*time.Minute, -2*time.Minute })
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
+}
+
 func TestSAMLUnsolicitedResponses(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, nil)
