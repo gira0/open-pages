@@ -370,7 +370,7 @@ host never sees the app session:
    with `cookie_secure`, otherwise `http`, and the port of the request is kept.
    `return` must be a path starting with a single `/` (not `//`), at most 2048 bytes, without
    backslash or control characters and not under `/__open-pages/`; anything else becomes `/`.
-3. The site host redeems the code in `GET /__open-pages/auth?code=...`. The code is consumed
+3. The site host redeems the code in `GET` (or `HEAD`) `/__open-pages/auth?code=...`. The code is consumed
    whatever the outcome; it must belong to this site, be unexpired and come with the
    matching state cookie, which is cleared. The response sets the site cookie and redirects
    to `return`. Both redirects carry `Referrer-Policy: no-referrer` and `Cache-Control:
