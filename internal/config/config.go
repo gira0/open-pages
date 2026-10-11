@@ -111,6 +111,10 @@ func Load(path string) (Config, error) {
 				if err := http.NewCrossOriginProtection().AddTrustedOrigin(o); err != nil {
 					return cfg, fmt.Errorf("cors_origins entry %q: %w", o, err)
 				}
+				// AddTrustedOrigin tolerates userinfo, which no browser sends in an Origin.
+				if u, err := url.Parse(o); err != nil || u.User != nil {
+					return cfg, fmt.Errorf("cors_origins entry %q must be scheme://host[:port] without credentials", o)
+				}
 				cfg.CORSOrigins = append(cfg.CORSOrigins, o)
 			}
 		}

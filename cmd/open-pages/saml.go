@@ -349,8 +349,9 @@ func (c *samlClient) markUsed(id string, until time.Time) error {
 // POST to the ACS, which a SameSite=Lax cookie is not; so it is SameSite=None (with Secure,
 // which browsers require for None). Without https the cookie falls back to Lax, which only
 // works when the provider and this service are on the same site (for example both below
-// corp.example) or for local development. It is HttpOnly, scoped to /v1/auth/saml and lives
-// 10 minutes. Being sent cross-site does not expose anything new: it is a random value that
+// corp.example) or for local development. It is HttpOnly and lives 10 minutes. Over https it is
+// named __Host-saml_request with Path=/ (the prefix requires both, and stops a sibling host
+// planting its own value); over plain http it keeps the name saml_request and Path=/v1/auth/saml. Being sent cross-site does not expose anything new: it is a random value that
 // is useless without a response from the provider that names the matching request ID.
 func (s *Server) setSAMLCookie(w http.ResponseWriter, value string, maxAge int) {
 	secure := s.samlCookieSecure()
