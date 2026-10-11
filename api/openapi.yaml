@@ -479,7 +479,7 @@ paths:
             Set-Cookie:
               $ref: "#/components/headers/SessionCookie"
         "400":
-          description: "`unknown or expired login attempt`: no cookie, a response that answers no pending request of this browser, already used, or older than 10 minutes. Also a missing `SAMLResponse`."
+          description: "`unknown or expired login attempt`: no cookie, a response that answers no pending request of this browser, already used, or older than 10 minutes. `SAMLResponse is required`: the form field is missing. `invalid form`: a malformed or oversized form body."
           content:
             application/json:
               schema:

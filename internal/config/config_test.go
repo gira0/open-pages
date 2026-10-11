@@ -244,3 +244,24 @@ func TestLoadSAMLConfigErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEmptyGroupsKeyDisablesMapping(t *testing.T) {
+	saml := "[saml]\nenabled = true\nidp_metadata_url = https://idp.example/metadata\n" +
+		"entity_id = https://pages.example.com/saml\nacs_url = https://pages.example.com/v1/auth/saml/acs\n"
+	oidc := "[oidc]\nenabled = true\nissuer = https://idp.example\nclient_id = pages\nclient_secret = s\n" +
+		"redirect_url = https://pages.example.com/v1/auth/oidc/callback\n"
+	cfg, err := Load(writeConfig(t, saml+oidc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SAML.GroupsAttribute != "groups" || cfg.OIDC.GroupsClaim != "groups" {
+		t.Fatalf("absent keys: groups_attribute = %q, groups_claim = %q, want the default", cfg.SAML.GroupsAttribute, cfg.OIDC.GroupsClaim)
+	}
+	cfg, err = Load(writeConfig(t, saml+"groups_attribute =\n"+oidc+"groups_claim =\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SAML.GroupsAttribute != "" || cfg.OIDC.GroupsClaim != "" {
+		t.Fatalf("empty keys: groups_attribute = %q, groups_claim = %q, want mapping off", cfg.SAML.GroupsAttribute, cfg.OIDC.GroupsClaim)
+	}
+}

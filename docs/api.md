@@ -314,7 +314,7 @@ cookie set by the login route.
 |---|---|
 | 200 | `{"status":"successful login"}` plus the `auth_cookie` session cookie (no `return_to`) |
 | 303 | Redirect to the `return_to` given at login, plus the session cookie |
-| 400 | `{"error":"unknown or expired login attempt"}`: no cookie, a response that answers no pending request of this browser (including IdP-initiated ones), already used, or older than 10 minutes; or a missing `SAMLResponse` |
+| 400 | `{"error":"unknown or expired login attempt"}`: no cookie, a response that answers no pending request of this browser (including IdP-initiated ones), already used, or older than 10 minutes; `{"error":"SAMLResponse is required"}` when the form field is missing; `{"error":"invalid form"}` for a malformed or oversized form body |
 | 401 | `{"error":"the identity provider's response was not accepted"}`: bad or missing signature, wrong audience, destination or recipient, outside its validity period, replayed, encrypted, or without a usable subject |
 | 403 | `{"error":"the identity has no usable email address"}` or `{"error":"email domain is not allowed"}` |
 | 409 | `{"error":"an account with this email already exists; it is not linked automatically, ask an administrator"}` |

@@ -184,6 +184,16 @@ func strictBool(sec *ini.Section, name string, def bool) (bool, error) {
 	return v, nil
 }
 
+// optionalString reads a key that defaults to def when absent, but stays empty when it is
+// present and empty (MustString would substitute the default there too). An empty value
+// turns the feature off, for example group mapping.
+func optionalString(sec *ini.Section, name, def string) string {
+	if !sec.HasKey(name) {
+		return def
+	}
+	return strings.TrimSpace(sec.Key(name).String())
+}
+
 func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	enabled, err := strictBool(sec, "enabled", false)
 	if err != nil {
@@ -196,7 +206,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		ClientSecret:       sec.Key("client_secret").String(),
 		RedirectURL:        strings.TrimSpace(sec.Key("redirect_url").String()),
 		EmailClaim:         sec.Key("email_claim").MustString("email"),
-		GroupsClaim:        strings.TrimSpace(sec.Key("groups_claim").MustString("groups")),
+		GroupsClaim:        optionalString(sec, "groups_claim", "groups"),
 		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
 	}
 	if !c.Enabled {
@@ -233,7 +243,7 @@ func loadSAMLConfig(sec *ini.Section) (SAMLConfig, error) {
 		EntityID:           strings.TrimSpace(sec.Key("entity_id").String()),
 		ACSURL:             strings.TrimSpace(sec.Key("acs_url").String()),
 		EmailAttribute:     strings.TrimSpace(sec.Key("email_attribute").MustString("email")),
-		GroupsAttribute:    strings.TrimSpace(sec.Key("groups_attribute").MustString("groups")),
+		GroupsAttribute:    optionalString(sec, "groups_attribute", "groups"),
 		NameIDAttribute:    strings.TrimSpace(sec.Key("nameid_attribute").String()),
 		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
 		KeyFile:            strings.TrimSpace(sec.Key("key_file").String()),
