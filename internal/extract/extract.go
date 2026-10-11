@@ -187,19 +187,19 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 		}
 		at := binary.LittleEndian.Uint64(loc[8:])
 		var rec [56]byte
-		if at > uint64(size) || size-int64(at) < int64(len(rec)) {
+		if at > uint64(size) || size-int64(at) < int64(len(rec)) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
 			return errors.New("read zip: bad zip64 record")
 		}
-		if _, err := src.ReadAt(rec[:], int64(at)); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) {
+		if _, err := src.ReadAt(rec[:], int64(at)); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
 			return errors.New("read zip: bad zip64 record")
 		}
 		entries = binary.LittleEndian.Uint64(rec[32:])
 		dirSize = binary.LittleEndian.Uint64(rec[40:])
 	}
-	if entries > uint64(limits.MaxFiles) {
+	if entries > uint64(limits.MaxFiles) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
 		return fmt.Errorf("archive has more than %d entries", limits.MaxFiles)
 	}
-	if dirSize > uint64(limits.MaxFiles)*maxDirEntryBytes+maxDirEntryBytes {
+	if dirSize > uint64(limits.MaxFiles)*maxDirEntryBytes+maxDirEntryBytes { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
 		return errors.New("read zip: central directory is too large")
 	}
 	return nil
@@ -218,7 +218,7 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 	var declared uint64
 	for _, f := range zr.File {
 		declared += f.UncompressedSize64
-		if declared > uint64(limits.MaxBytes) {
+		if declared > uint64(limits.MaxBytes) { //nolint:gosec // G115: sizes are non-negative and compared, never used as lengths
 			return fmt.Errorf("archive expands to more than %d MiB", limits.MaxBytes>>20)
 		}
 	}
