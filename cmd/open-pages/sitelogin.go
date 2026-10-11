@@ -63,8 +63,13 @@ func (s *Server) serveReserved(w http.ResponseWriter, r *http.Request, site stri
 // siteReturnPath returns p if it is a relative path on the site that a redirect may safely
 // target, otherwise "/".
 func siteReturnPath(p string) string {
-	if len(p) > maxSiteReturnLen || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") ||
-		strings.ContainsRune(p, '\\') || reservedPath(strings.SplitN(p, "?", 2)[0]) {
+	if len(p) == 0 || len(p) > maxSiteReturnLen || p[0] != '/' {
+		return "/"
+	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == '\\') { // "//host" and "/\host" are scheme-relative to browsers
+		return "/"
+	}
+	if strings.ContainsRune(p, '\\') || reservedPath(strings.SplitN(p, "?", 2)[0]) {
 		return "/"
 	}
 	for i := 0; i < len(p); i++ {
