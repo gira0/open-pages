@@ -12,19 +12,19 @@ account name; there is no separate username. Two kinds exist:
   address, the password 8 to 72 bytes. The password is stored as a bcrypt hash. Registration
   is open to anyone who can reach the server; there is no approval step or email
   verification. Local email addresses are unique case-sensitively.
-- **OIDC accounts**, created at first sign-in through the identity provider (see below).
-  They have no password, so local login always fails for them.
+- **OIDC and SAML accounts**, created at first sign-in through the identity provider (see
+  below). They have no password, so local login always fails for them.
 
 Setting `[auth] local_login = false` removes the register and login routes, for setups where
-everyone signs in through OIDC. It requires `[oidc] enabled = true` or the server refuses to
-start. Existing sessions and API tokens keep working. The setting accepts only `true` or
+everyone signs in through single sign-on. It requires `[oidc] enabled = true` or
+`[saml] enabled = true`, or the server refuses to start. Existing sessions and API tokens keep working. The setting accepts only `true` or
 `false`; anything else fails startup.
 
 There is no API to delete users, change a password, or change an email.
 
 ## Sessions
 
-`POST /v1/user/login` (and a successful OIDC callback) creates a session: a random 256-bit
+`POST /v1/user/login` (and a successful OIDC callback or SAML sign-in) creates a session: a random 256-bit
 token stored in the `session` table with an expiry 7 days ahead, sent to the browser as the
 `auth_cookie` cookie.
 
@@ -61,7 +61,8 @@ The metrics token in `settings.ini` is unrelated to API tokens and only opens `/
 
 Optional OpenID Connect sign-in with the company identity provider (tested against the
 standard flow of providers such as Keycloak, Entra ID, ADFS). Off by default; without an
-`[oidc]` section the server behaves as before. LDAP is not supported; it is deferred.
+`[oidc]` section the server behaves as before. open-pages targets single sign-on (OIDC and
+SAML); there is no LDAP support.
 
 ### Settings
 
@@ -139,7 +140,8 @@ dependency.
 ### Group mapping
 
 `groups_claim` (default `groups`) names the ID token claim holding group names, either a
-list of strings or a single string. Setting it empty turns mapping off.
+list of strings or a single string. Setting it empty turns mapping off; memberships an earlier sign-in added are then left as
+they are.
 
 - Names are matched to **existing** open-pages groups with the same name, ignoring case.
   Names that match no group are ignored. Groups are never created from a token.
@@ -149,6 +151,116 @@ list of strings or a single string. Setting it empty turns mapping off.
   removes a provider-managed member, the next sign-in adds them back. If an owner adds an
   existing provider-managed member by hand, the membership becomes a manual one.
 - At most 500 names per token are read.
+
+## SAML sign-in
+
+Optional SAML 2.0 web browser SSO with the company identity provider (Keycloak, Entra ID,
+ADFS, Okta and similar). Off by default; without a `[saml]` section the server behaves as
+before. open-pages targets single sign-on only: it has no LDAP support, and none is planned.
+OIDC and SAML can both be enabled; users then see one sign-in button for each.
+
+### Settings
+
+```ini
+[saml]
+enabled = true
+idp_metadata_url = https://sso.example.com/realms/corp/protocol/saml/descriptor
+entity_id = https://pages.example.com/v1/auth/saml/metadata
+acs_url = https://pages.example.com/v1/auth/saml/acs
+email_attribute = email
+groups_attribute = groups
+allowed_email_domain = corp.example
+```
+
+Every key is described in [getting-started.md](getting-started.md#saml). The essentials:
+
+- Give the IdP's metadata as `idp_metadata_url` (https; fetched on the first sign-in attempt,
+  so the server starts even if the IdP is down, then refreshed hourly; a failed refresh keeps
+  the metadata already held) or `idp_metadata_file`, never both. The metadata must be a single
+  `EntityDescriptor` with a `SingleSignOnService` using the HTTP-Redirect binding and at least
+  one signing certificate. Federation metadata (`EntitiesDescriptor`) is not read. The
+  metadata itself is not signature-checked: protect where it comes from.
+- `entity_id` is this service's identifier. It is the `Issuer` of the requests and the
+  audience that assertions must name. `acs_url` must be the absolute URL of
+  `/v1/auth/saml/acs` on this server, registered at the IdP exactly like that.
+- `GET /v1/auth/saml/metadata` serves SP metadata (entity ID, ACS URL, signing certificate if
+  any) that most IdPs can import. It needs no login and works while the IdP is down.
+- Optional `key_file` and `cert_file` (PEM, RSA only, both or neither) sign the
+  AuthnRequests (redirect-binding query signature) and publish the certificate in the SP
+  metadata. Without them requests are sent unsigned, which most IdPs accept. They are not
+  used to decrypt anything. Keep the key readable only by the service user.
+
+### Provider setup
+
+Register open-pages as a SAML service provider: the entity ID and ACS URL above, the
+HTTP-POST binding for the response, and a **signed assertion** (or a signed response). Send
+a persistent NameID (or any stable identifier, with `nameid_attribute` pointing to it), the
+email address as the `email` attribute (or as an email-format NameID) and, for group mapping,
+an attribute with the group names (`groups` unless `groups_attribute` says otherwise).
+Attributes are matched on their `Name`, or on `FriendlyName`. Entra ID names claims by URI;
+use the full URI as the setting value. In Keycloak, add mappers for `email` and "Group list"
+to the client and turn on "Sign assertions".
+
+### The flow
+
+1. A browser opens `GET /v1/auth/saml/login` (optionally with `?return_to=/some/path`, checked
+   exactly as for OIDC). The server stores a pending attempt keyed by the AuthnRequest ID,
+   sets the `saml_request` cookie and redirects to the IdP (HTTP-Redirect binding). Attempts
+   expire after 10 minutes; at most 10000 are kept in memory.
+2. The IdP authenticates the person and the browser posts the response to
+   `POST /v1/auth/saml/acs` (HTTP-POST binding). The server refuses it unless:
+   - the `saml_request` cookie is present, and names a pending attempt that the response
+     answers (`InResponseTo` of the assertion's `SubjectConfirmationData`). Unsolicited and
+     IdP-initiated responses, and responses delivered by a browser that did not start the
+     login, are refused with 400. Each attempt works once;
+   - the XML signature verifies against a signing certificate from the IdP metadata (a
+     certificate that is expired or not in the metadata is refused), either on the assertion
+     or on the whole response; an unsigned assertion is accepted only inside a signed
+     response. There is exactly one assertion, and it is the signature-verified element
+     that is read. The status must be success, and the issuer must be the IdP's entity ID;
+   - the audience is `entity_id`, the `Recipient` of the bearer confirmation (and the
+     `Destination` of the response, if present) is `acs_url`, and `NotBefore`,
+     `NotOnOrAfter` and the confirmation's `NotOnOrAfter` hold (one minute of clock skew is
+     allowed on the conditions);
+   - the assertion ID has not been accepted before (remembered in memory for as long as the
+     login attempt could have been valid).
+3. It finds or creates the local user, maps groups, and starts the same 7-day session as a
+   local login. The response is a `303` to `return_to`, or `200 {"status":"successful login"}`.
+
+The `saml_request` cookie is `HttpOnly`, `Path=/v1/auth/saml`, 10 minutes. Because the IdP
+delivers the response with a cross-site POST, a `SameSite=Lax` cookie (as `oidc_state` is)
+would not be sent back. Over https (an `https` `acs_url`, or `cookie_secure = true`) the cookie
+is therefore `SameSite=None; Secure`. Over plain http it falls back to `Lax`, which works only
+when the IdP and this service are on the same site (for example both below `corp.example`)
+or for local development. Use https. The cookie value is random and useless on its own: it
+only proves that the response arrives in the browser that started the login.
+
+XML parsing and signature verification are done by
+[gosaml2](https://github.com/russellhaering/gosaml2) and goxmldsig; nothing is hand-rolled.
+
+### How an identity becomes a user
+
+- A SAML user is identified by the IdP's entity ID plus the subject (stored in `oidc_issuer`
+  and `oidc_subject`, see [schema.md](schema.md#user)), never by email. The subject is the
+  NameID, or the value of `nameid_attribute` if set (the NameID may then be absent). Without `nameid_attribute`, a `transient`
+  NameID is refused, since it would create a new account at every login; configure the IdP
+  to send a persistent one, or point `nameid_attribute` at a stable attribute.
+- The email comes from `email_attribute`, or from an email-format NameID, at first sign-in and
+  is then kept. It must parse as a bare address; if `allowed_email_domain` is set it must be in
+  that domain. Failures answer 403. SAML has no "email verified" flag, so the IdP is trusted to
+  assert only addresses the person owns.
+- If the email already belongs to any other account (local, OIDC or another SAML identity,
+  compared ignoring case), sign-in is refused with 409. Accounts are never linked or taken over
+  by matching email.
+
+### Group mapping
+
+`groups_attribute` (default `groups`; empty turns mapping off and leaves memberships an earlier sign-in added
+as they are) names the attribute whose
+values are group names. The rules are those of [OIDC group mapping](#group-mapping): existing
+groups only, matched ignoring case, provider-managed memberships follow each sign-in, manual
+ones are never removed, at most 500 names are read. OIDC and SAML share the same marker, so
+with both enabled each sign-in replaces the provider-managed memberships with those it asserts.
 
 ## Groups
 
@@ -235,12 +347,22 @@ versions and roll back.
   address. Restrict by network at the reverse proxy.
 - **Path mode shares an origin.** All sites in path mode share cookies and local storage with
   the API and with each other. Do not host untrusted content in path mode.
-- **OIDC maps only to existing groups.** Groups are never created from tokens.
-- **LDAP is not supported.** It is deferred.
-- **No admin-initiated account linking.** An OIDC identity whose email matches an existing
-  account is refused with 409.
+- **SSO maps only to existing groups.** Groups are never created from tokens or assertions.
+- **SAML is SP-initiated only.** IdP-initiated sign-in (an unsolicited response) is refused.
+- **SAML: no single logout.** `POST /v1/auth/logout` ends only the open-pages session; the
+  session at the IdP stays. There are no SLO endpoints.
+- **SAML: no encrypted assertions.** Assertions must be signed, not encrypted; configure the
+  IdP to send them in the clear over the https browser connection. An `EncryptedAssertion` is
+  refused. Only the HTTP-Redirect (request) and HTTP-POST (response) bindings are supported.
+- **SAML metadata is trusted as fetched.** Its signature is not checked and it is not
+  federation metadata. Use `https` or a local file.
+- **OIDC and SAML identities share one namespace.** A SAML entity ID that equals an OIDC
+  issuer URL, with an equal subject, would map to the same account.
+- **No LDAP.** open-pages supports single sign-on (OIDC, SAML) and local accounts only.
+- **No admin-initiated account linking.** An OIDC or SAML identity whose email matches an
+  existing account is refused with 409.
 - **API tokens are not scoped.** A token has all the rights of its user.
 - **No user management API.** No password change or reset, no user deletion, no email
   change, no ownership transfer for sites or groups.
 - **Open registration.** With local login enabled anyone who can reach the server can
-  create an account; limit reachability at the network level, or use OIDC-only mode.
+  create an account; limit reachability at the network level, or use single sign-on only mode.

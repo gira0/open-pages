@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/mail"
 	"net/url"
 	"slices"
 	"strings"
@@ -22,7 +20,6 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/jwt"
-	"github.com/gira0/open-pages/internal/names"
 )
 
 // OpenID Connect sign-in (authorization code flow with PKCE, state and nonce). It is only
@@ -43,13 +40,10 @@ const (
 )
 
 var (
-	errOIDCState      = errors.New("unknown or expired login attempt")
-	errOIDCDenied     = errors.New("sign-in refused by the identity provider")
-	errOIDCClaims     = errors.New("invalid ID token claims")
-	errOIDCNonce      = errors.New("nonce mismatch")
-	errOIDCEmail      = errors.New("the identity has no usable email address")
-	errOIDCDomain     = errors.New("email domain is not allowed")
-	errOIDCEmailTaken = errors.New("an account with this email already exists")
+	errOIDCState  = errors.New("unknown or expired login attempt")
+	errOIDCDenied = errors.New("sign-in refused by the identity provider")
+	errOIDCClaims = errors.New("invalid ID token claims")
+	errOIDCNonce  = errors.New("nonce mismatch")
 )
 
 // oidcClient talks to the provider and holds the login attempts in flight.
@@ -136,7 +130,7 @@ func (c *oidcClient) metadata(ctx context.Context) (*oidcMeta, error) {
 		return nil, errors.New("discovery: issuer in the provider's document differs from oidc.issuer")
 	}
 	for _, e := range []string{m.AuthorizationEndpoint, m.TokenEndpoint, m.JWKSURI} {
-		if err := config.CheckOIDCURL("discovery endpoint", e); err != nil {
+		if err := config.CheckURL("discovery endpoint", e); err != nil {
 			return nil, err
 		}
 	}
@@ -417,18 +411,22 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	id, err := s.oidc.identity(claims)
 	if err == nil {
 		var uid int64
-		if uid, err = s.oidcUser(r.Context(), id); err == nil {
-			if err = s.syncOIDCGroups(r.Context(), uid, id.groups); err == nil {
+		if uid, err = s.federatedUser(r.Context(), id); err == nil {
+			// With mapping off (empty groups_claim), provider-managed memberships stay as they are.
+			if s.oidc.cfg.GroupsClaim != "" {
+				err = s.syncFederatedGroups(r.Context(), uid, id.groups)
+			}
+			if err == nil {
 				err = s.startSession(w, r, uid)
 			}
 		}
 	}
 	switch {
-	case errors.Is(err, errOIDCEmail), errors.Is(err, errOIDCDomain):
+	case errors.Is(err, errNoEmail), errors.Is(err, errEmailDomain):
 		slog.Warn("oidc login refused", "reason", rejectionReason(err), "request_id", requestIDOf(w))
 		writeError(w, http.StatusForbidden, err.Error())
 		return
-	case errors.Is(err, errOIDCEmailTaken):
+	case errors.Is(err, errEmailTaken):
 		slog.Warn("oidc login refused", "reason", rejectionReason(err), "request_id", requestIDOf(w))
 		writeError(w, http.StatusConflict, err.Error()+"; it is not linked automatically, ask an administrator")
 		return
@@ -446,7 +444,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 // rejectionReason maps an error to a fixed string that is safe to log.
 func rejectionReason(err error) string {
 	for _, known := range []error{jwt.ErrMalformed, jwt.ErrAlg, jwt.ErrKey, jwt.ErrSignature,
-		errOIDCClaims, errOIDCNonce, errOIDCEmail, errOIDCDomain, errOIDCEmailTaken} {
+		errOIDCClaims, errOIDCNonce, errNoEmail, errEmailDomain, errEmailTaken} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
@@ -454,24 +452,17 @@ func rejectionReason(err error) string {
 	return "other"
 }
 
-// oidcIdentity is what a verified ID token says about the user.
-type oidcIdentity struct {
-	issuer, subject, email string
-	groups                 []string
-}
-
 // identity extracts and checks the identity from verified claims.
-func (c *oidcClient) identity(claims map[string]any) (oidcIdentity, error) {
-	id := oidcIdentity{issuer: c.cfg.Issuer, subject: claimString(claims, "sub")}
+func (c *oidcClient) identity(claims map[string]any) (federatedIdentity, error) {
+	id := federatedIdentity{issuer: c.cfg.Issuer, subject: claimString(claims, "sub")}
 	email := strings.TrimSpace(claimString(claims, c.cfg.EmailClaim))
-	addr, err := mail.ParseAddress(email)
-	if err != nil || addr.Address != email || len(email) > maxEmailLen || claims["email_verified"] == false {
-		return id, errOIDCEmail
+	if claims["email_verified"] == false {
+		return id, errNoEmail
+	}
+	if err := checkEmail(email, c.cfg.AllowedEmailDomain); err != nil {
+		return id, err
 	}
 	id.email = email
-	if d := c.cfg.AllowedEmailDomain; d != "" && strings.ToLower(email[strings.LastIndex(email, "@")+1:]) != d {
-		return id, errOIDCDomain
-	}
 	if c.cfg.GroupsClaim != "" {
 		switch v := claims[c.cfg.GroupsClaim].(type) {
 		case string:
@@ -490,108 +481,4 @@ func (c *oidcClient) identity(claims map[string]any) (oidcIdentity, error) {
 func claimString(claims map[string]any, name string) string {
 	s, _ := claims[name].(string)
 	return s
-}
-
-// oidcUser returns the local user for an identity, creating it on first login. Users match
-// on issuer plus subject only. An email that already belongs to a different account, local
-// or from another identity, is refused: it is never taken over or linked automatically.
-func (s *Server) oidcUser(ctx context.Context, id oidcIdentity) (int64, error) {
-	lookup := func() (int64, error) {
-		var uid int64
-		err := s.db.QueryRowContext(ctx,
-			"SELECT userid FROM user WHERE oidc_issuer = ? AND oidc_subject = ?", id.issuer, id.subject).Scan(&uid)
-		return uid, err
-	}
-	uid, err := lookup()
-	if err == nil {
-		return uid, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("lookup oidc user: %w", err)
-	}
-	// The empty password hash never matches, so the account can't use local login. The
-	// case-insensitive email check is part of the INSERT, so two concurrent first logins
-	// with case variants of one email can't both succeed.
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO user (email, password, oidc_issuer, oidc_subject)
-		 SELECT ?, '', ?, ? WHERE NOT EXISTS (SELECT 1 FROM user WHERE email = ? COLLATE NOCASE)
-		 ON CONFLICT DO NOTHING`,
-		id.email, id.issuer, id.subject, id.email)
-	if err != nil {
-		return 0, fmt.Errorf("insert oidc user: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		// A concurrent first login of the same identity may have won; otherwise the email was.
-		if uid, err := lookup(); err == nil {
-			return uid, nil
-		}
-		return 0, errOIDCEmailTaken
-	}
-	uid, err = res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("oidc user id: %w", err)
-	}
-	return uid, nil
-}
-
-// syncOIDCGroups makes the user's provider-managed memberships match the group names in
-// the token. Only existing groups are mapped (matched like group names everywhere: ignoring
-// case); unknown names are ignored. Memberships added by hand (oidc = 0) are never removed.
-func (s *Server) syncOIDCGroups(ctx context.Context, uid int64, groupNames []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
-
-	var want []int64
-	for _, name := range groupNames {
-		name, ok := validGroupName(name)
-		if !ok {
-			continue
-		}
-		var gid int64
-		err := tx.QueryRowContext(ctx, "SELECT groupid FROM groups WHERE name_key = ?", names.GroupKey(name)).Scan(&gid)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("find group: %w", err)
-		}
-		want = append(want, gid)
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT gid FROM user_group WHERE uid = ? AND oidc = 1", uid)
-	if err != nil {
-		return fmt.Errorf("list memberships: %w", err)
-	}
-	var have []int64
-	for rows.Next() {
-		var gid int64
-		if err := rows.Scan(&gid); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan membership: %w", err)
-		}
-		have = append(have, gid)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, gid := range have {
-		if slices.Contains(want, gid) {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM user_group WHERE uid = ? AND gid = ? AND oidc = 1", uid, gid); err != nil {
-			return fmt.Errorf("remove membership: %w", err)
-		}
-	}
-	for _, gid := range want {
-		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO user_group (uid, gid, oidc) VALUES (?, ?, 1) ON CONFLICT DO NOTHING", uid, gid); err != nil {
-			return fmt.Errorf("add membership: %w", err)
-		}
-	}
-	return tx.Commit()
 }

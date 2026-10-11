@@ -472,6 +472,27 @@ func TestOIDCGroupMapping(t *testing.T) {
 	}
 }
 
+func TestOIDCMappingOffKeepsManagedMemberships(t *testing.T) {
+	idp := newFakeIDP(t)
+	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "" })
+	eng := newGroupVia(t, ts, loggedInClient(t, ts), "eng")
+	idp.update(func(s *idpSettings) { s.groups = []string{"eng"} })
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var uid int64
+	if err := s.db.QueryRow("SELECT userid FROM user WHERE oidc_subject = 'sub-1'").Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	// A membership an earlier, mapping-on configuration managed.
+	if _, err := s.db.Exec("INSERT INTO user_group (uid, gid, oidc) VALUES (?, ?, 1)", uid, eng); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_group WHERE uid = ? AND oidc = 1", uid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("provider-managed memberships = %d (%v), want 1 kept with mapping off", n, err)
+	}
+}
+
 func TestOIDCGroupsClaimAsString(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "roles" })
@@ -568,7 +589,7 @@ func TestOIDCSecretNeverServed(t *testing.T) {
 func TestOIDCConcurrentEmailVariants(t *testing.T) {
 	idp := newFakeIDP(t)
 	_, s := newOIDCTestServer(t, idp, nil)
-	ids := []oidcIdentity{
+	ids := []federatedIdentity{
 		{issuer: idp.srv.URL, subject: "sub-a", email: "Ann@Corp.example"},
 		{issuer: idp.srv.URL, subject: "sub-b", email: "ann@corp.example"},
 	}
@@ -578,13 +599,13 @@ func TestOIDCConcurrentEmailVariants(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = s.oidcUser(t.Context(), ids[i])
+			_, errs[i] = s.federatedUser(t.Context(), ids[i])
 		}()
 	}
 	wg.Wait()
 	taken := 0
 	for _, err := range errs {
-		if errors.Is(err, errOIDCEmailTaken) {
+		if errors.Is(err, errEmailTaken) {
 			taken++
 		} else if err != nil {
 			t.Fatal(err)

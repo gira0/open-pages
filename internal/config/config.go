@@ -33,6 +33,22 @@ type Config struct {
 	MetricsToken   string     // bearer token for /metrics on the main listener; empty disables it there
 	LocalLogin     bool       // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
 	OIDC           OIDCConfig // optional OpenID Connect sign-in; disabled by default
+	SAML           SAMLConfig // optional SAML 2.0 sign-in; disabled by default
+}
+
+// SAMLConfig is the [saml] section.
+type SAMLConfig struct {
+	Enabled            bool
+	IDPMetadataURL     string // https URL of the identity provider's metadata; exclusive with IDPMetadataFile
+	IDPMetadataFile    string // absolute path of the provider's metadata XML
+	EntityID           string // this service's entity ID (the audience assertions must name)
+	ACSURL             string // absolute URL of /v1/auth/saml/acs as registered at the provider
+	EmailAttribute     string // assertion attribute holding the email address
+	GroupsAttribute    string // assertion attribute holding the group names; empty disables group mapping
+	NameIDAttribute    string // when set, the user's subject is this attribute instead of the NameID
+	AllowedEmailDomain string // when set, only emails in this domain may sign in
+	KeyFile            string // absolute path of the PEM key that signs AuthnRequests; empty means unsigned requests
+	CertFile           string // absolute path of the matching PEM certificate
 }
 
 // OIDCConfig is the [oidc] section.
@@ -139,8 +155,11 @@ func Load(path string) (Config, error) {
 	if cfg.OIDC, err = loadOIDCConfig(f.Section("oidc")); err != nil {
 		return cfg, err
 	}
-	if !cfg.LocalLogin && !cfg.OIDC.Enabled {
-		return cfg, errors.New("auth.local_login = false needs [oidc] enabled = true, or nobody could sign in")
+	if cfg.SAML, err = loadSAMLConfig(f.Section("saml")); err != nil {
+		return cfg, err
+	}
+	if !cfg.LocalLogin && !cfg.OIDC.Enabled && !cfg.SAML.Enabled {
+		return cfg, errors.New("auth.local_login = false needs [oidc] or [saml] enabled = true, or nobody could sign in")
 	}
 
 	if cfg.DataPath, err = filepath.Abs(cfg.DataPath); err != nil {
@@ -165,6 +184,16 @@ func strictBool(sec *ini.Section, name string, def bool) (bool, error) {
 	return v, nil
 }
 
+// optionalString reads a key that defaults to def when absent, but stays empty when it is
+// present and empty (MustString would substitute the default there too). An empty value
+// turns the feature off, for example group mapping.
+func optionalString(sec *ini.Section, name, def string) string {
+	if !sec.HasKey(name) {
+		return def
+	}
+	return strings.TrimSpace(sec.Key(name).String())
+}
+
 func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	enabled, err := strictBool(sec, "enabled", false)
 	if err != nil {
@@ -177,7 +206,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 		ClientSecret:       sec.Key("client_secret").String(),
 		RedirectURL:        strings.TrimSpace(sec.Key("redirect_url").String()),
 		EmailClaim:         sec.Key("email_claim").MustString("email"),
-		GroupsClaim:        strings.TrimSpace(sec.Key("groups_claim").MustString("groups")),
+		GroupsClaim:        optionalString(sec, "groups_claim", "groups"),
 		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
 	}
 	if !c.Enabled {
@@ -190,18 +219,67 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	if c.Issuer == "" || c.ClientID == "" || c.ClientSecret == "" || c.RedirectURL == "" {
 		return c, fmt.Errorf("oidc: issuer, client_id, redirect_url and and client_secret are required when enabled")
 	}
-	if err := CheckOIDCURL("oidc.issuer", c.Issuer); err != nil {
+	if err := CheckURL("oidc.issuer", c.Issuer); err != nil {
 		return c, err
 	}
-	if err := CheckOIDCURL("oidc.redirect_url", c.RedirectURL); err != nil {
+	if err := CheckURL("oidc.redirect_url", c.RedirectURL); err != nil {
 		return c, err
 	}
 	return c, nil
 }
 
-// CheckOIDCURL requires an absolute https URL; plain http is accepted only for loopback
-// hosts (local development against a test provider).
-func CheckOIDCURL(key, raw string) error {
+func loadSAMLConfig(sec *ini.Section) (SAMLConfig, error) {
+	enabled, err := strictBool(sec, "enabled", false)
+	if err != nil {
+		return SAMLConfig{}, err
+	}
+	if !enabled {
+		return SAMLConfig{}, nil
+	}
+	c := SAMLConfig{
+		Enabled:            true,
+		IDPMetadataURL:     strings.TrimSpace(sec.Key("idp_metadata_url").String()),
+		IDPMetadataFile:    strings.TrimSpace(sec.Key("idp_metadata_file").String()),
+		EntityID:           strings.TrimSpace(sec.Key("entity_id").String()),
+		ACSURL:             strings.TrimSpace(sec.Key("acs_url").String()),
+		EmailAttribute:     strings.TrimSpace(sec.Key("email_attribute").MustString("email")),
+		GroupsAttribute:    optionalString(sec, "groups_attribute", "groups"),
+		NameIDAttribute:    strings.TrimSpace(sec.Key("nameid_attribute").String()),
+		AllowedEmailDomain: strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sec.Key("allowed_email_domain").String()), "@")),
+		KeyFile:            strings.TrimSpace(sec.Key("key_file").String()),
+		CertFile:           strings.TrimSpace(sec.Key("cert_file").String()),
+	}
+	if c.EntityID == "" || c.ACSURL == "" {
+		return c, errors.New("saml: entity_id and acs_url are required when enabled")
+	}
+	if (c.IDPMetadataURL == "") == (c.IDPMetadataFile == "") {
+		return c, errors.New("saml: set exactly one of idp_metadata_url and idp_metadata_file")
+	}
+	if c.IDPMetadataURL != "" {
+		if err := CheckURL("saml.idp_metadata_url", c.IDPMetadataURL); err != nil {
+			return c, err
+		}
+	}
+	if err := CheckURL("saml.acs_url", c.ACSURL); err != nil {
+		return c, err
+	}
+	if (c.KeyFile == "") != (c.CertFile == "") {
+		return c, errors.New("saml: key_file and cert_file must be set together")
+	}
+	for _, p := range []*string{&c.IDPMetadataFile, &c.KeyFile, &c.CertFile} {
+		if *p == "" {
+			continue
+		}
+		if *p, err = filepath.Abs(*p); err != nil {
+			return c, fmt.Errorf("saml: %w", err)
+		}
+	}
+	return c, nil
+}
+
+// CheckURL requires an absolute https URL; plain http is accepted only for loopback
+// hosts (local development against a test provider). It is used for the OIDC and SAML URLs.
+func CheckURL(key, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.Fragment != "" {
 		return fmt.Errorf("%s: must be an absolute URL", key)

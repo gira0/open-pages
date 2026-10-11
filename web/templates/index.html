@@ -6,12 +6,15 @@
 		<h1 class="pf-v6-c-title pf-m-2xl">{{.title}}</h1>
 	</div>
 </section>
-{{if or .oidc .localLogin}}
+{{if or .oidc .saml .localLogin}}
 <section class="pf-v6-c-page__main-section">
 	<div class="pf-v6-c-page__main-body">
 		<h2 class="pf-v6-c-title pf-m-lg">Sign in</h2>
 		{{if .oidc}}
-		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/oidc/login"><span class="pf-v6-c-button__text">Sign in with your company account</span></a></p>
+		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/oidc/login"><span class="pf-v6-c-button__text">Sign in with your company account{{if .saml}} (OpenID Connect){{end}}</span></a></p>
+		{{end}}
+		{{if .saml}}
+		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/saml/login"><span class="pf-v6-c-button__text">Sign in with your company account{{if .oidc}} (SAML){{end}}</span></a></p>
 		{{end}}
 		{{if .localLogin}}
 		<form class="pf-v6-c-form op-narrow" action="/v1/user/login" method="post">

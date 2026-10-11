@@ -45,7 +45,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 	cfg := config.Default()
 	cfg.LocalLogin = true
 	cfg.MetricsToken = "m"
-	s := &Server{cfg: cfg, oidc: &oidcClient{}}
+	s := &Server{cfg: cfg, oidc: &oidcClient{}, saml: &samlClient{}}
 
 	// OpenAPI has no wildcard segments, so "{path...}" is documented as "{path}".
 	var registered []string

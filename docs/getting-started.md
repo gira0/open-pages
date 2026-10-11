@@ -74,7 +74,7 @@ The settings file is INI. A missing file is a fatal error; a missing key uses th
 The repository's [`configs/settings.ini`](../configs/settings.ini) documents the same keys and
 [`deploy/settings.ini`](../deploy/settings.ini) holds the defaults baked into the container
 image. Booleans written as anything other than a boolean silently fall back to the default,
-except the two security-relevant ones, `auth.local_login` and `oidc.enabled`, where a bad
+except the security-relevant ones, `auth.local_login`, `oidc.enabled` and `saml.enabled`, where a bad
 value fails startup. Integers that do not parse also fall back to the default.
 
 ### [server]
@@ -137,7 +137,7 @@ to anyone who can reach it, so bind it to loopback or a monitoring network.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `local_login` | `true` | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for OIDC-only setups and requires `[oidc] enabled = true`, otherwise startup fails. Must be `true` or `false` |
+| `local_login` | `true` | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for single sign-on only setups and requires `[oidc] enabled = true` or `[saml] enabled = true`, otherwise startup fails. Must be `true` or `false` |
 
 ### [oidc]
 
@@ -156,14 +156,35 @@ sign-in flow, provider setup and identity rules are in [auth.md](auth.md#oidc-si
 | `groups_claim` | `groups` | Claim holding group names; empty turns group mapping off |
 | `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
 
+### [saml]
+
+Off unless `enabled = true`. When `enabled` is false the other keys are not looked at. The
+flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Turn SAML sign-in on. Must be `true` or `false` |
+| `idp_metadata_url` | none | `https` URL of the IdP's metadata (`http` for localhost). Fetched on first use and refreshed hourly. Set exactly one of this and `idp_metadata_file` |
+| `idp_metadata_file` | none | Path of the IdP's metadata XML; read at startup (a missing file fails startup) and re-read hourly |
+| `entity_id` | none, required | This service's entity ID, as registered at the IdP; assertions must name it as their audience |
+| `acs_url` | none, required | Absolute URL of `/v1/auth/saml/acs` on this server, as registered at the IdP. `https` only (`http` for localhost) |
+| `email_attribute` | `email` | Assertion attribute holding the email address. If it is missing, a NameID in the email-address format is used |
+| `groups_attribute` | `groups` | Attribute holding group names; empty turns group mapping off |
+| `nameid_attribute` | empty | When set, the user is identified by this attribute instead of the NameID |
+| `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
+| `key_file`, `cert_file` | empty | PEM RSA private key (ECDSA is not supported) and certificate used to sign AuthnRequests. Set both or neither; without them requests are unsigned. The certificate is published in the SP metadata |
+
 ### Startup checks
 
 The server refuses to start, with the reason on stderr, when: the file cannot be read;
 `url_mode` is invalid; `url_mode = subdomain` with an empty `base_domain` or one containing
 `:` or `/` (no other hostname validation is done);
 `log.level` or `log.format` is invalid; `metrics.token` is shorter than 16 characters;
-`local_login` or `oidc.enabled` is not a boolean; `local_login = false` without OIDC; OIDC
-is enabled with a required key missing or a non-https URL; or the data directories or
+`local_login`, `oidc.enabled` or `saml.enabled` is not a boolean; `local_login = false` without
+OIDC or SAML; OIDC is enabled with a required key missing or a non-https URL; SAML is enabled
+without `entity_id` or `acs_url`, with both or neither of the metadata keys, with a non-https
+URL, with only one of `key_file` and `cert_file`, or with a key, certificate or metadata
+file that cannot be read; or the data directories or
 database cannot be created or migrated.
 
 ## URL modes

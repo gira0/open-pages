@@ -46,20 +46,23 @@ noted). Unix timestamps are integer seconds since the epoch, UTC.
 
 ### user
 
-One row per account, local or OIDC.
+One row per account: local, or created by OIDC or SAML sign-in.
 
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `userid` | INTEGER | PRIMARY KEY | Rowid alias, auto-assigned |
 | `email` | VARCHAR(255) | NOT NULL | Account name. Unique (index `user_email`) |
-| `password` | BINARY(60) | NOT NULL | bcrypt hash (60 characters). Empty string `''` for OIDC accounts, which never matches a password |
-| `oidc_issuer` | TEXT | NULL | Issuer URL of the identity provider; NULL for local accounts |
-| `oidc_subject` | TEXT | NULL | `sub` claim at that issuer; NULL for local accounts |
+| `password` | BINARY(60) | NOT NULL | bcrypt hash (60 characters). Empty string `''` for OIDC and SAML accounts, which never matches a password |
+| `oidc_issuer` | TEXT | NULL | Issuer of the identity provider: the issuer URL for OIDC, the IdP's entity ID for SAML; NULL for local accounts |
+| `oidc_subject` | TEXT | NULL | `sub` claim at that issuer for OIDC; the persistent NameID (or the `nameid_attribute` value) for SAML; NULL for local accounts |
+
+The `oidc_` prefix predates SAML support. Both sign-in methods share these columns (and
+`user_group.oidc`) rather than having their own; renaming them is deliberately not done.
 
 Indexes:
 
 - `user_email`: UNIQUE on `(email)`. Case-sensitive; the OIDC account creation additionally
-  compares emails ignoring case.
+  compares emails ignoring case (also for SAML).
 - `user_oidc`: UNIQUE on `(oidc_issuer, oidc_subject)`. SQLite treats NULLs as distinct, so
   any number of local accounts coexist.
 
@@ -115,7 +118,7 @@ Membership: which user is in which group.
 | `ugid` | INTEGER | PRIMARY KEY | |
 | `uid` | INTEGER | NOT NULL, FK `user(userid)` | |
 | `gid` | INTEGER | NOT NULL, FK `groups(groupid)` | |
-| `oidc` | INTEGER | NOT NULL, DEFAULT 0 | 1 if the membership is managed by OIDC group mapping, 0 if added by hand. Only `oidc = 1` rows are removed by a sign-in sync |
+| `oidc` | INTEGER | NOT NULL, DEFAULT 0 | 1 if the membership is managed by OIDC or SAML group mapping, 0 if added by hand. Only `oidc = 1` rows are removed by a sign-in sync |
 
 Index `user_group_member`: UNIQUE on `(uid, gid)`. A group's owner is also a row here.
 
@@ -182,5 +185,5 @@ Operational consequences:
 
 A site exists when it has a `docs` row; its files exist once it has been deployed. Deleting
 a site removes the files first and then the row. Version ids are 20-character xids, newest
-sorts last. In memory only, and lost on restart: pending OIDC sign-in attempts and the
-request metrics.
+sorts last. In memory only, and lost on restart: pending OIDC and SAML sign-in attempts, the
+IDs of recently accepted SAML assertions, the cached SAML IdP metadata and the request metrics.

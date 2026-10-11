@@ -28,6 +28,7 @@ type Server struct {
 	metrics  *metrics
 	health   healthProbe
 	oidc     *oidcClient // nil unless [oidc] is enabled
+	saml     *samlClient // nil unless [saml] is enabled
 }
 
 // route is one pattern the API mux registers.
@@ -61,6 +62,11 @@ func (s *Server) routeTable() []route {
 	if s.oidc != nil {
 		handleFunc("GET /v1/auth/oidc/login", s.handleOIDCLogin)
 		handleFunc("GET /v1/auth/oidc/callback", s.handleOIDCCallback)
+	}
+	if s.saml != nil {
+		handleFunc("GET /v1/auth/saml/login", s.handleSAMLLogin)
+		handleFunc("POST /v1/auth/saml/acs", s.handleSAMLACS)
+		handleFunc("GET /v1/auth/saml/metadata", s.handleSAMLMetadata)
 	}
 
 	handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
@@ -104,7 +110,7 @@ func handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "index.html", map[string]any{
-		"title": "Sites", "nav": "sites", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil,
+		"title": "Sites", "nav": "sites", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil, "saml": s.saml != nil,
 	})
 }
 

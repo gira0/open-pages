@@ -129,8 +129,10 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	// OIDC: user.oidc_issuer/oidc_subject identify a user created by OIDC sign-in (NULL for
-	// local accounts); user_group.oidc marks memberships managed by the identity provider.
+	// OIDC and SAML: user.oidc_issuer/oidc_subject identify a user created by single sign-on
+	// (NULL for local accounts); user_group.oidc marks memberships managed by the identity
+	// provider. The names predate SAML; for a SAML user the issuer is the IdP's entity ID and
+	// the subject its persistent NameID (or the configured attribute).
 	for _, col := range []struct{ table, name, ddl string }{
 		{"user", "oidc_issuer", "oidc_issuer TEXT NULL"},
 		{"user", "oidc_subject", "oidc_subject TEXT NULL"},

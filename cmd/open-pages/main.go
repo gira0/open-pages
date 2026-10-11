@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,7 +27,10 @@ func main() {
 	flag.Parse()
 
 	if err := run(*configPath); err != nil {
-		slog.Error("fatal", "err", err)
+		// Startup errors can carry text from files or the network (for example SAML metadata);
+		// keep them on one log line.
+		msg := strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", " "), "\n", " ")
+		slog.Error("fatal", "err", msg)
 		os.Exit(1)
 	}
 }
@@ -98,6 +102,12 @@ func newServer(cfg config.Config) (*Server, error) {
 	}
 	if cfg.OIDC.Enabled {
 		s.oidc = newOIDCClient(cfg.OIDC)
+	}
+	if cfg.SAML.Enabled {
+		var err error
+		if s.saml, err = newSAMLClient(cfg.SAML); err != nil {
+			return nil, err
+		}
 	}
 	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
 	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content

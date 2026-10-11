@@ -95,14 +95,19 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge in
 
 func (s *Server) setCookie(w http.ResponseWriter, name, path, value string, maxAge int) {
 	// Secure is configurable so the service also works over plain HTTP on internal networks.
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: see above
+	s.setCookieAttrs(w, name, path, value, maxAge, s.cfg.CookieSecure, http.SameSiteLaxMode)
+}
+
+// setCookieAttrs sets an HttpOnly cookie with explicit Secure and SameSite attributes.
+func (s *Server) setCookieAttrs(w http.ResponseWriter, name, path, value string, maxAge int, secure bool, sameSite http.SameSite) {
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure follows configuration, see setCookie
 		Name:     name,
 		Value:    value,
 		Path:     path,
 		MaxAge:   maxAge,
-		Secure:   s.cfg.CookieSecure,
+		Secure:   secure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
 }
 
