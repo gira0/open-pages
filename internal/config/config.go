@@ -182,8 +182,13 @@ func hostSetting(sec *ini.Section, name string) (string, error) {
 	if host == "" {
 		return "", fmt.Errorf("sites.%s: required, a bare host name such as pages.corp", name)
 	}
-	if strings.ContainsAny(host, ":/@?#[] \t") || strings.HasPrefix(host, ".") || strings.Contains(host, "..") {
-		return "", fmt.Errorf("sites.%s %q: must be a bare host name without scheme, port or path", name, raw)
+	if len(host) > 253 {
+		return "", fmt.Errorf("sites.%s %q: host name too long", name, raw)
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !names.ValidSite(label) { // a DNS label: letters, digits, inner hyphens, 1 to 63 chars
+			return "", fmt.Errorf("sites.%s %q: must be a bare host name (letters, digits and hyphens in each dot-separated label), without scheme, port or path", name, raw)
+		}
 	}
 	return host, nil
 }

@@ -100,6 +100,7 @@ func (s *Server) routes() http.Handler {
 	// Hosts that aren't the app host answer only health probes (see dispatch).
 	probes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			r.Pattern = "GET /healthz" // what ServeMux records; observe keeps probes out of the info log
 			s.handleHealth(w, r)
 			return
 		}

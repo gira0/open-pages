@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -473,5 +474,20 @@ func TestSessionCookieIsHostOnly(t *testing.T) {
 		if c.Domain != "" || !c.Secure || !c.HttpOnly {
 			t.Errorf("cookie %s: Domain %q Secure %v HttpOnly %v", c.Name, c.Domain, c.Secure, c.HttpOnly)
 		}
+	}
+}
+
+// Probes on arbitrary hosts are logged like those on the app host (debug level), so a
+// health checker doesn't fill the info log.
+func TestHealthzOnOtherHostStaysOutOfInfoLog(t *testing.T) {
+	var logs lockedBuffer
+	old := slog.Default()
+	slog.SetDefault(newLogger(&logs, config.Default()))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	s := newServeTestServer(t, nil)
+	expectStatus(t, do(s, "GET", "10.0.0.7", "/healthz").Code, http.StatusOK)
+	if logs.String() != "" {
+		t.Errorf("probe was logged: %q", logs.String())
 	}
 }
