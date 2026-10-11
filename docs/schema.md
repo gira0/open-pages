@@ -74,7 +74,7 @@ Login sessions, one row per live cookie.
 |---|---|---|---|
 | `sessionid` | INTEGER | PRIMARY KEY | |
 | `userid` | INTEGER | NOT NULL, FK `user(userid)` | |
-| `token` | CHAR(512) | NOT NULL, UNIQUE | 64 hex characters, the value of the `auth_cookie` cookie. Stored as is |
+| `token` | CHAR(512) | NOT NULL, UNIQUE | 64 hex characters, the value of the session cookie (`auth_cookie`, or `__Host-auth_cookie` with `cookie_secure`). Stored as is |
 | `expires` | BIGINT | NOT NULL | Unix time. Set to login time plus 7 days |
 
 Expired rows are ignored when reading and deleted whenever someone logs in.
