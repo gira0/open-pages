@@ -281,7 +281,7 @@ func loadSAMLConfig(sec *ini.Section) (SAMLConfig, error) {
 // hosts (local development against a test provider). It is used for the OIDC and SAML URLs.
 func CheckURL(key, raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.Fragment != "" {
+	if err != nil || u.Hostname() == "" || u.Fragment != "" {
 		return fmt.Errorf("%s: must be an absolute URL", key)
 	}
 	switch u.Scheme {

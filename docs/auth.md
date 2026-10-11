@@ -351,7 +351,7 @@ versions and roll back.
 - **SAML is SP-initiated only.** IdP-initiated sign-in (an unsolicited response) is refused.
 - **SAML: no single logout.** `POST /v1/auth/logout` ends only the open-pages session; the
   session at the IdP stays. There are no SLO endpoints.
-- **SAML: no encrypted assertions.** Assertions must be signed, not encrypted; configure the
+- **SAML: no encrypted assertions.** The Response or the assertion must be signed, and assertions must not be encrypted; configure the
   IdP to send them in the clear over the https browser connection. An `EncryptedAssertion` is
   refused. Only the HTTP-Redirect (request) and HTTP-POST (response) bindings are supported.
 - **SAML metadata is trusted as fetched.** Its signature is not checked and it is not
