@@ -26,8 +26,9 @@ serves them. Review for correctness and security first; style is handled by `gol
   tokens never logged or returned twice, a malformed `Authorization` header must never fall
   back to the session cookie.
 - **Site names** (`internal/names/names.go`, `cmd/open-pages/sites.go`): must be hostname-valid and must not be a reserved name.
-- **Serving and URL resolution** (`cmd/open-pages/serve.go`, `cmd/open-pages/resolve.go`): check both `url_mode = path` and
-  `url_mode = subdomain`; no escaping the site root; behaviour on unknown or reserved hosts.
+- **Serving and URL resolution** (`cmd/open-pages/serve.go`, `cmd/open-pages/resolve.go`): host routing (the app host never
+  serves site content, a content host serves nothing but its site, any other host is a 404 apart from `/healthz`);
+  Host header port, case and trailing-dot handling; no escaping the site root.
 - **Log injection**: do not log raw unvalidated user input (request paths, hosts, headers,
   client addresses). CodeQL flags this; log IDs, matched route patterns and status instead.
   Values already validated to a bounded form, such as a site name (a DNS label), are fine.

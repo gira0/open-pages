@@ -98,7 +98,16 @@ func (s *Server) routes() http.Handler {
 	for _, r := range s.routeTable() {
 		mux.Handle(r.pattern, r.handler)
 	}
-	return s.observe(s.cors(s.csrf(s.withSites(mux))))
+	// Hosts that aren't the app host answer only health probes (see dispatch).
+	probes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			r.Pattern = "GET /healthz" // what ServeMux records; observe keeps probes out of the info log
+			s.handleHealth(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	return s.observe(s.dispatch(s.cors(s.csrf(mux)), probes))
 }
 
 // handleOpenAPI serves the embedded OpenAPI document. It needs no login.
@@ -116,7 +125,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 // uiCSP is the Content-Security-Policy of the UI pages. It is never sent with hosted
-// sites: in path mode they share this origin, and their authors decide what they load.
+// sites: their authors decide what they load.
 const uiCSP = "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
 
 // render executes a UI page with the security headers every page gets. data must be a

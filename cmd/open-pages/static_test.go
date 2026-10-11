@@ -104,6 +104,7 @@ func TestStaticGzip(t *testing.T) {
 
 	// Accept-Encoding may arrive split over several header lines.
 	r := httptest.NewRequest(http.MethodGet, url, nil)
+	r.Host = testAppHost
 	r.Header.Add("Accept-Encoding", "br")
 	r.Header.Add("Accept-Encoding", "gzip")
 	split := httptest.NewRecorder()
@@ -145,7 +146,7 @@ func TestCSPOnlyOnUIPages(t *testing.T) {
 		t.Errorf("/index X-Frame-Options %q", fo)
 	}
 	deploySite(t, s, "blog", blogFiles)
-	w := do(s, "GET", "", "/blog/")
+	w := do(s, "GET", siteHost("blog"), "/")
 	expectStatus(t, w.Code, http.StatusOK)
 	if csp := w.Header().Get("Content-Security-Policy"); csp != "" {
 		t.Errorf("hosted site got CSP %q", csp)

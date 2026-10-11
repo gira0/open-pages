@@ -6,7 +6,9 @@ see [api.md](api.md), for accounts and access rules [auth.md](auth.md), for the 
 
 open-pages is a single Go binary. It serves a small JSON API, a test page, and the static
 sites that people deploy to it, and it stores its state in one SQLite file plus a directory
-of site files. It speaks plain HTTP; terminate TLS in a reverse proxy.
+of site files. It speaks plain HTTP; terminate TLS in a reverse proxy. The API and UI live on
+one host (`app_host`) and every site on its own subdomain of a separate content domain; see
+[URLs and hosts](#urls-and-hosts) and the [security model](security-model.md).
 
 ## Install
 
@@ -41,20 +43,21 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini &
 
 # create an account and log in
-curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
+curl -X POST app.localhost:8080/v1/user/register -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -c cookies -X POST localhost:8080/v1/user/login -H 'Content-Type: application/json' \
+curl -c cookies -X POST app.localhost:8080/v1/user/login -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
 
-# create a site, upload a zip of your files, open it
-curl -b cookies -X POST localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
+# create a site, upload a zip of your files, open it (the shipped settings serve the API on
+# app.localhost and sites on <site>.sites.localhost, which needs no DNS setup)
+curl -b cookies -X POST app.localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
   -d '{"name":"hello"}'
 (cd ./public && zip -qr ../site.zip .)
-curl -b cookies -X POST --data-binary @site.zip localhost:8080/v1/auth/sites/hello/upload
-curl localhost:8080/hello/
+curl -b cookies -X POST --data-binary @site.zip app.localhost:8080/v1/auth/sites/hello/upload
+curl http://hello.sites.localhost:8080/
 ```
 
-`http://localhost:8080/index` serves a small test page with the same actions.
+`http://app.localhost:8080/index` serves a small test page with the same actions.
 
 ## Command line
 
@@ -83,7 +86,7 @@ value fails startup. Integers that do not parse also fall back to the default.
 |---|---|---|
 | `host` | empty (all interfaces) | Interface to bind |
 | `http_port` | `8080` | Port to listen on |
-| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie and name it `__Host-auth_cookie`, which sibling hosts cannot overwrite. Set to `true` whenever users reach the service over HTTPS; with `false` the server logs a startup warning |
+| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie and name it `__Host-auth_cookie`, which sibling hosts cannot overwrite. Set to `true` whenever users reach the service over HTTPS, which production requires (see [security model](security-model.md)); with `false` the server logs a startup warning |
 | `cors_origins` | empty | Comma-separated origins (`scheme://host[:port]`) allowed to call the API cross-origin with credentials; empty means same-origin only. Browser POST/PUT/DELETE from any other origin gets 403 |
 
 ### [paths]
@@ -120,8 +123,11 @@ rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 | Key | Default | Meaning |
 |---|---|---|
 | `keep_versions` | `5` | Versions kept per site, including the live one; older ones are deleted after each deploy and can no longer be rolled back to. Values below 1 are treated as 1 |
-| `url_mode` | `path` | `path` or `subdomain`; anything else fails startup. See [URL modes](#url-modes) |
-| `base_domain` | empty | Bare host name of the API and UI (for example `pages.corp`). Required for `subdomain` mode, ignored in `path` mode. The only checks are that it is not empty and contains no `:` or `/`; other malformed values (spaces, bad labels) are accepted at startup and simply never match a request. It is lower-cased and a trailing dot removed |
+| `app_host` | none, required | Bare host name of the API and UI (for example `pages.corp`). Lower-cased, one trailing dot removed; no scheme, port or path. See [URLs and hosts](#urls-and-hosts) |
+| `content_domain` | none, required | Bare domain whose subdomains serve the sites: a site `blog` is at `https://blog.<content_domain>/` (for example `pages-content.corp`). Same format as `app_host`. Neither `app_host` nor `content_domain` may equal the other or be a subdomain of the other, at any depth |
+
+`url_mode` and `base_domain` no longer exist; a settings file that still sets either fails
+startup with a message pointing here.
 
 ### [log]
 
@@ -184,8 +190,11 @@ flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
 ### Startup checks
 
 The server refuses to start, with the reason on stderr, when: the file cannot be read;
-`url_mode` is invalid; `url_mode = subdomain` with an empty `base_domain` or one containing
-`:` or `/` (no other hostname validation is done);
+`sites.url_mode` or `sites.base_domain` is set; `sites.app_host` or `sites.content_domain`
+is missing or not a bare host name (a scheme, port, path or space in it); `content_domain`
+equals `app_host`, or either one is a subdomain of the other at any depth (a site under the
+app host could set cookies for the app, and an app host under the content domain would be
+a site host);
 `log.level` or `log.format` is invalid; `metrics.token` is shorter than 16 characters;
 `local_login`, `oidc.enabled` or `saml.enabled` is not a boolean; `local_login = false` without
 OIDC or SAML; OIDC is enabled with a required key missing or a non-https URL; SAML is enabled
@@ -194,30 +203,44 @@ URL, with only one of `key_file` and `cert_file`, or with a key, certificate or 
 file that cannot be read; or the data directories or
 database cannot be created or migrated.
 
-## URL modes
+## URLs and hosts
 
-`[sites] url_mode` decides how a request names its site. The API, the test page and the
-probes stay on the bare host in both modes. Site names are DNS labels in both, so switching
-modes needs no data migration.
+Two kinds of host, never mixed:
 
-**Path mode** (`path`, default): `https://pages.corp/<site>/...`. Needs one DNS name and
-one certificate. Caveats:
+| Host | Serves | Example |
+|---|---|---|
+| `app_host` | The API, the test page and its static assets, `/healthz`, and `/metrics` when enabled. Never site content, whatever the path | `https://pages.corp/` |
+| `<site>.<content_domain>` | One site, read-only (`GET` and `HEAD`; any other method is `405` with `Allow: GET, HEAD`). Nothing of the API or UI. A label that is not a valid site name is a 404 | `https://blog.pages-content.corp/` |
+| anything else | `404` for every request except `GET /healthz` (see below) | |
 
-- Root-absolute links break. `<link href="/css/app.css">` asks for `/css/app.css`, which is
-  not part of the site. Build sites with a base path (Hugo `baseURL`, Vite `base`, Jekyll
-  `baseurl`) or use relative links.
-- All sites share one origin with each other and with the API: shared cookies and local
-  storage, and they can script each other. Do not host untrusted content in this mode.
-- The reserved names (see [api.md](api.md#sites)) cannot be sites, so they cannot shadow
-  API routes.
+Root-absolute links (`<link href="/css/app.css">`) work in sites, because each site owns
+the whole of its host.
 
-**Subdomain mode** (`subdomain`): `https://<site>.pages.corp/...` with
-`base_domain = pages.corp`. Needs wildcard DNS (`*.pages.corp` and `pages.corp` both pointing
-at the server) and a wildcard certificate. Root-absolute links work and every site has its
-own origin. Behind a reverse proxy, pass the original `Host` header through. A request whose
-host is `<label>.<base_domain>` is served as a site (a label that is not a valid site name
-is a 404); any other host reaches the API and UI routes. Browsers cannot open non-public
-sites in this mode; see [auth.md](auth.md#known-limits).
+**Choosing the domains.** Use a separate registrable domain for `content_domain` where you can
+(the way GitHub uses `github.com` and `github.io`): browsers then treat the app and the sites
+as different sites, not just different origins, and a cookie scoped to the parent domain can
+never reach both. Two siblings under a shared parent (`app.pages.corp` and `sites.pages.corp`) are
+accepted, but then the app and the sites are same-site. That layout relies on the app's
+cross-origin request check, `application/json`-only JSON routes and the `__Host-` session
+cookie, so it needs `cookie_secure = true` on HTTPS (see [security model](security-model.md)), and
+nothing on the parent domain may set cookies for it. A content domain under the app host, or the reverse, is refused at startup.
+
+**DNS and TLS.** Point `app_host` and the wildcard `*.<content_domain>` at the reverse
+proxy, and give the proxy a certificate for `app_host` and a wildcard certificate for
+`*.<content_domain>`. A wildcard covers one label only, which is exactly the shape of a
+site host. The reverse proxy must pass the original `Host` header through to open-pages
+(nginx: `proxy_set_header Host $host;`), because the server decides what to serve from it.
+Host matching ignores case, a port and a trailing dot.
+
+**Health probes.** `GET /healthz` (and `HEAD`) answers on any host that is not a site host, so
+probes by IP address, `localhost` or an internal name keep working. On a site host the same
+path is just a file of that site. `/metrics` is served on `app_host` only (with its token),
+or on the dedicated metrics listener, which has no host rule.
+
+**Sessions on the content domain.** The session cookie is host-only, so the browser never
+sends it to a site host. Until per-site sign-in exists, `authenticated` and `restricted`
+sites cannot be opened in a browser; API tokens work (see [auth.md](auth.md#known-limits)).
+See the [security model](security-model.md) for what this protects.
 
 ## Containers
 
@@ -231,6 +254,10 @@ it sets `TMPDIR=/data/tmp`.
 docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
+
+The baked-in settings use `app_host = app.localhost` and `content_domain = sites.localhost`, which
+only suit trying the image out on one machine. For a real deployment mount your own file
+with your domains (and `cookie_secure = true` behind HTTPS).
 
 To change settings, mount your own file over the baked-in one and keep `datapath` and
 `tmppath` under `/data`:
