@@ -205,12 +205,24 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "prune site sessions", err)
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(),
+	// Conditional on the session still being this user's and the site still being this
+	// row, so a logout or a deleted site between the checks above and here can't be
+	// followed by a code for a reused id.
+	res, err := s.db.ExecContext(r.Context(),
 		`INSERT INTO site_login_code (hash, site, siteid, userid, sessionid, state_hash, return_to, expires)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		hashToken(code), site, rec.ID, uid, sid, hashToken(state), ret,
-		min(now+int64(siteLoginCodeTTL.Seconds()), sessionEnd)); err != nil {
+		 SELECT ?, docs.name, docs.docid, session.userid, session.sessionid, ?, ?, ?
+		 FROM session JOIN docs
+		 WHERE session.sessionid = ? AND session.userid = ? AND session.expires > ?
+		   AND docs.docid = ? AND docs.name = ?`,
+		hashToken(code), hashToken(state), ret,
+		min(now+int64(siteLoginCodeTTL.Seconds()), sessionEnd),
+		sid, uid, now, rec.ID, site)
+	if err != nil {
 		internalError(w, "store login code", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		notFoundNoStore(w, r)
 		return
 	}
 	noStoreRedirect(w, s.originFor(site+"."+s.cfg.ContentDomain, r)+siteRedeemPath+"?"+url.Values{"code": {code}}.Encode())
@@ -295,10 +307,21 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 		return
 	}
 	end := min(now.Add(siteSessionTTL).Unix(), sessionEnd)
-	if _, err := s.db.ExecContext(r.Context(),
-		"INSERT INTO site_session (hash, site, siteid, userid, sessionid, expires) VALUES (?, ?, ?, ?, ?, ?)",
-		hashToken(token), site, siteID, uid, sid, end); err != nil {
+	// Conditional like the code insert: the session must still belong to the code's user
+	// and the site id must still carry the site's name.
+	res, err := s.db.ExecContext(r.Context(),
+		`INSERT INTO site_session (hash, site, siteid, userid, sessionid, expires)
+		 SELECT ?, docs.name, docs.docid, session.userid, session.sessionid, ?
+		 FROM session JOIN docs
+		 WHERE session.sessionid = ? AND session.userid = ? AND session.expires > ?
+		   AND docs.docid = ? AND docs.name = ?`,
+		hashToken(token), end, sid, uid, now.Unix(), siteID, site)
+	if err != nil {
 		siteInternalError(w, "store site session", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		notFoundNoStore(w, r)
 		return
 	}
 	s.setCookie(w, siteSessionCookie, "/", token, int(end-now.Unix()))

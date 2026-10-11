@@ -773,3 +773,23 @@ func TestSiteLoginCapsSameNameCookies(t *testing.T) {
 		t.Errorf("a cookie within the cap was ignored: %d", w.Code)
 	}
 }
+
+// A session id reused by another user between the check and the insert (rowid reuse after a
+// logout) must not leave a login behind: the inserts are conditional on the session still
+// belonging to the code's user.
+func TestSiteLoginRedeemRejectsReusedSessionID(t *testing.T) {
+	e := newLoginEnv(t, false)
+	pending, st := e.handoff(t, e.member, "secret")
+	// The session row now belongs to someone else, as after a logout and a new login that
+	// reused the id.
+	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE session SET userid = ?", e.outsider); err != nil {
+		t.Fatal(err)
+	}
+	w := e.redeem("secret", pending, st)
+	if cookieNamed(w, e.s.cookieName(siteSessionCookie)) != nil {
+		t.Error("site session issued for a reused session id")
+	}
+	if n := countRows(t, e.s, "site_session"); n != 0 {
+		t.Errorf("%d site sessions stored", n)
+	}
+}
