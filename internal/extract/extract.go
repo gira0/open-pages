@@ -215,15 +215,14 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 	}
 	// archive/zip starts at the declared offset, or at the end record minus the declared
 	// size when data was prepended to the file. Walk both.
-	starts := []uint64{dirOffset}
-	if ds, ok := int64Of(dirSize); ok && ds <= endAt {
-		starts = append(starts, uint64(endAt-ds))
+	var starts []int64
+	if off, ok := int64Of(dirOffset); ok {
+		starts = append(starts, off)
 	}
-	for _, start := range starts {
-		off, ok := int64Of(start)
-		if !ok {
-			continue
-		}
+	if ds, ok := int64Of(dirSize); ok && ds <= endAt {
+		starts = append(starts, endAt-ds)
+	}
+	for _, off := range starts {
 		n, err := walkDirectory(src, size, off, limits)
 		if err != nil {
 			return err
@@ -246,7 +245,10 @@ func walkDirectory(src io.ReaderAt, size, off int64, limits Limits) (int, error)
 		if off < 0 || size-off < headerLen {
 			break
 		}
-		if _, err := src.ReadAt(hdr[:], off); err != nil || !bytes.HasPrefix(hdr[:], []byte("PK\x01\x02")) {
+		if _, err := src.ReadAt(hdr[:], off); err != nil {
+			return n, fmt.Errorf("read zip: %w", err)
+		}
+		if !bytes.HasPrefix(hdr[:], []byte("PK\x01\x02")) {
 			break
 		}
 		off += headerLen + int64(binary.LittleEndian.Uint16(hdr[28:])) +
