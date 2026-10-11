@@ -24,11 +24,12 @@ type Server struct {
 	sites  string // directory holding extracted uploads
 	tmp    string // staging directory for extraction
 
-	deployMu sync.Mutex // serializes switching and pruning versions
-	metrics  *metrics
-	health   healthProbe
-	oidc     *oidcClient // nil unless [oidc] is enabled
-	saml     *samlClient // nil unless [saml] is enabled
+	deployMu  sync.Mutex    // serializes switching and pruning versions
+	deploySem chan struct{} // one token per running extraction; cap is cfg.MaxDeploys
+	metrics   *metrics
+	health    healthProbe
+	oidc      *oidcClient // nil unless [oidc] is enabled
+	saml      *samlClient // nil unless [saml] is enabled
 }
 
 // route is one pattern the API mux registers.

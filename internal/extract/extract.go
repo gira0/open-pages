@@ -7,9 +7,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -41,13 +44,51 @@ func sniffArchive(head []byte) archiveKind {
 
 // Limits bounds what an archive may expand to.
 type Limits struct {
-	MaxBytes int64 // total bytes written
+	MaxBytes int64 // total uncompressed bytes, of skipped entries too
 	MaxFiles int   // number of entries
+}
+
+const (
+	// headerAllowance is the room per entry for tar headers and block padding on top of
+	// MaxBytes, so that an archive holding exactly MaxBytes of files still fits.
+	headerAllowance = 2048
+	// streamSlack covers the tar end marker and extended headers.
+	streamSlack = 1 << 20
+	// maxDirEntryBytes caps the zip central directory at this many bytes per allowed entry.
+	maxDirEntryBytes = 1024
+)
+
+var errCanceled = errors.New("extraction stopped")
+
+// guardReader enforces the decompression budget and the context on a stream.
+type guardReader struct {
+	ctx   context.Context
+	r     io.Reader
+	n     int64
+	limit int64
+}
+
+func (g *guardReader) Read(p []byte) (int, error) {
+	if err := g.ctx.Err(); err != nil {
+		return 0, fmt.Errorf("%w: %w", errCanceled, err)
+	}
+	n, err := g.r.Read(p)
+	g.n += int64(n)
+	if g.limit > 0 && g.n > g.limit {
+		return n, fmt.Errorf("archive expands to more than %d MiB", g.limit>>20)
+	}
+	return n, err
+}
+
+// streamLimit is how many decompressed bytes a tar stream may produce.
+func streamLimit(l Limits) int64 {
+	return l.MaxBytes + int64(l.MaxFiles)*headerAllowance + streamSlack
 }
 
 // extractor writes archive entries below dest, refusing anything that would escape it
 // or exceed the limits. Symlinks and other special entries are skipped.
 type extractor struct {
+	ctx     context.Context
 	dest    string
 	limits  Limits
 	written int64
@@ -56,6 +97,9 @@ type extractor struct {
 
 // count records one archive entry, skipped ones included, and enforces MaxFiles.
 func (e *extractor) count() error {
+	if err := e.ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errCanceled, err)
+	}
 	e.files++
 	if e.files > e.limits.MaxFiles {
 		return fmt.Errorf("archive has more than %d entries", e.limits.MaxFiles)
@@ -93,7 +137,7 @@ func (e *extractor) file(name string, r io.Reader) error {
 		return err
 	}
 	remaining := e.limits.MaxBytes - e.written
-	n, err := io.CopyN(f, r, remaining+1)
+	n, err := io.CopyN(f, &guardReader{ctx: e.ctx, r: r}, remaining+1)
 	e.written += n
 	if cerr := f.Close(); err == nil || errors.Is(err, io.EOF) {
 		err = cerr
@@ -107,12 +151,147 @@ func (e *extractor) file(name string, r io.Reader) error {
 	return nil
 }
 
-func extractZip(src io.ReaderAt, size int64, dest string, limits Limits) error {
+// int64Of converts a size read from an archive, reporting false if it cannot be a file offset.
+func int64Of(v uint64) (int64, bool) {
+	if v > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(v), true
+}
+
+// checkZipDirectory refuses a zip with too many entries before zip.NewReader parses its
+// central directory into memory. It follows archive/zip's own reading of the end records
+// (readDirectoryEnd and findDirectory64End) so that it looks at the directory the reader
+// will use. The counts in those records are attacker-controlled, and archive/zip keeps
+// reading headers past the declared count, so it also walks the real directory headers,
+// which costs one small read per entry and stops at MaxFiles+1.
+func checkZipDirectory(ctx context.Context, src io.ReaderAt, size int64, limits Limits) error {
+	const eocdLen, locLen, end64Len = 22, 20, 56
+	tailLen := min(size, 65*1024)
+	tail := make([]byte, tailLen)
+	if _, err := src.ReadAt(tail, size-tailLen); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read zip: %w", err)
+	}
+	// The last end-record signature in the tail, as archive/zip finds it: a comment that
+	// runs past the end of the file is an error there, not a reason to look further back.
+	i := len(tail) - eocdLen
+	for ; i >= 0; i-- {
+		if bytes.HasPrefix(tail[i:], []byte("PK\x05\x06")) {
+			break
+		}
+	}
+	if i < 0 || i+eocdLen+int(binary.LittleEndian.Uint16(tail[i+20:])) > len(tail) {
+		return errors.New("read zip: no end of central directory")
+	}
+	eocd := tail[i:]
+	endAt := size - tailLen + int64(i) // where the end record that holds the directory fields starts
+	entries := uint64(binary.LittleEndian.Uint16(eocd[10:]))
+	dirSize := uint64(binary.LittleEndian.Uint32(eocd[12:]))
+	dirOffset := uint64(binary.LittleEndian.Uint32(eocd[16:]))
+	// archive/zip tests the 16-bit value 0xffff for the size as well as the count.
+	if entries == 0xffff || dirSize == 0xffff || dirOffset == 0xffffffff {
+		// The zip64 locator sits right before the end record. One that is missing, or
+		// that names another disk or a disk total other than 1, is ignored, and the
+		// values above stay in force.
+		var loc [locLen]byte
+		if endAt >= locLen {
+			if _, err := src.ReadAt(loc[:], endAt-locLen); err != nil {
+				return fmt.Errorf("read zip: %w", err)
+			}
+		}
+		if endAt >= locLen && bytes.HasPrefix(loc[:], []byte("PK\x06\x07")) &&
+			binary.LittleEndian.Uint32(loc[4:]) == 0 && binary.LittleEndian.Uint32(loc[16:]) == 1 {
+			at, ok := int64Of(binary.LittleEndian.Uint64(loc[8:]))
+			var rec [end64Len]byte
+			if !ok || at > size-end64Len {
+				return errors.New("read zip: bad zip64 record")
+			}
+			if _, err := src.ReadAt(rec[:], at); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) {
+				return errors.New("read zip: bad zip64 record")
+			}
+			endAt = at
+			entries = binary.LittleEndian.Uint64(rec[32:])
+			dirSize = binary.LittleEndian.Uint64(rec[40:])
+			dirOffset = binary.LittleEndian.Uint64(rec[48:])
+		}
+	}
+	tooMany := fmt.Errorf("archive has more than %d entries", limits.MaxFiles)
+	if n, ok := int64Of(entries); !ok || n > int64(limits.MaxFiles) {
+		return tooMany
+	}
+	// archive/zip starts at the declared offset, or at the end record minus the declared
+	// size when data was prepended to the file. Walk both.
+	var starts []int64
+	if off, ok := int64Of(dirOffset); ok {
+		starts = append(starts, off)
+	}
+	if ds, ok := int64Of(dirSize); ok && ds <= endAt {
+		starts = append(starts, endAt-ds)
+	}
+	for _, off := range starts {
+		n, err := walkDirectory(ctx, src, size, off, limits)
+		if err != nil {
+			return err
+		}
+		if n > limits.MaxFiles {
+			return tooMany
+		}
+	}
+	return nil
+}
+
+// walkDirectory counts the central directory headers that follow one another from off,
+// stopping at the first position that is not a header or after MaxFiles+1 of them.
+func walkDirectory(ctx context.Context, src io.ReaderAt, size, off int64, limits Limits) (int, error) {
+	const headerLen = 46
+	end := off + int64(limits.MaxFiles+1)*maxDirEntryBytes
+	var hdr [headerLen]byte
+	n := 0
+	for n <= limits.MaxFiles {
+		if err := ctx.Err(); err != nil {
+			return n, fmt.Errorf("%w: %w", errCanceled, err)
+		}
+		if off < 0 || size-off < headerLen {
+			break
+		}
+		if _, err := src.ReadAt(hdr[:], off); err != nil {
+			return n, fmt.Errorf("read zip: %w", err)
+		}
+		if !bytes.HasPrefix(hdr[:], []byte("PK\x01\x02")) {
+			break
+		}
+		off += headerLen + int64(binary.LittleEndian.Uint16(hdr[28:])) +
+			int64(binary.LittleEndian.Uint16(hdr[30:])) + int64(binary.LittleEndian.Uint16(hdr[32:]))
+		if off > end {
+			return n, errors.New("read zip: central directory is too large")
+		}
+		n++
+	}
+	return n, nil
+}
+
+func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, limits Limits) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errCanceled, err)
+	}
+	if err := checkZipDirectory(ctx, src, size, limits); err != nil {
+		return err
+	}
 	zr, err := zip.NewReader(src, size)
 	if err != nil {
 		return fmt.Errorf("read zip: %w", err)
 	}
-	e := &extractor{dest: dest, limits: limits}
+	// Declared sizes can lie, which the byte count in file() still catches; this just
+	// turns away the honest oversized archive without writing anything.
+	var declared int64
+	for _, f := range zr.File {
+		size, ok := int64Of(f.UncompressedSize64)
+		if !ok || size > limits.MaxBytes-declared {
+			return fmt.Errorf("archive expands to more than %d MiB", limits.MaxBytes>>20)
+		}
+		declared += size
+	}
+	e := &extractor{ctx: ctx, dest: dest, limits: limits}
 	for _, f := range zr.File {
 		if err := e.count(); err != nil {
 			return err
@@ -135,9 +314,12 @@ func extractZip(src io.ReaderAt, size int64, dest string, limits Limits) error {
 	return nil
 }
 
-func extractTar(src io.Reader, dest string, limits Limits) error {
-	tr := tar.NewReader(src)
-	e := &extractor{dest: dest, limits: limits}
+// extractTar reads the tar stream src. The stream is wrapped in a guardReader because
+// tar.Reader.Next reads and discards the data of entries it skips, so only a limit on the
+// stream itself bounds that work.
+func extractTar(ctx context.Context, src io.Reader, dest string, limits Limits) error {
+	tr := tar.NewReader(&guardReader{ctx: ctx, r: src, limit: streamLimit(limits)})
+	e := &extractor{ctx: ctx, dest: dest, limits: limits}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -162,8 +344,8 @@ func extractTar(src io.Reader, dest string, limits Limits) error {
 }
 
 // Archive detects the format of src (zip, gzipped tar or tar) and extracts it into dest.
-// It returns ErrUnsupported for any other format.
-func Archive(src *os.File, dest string, limits Limits) error {
+// It returns ErrUnsupported for any other format, and stops with an error once ctx is done.
+func Archive(ctx context.Context, src *os.File, dest string, limits Limits) error {
 	head := make([]byte, 512)
 	n, err := src.ReadAt(head, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -179,16 +361,16 @@ func Archive(src *os.File, dest string, limits Limits) error {
 
 	switch sniffArchive(head[:n]) {
 	case kindZip:
-		return extractZip(src, st.Size(), dest, limits)
+		return extractZip(ctx, src, st.Size(), dest, limits)
 	case kindTarGz:
 		gz, err := gzip.NewReader(src)
 		if err != nil {
 			return fmt.Errorf("read gzip: %w", err)
 		}
 		defer gz.Close()
-		return extractTar(gz, dest, limits)
+		return extractTar(ctx, gz, dest, limits)
 	case kindTar:
-		return extractTar(src, dest, limits)
+		return extractTar(ctx, src, dest, limits)
 	}
 	return ErrUnsupported
 }

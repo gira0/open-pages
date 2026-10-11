@@ -116,8 +116,24 @@ func (s *Server) handleFormUpload(w http.ResponseWriter, r *http.Request) {
 	s.storeUpload(w, r, site, f)
 }
 
+// deployRetryAfter is the Retry-After value, in seconds, sent when every deploy slot is taken.
+const deployRetryAfter = "30"
+
+// deployBusy answers an upload that arrives while every extraction slot is taken.
+func deployBusy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", deployRetryAfter)
+	writeError(w, http.StatusServiceUnavailable, "too many deploys are running, retry shortly")
+}
+
 // storeUpload spools the archive to disk and deploys it as a new version of site.
 func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, src io.Reader) {
+	// Extraction is the expensive part, so only a few run at once. The slot is taken after
+	// spooling, so a slow client cannot hold one. This early check saves a doomed raw upload
+	// the transfer; a form upload has been spooled by the time it runs.
+	if len(s.deploySem) == cap(s.deploySem) {
+		deployBusy(w)
+		return
+	}
 	spool, err := os.CreateTemp(s.tmp, "upload-*")
 	if err != nil {
 		internalError(w, "create spool file", err)
@@ -137,7 +153,20 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 		return
 	}
 
+	select {
+	case s.deploySem <- struct{}{}:
+		defer func() { <-s.deploySem }()
+	default:
+		deployBusy(w)
+		return
+	}
 	version, err := s.deploy(r.Context(), site, spool)
+	if r.Context().Err() != nil {
+		// The client went away mid-deploy: nobody reads a response, and a disconnect is
+		// not a server failure.
+		ctxLogger(r.Context()).Info("upload abandoned", "site", site.Name)
+		return
+	}
 	if errors.Is(err, errSiteNotFound) {
 		s.metrics.recordDeploy(deployFailed)
 		writeError(w, http.StatusNotFound, err.Error())

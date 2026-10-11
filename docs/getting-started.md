@@ -103,6 +103,13 @@ The `op_data/` and `tmp/` directories are created if missing (`op_data` mode 075
 | `max_upload_mb` | `100` | Largest accepted upload (the archive as sent). Over it: 413 on `upload` |
 | `max_extract_mb` | `500` | Largest total uncompressed size of an archive |
 | `max_extract_files` | `10000` | Largest number of entries in an archive |
+| `max_concurrent_deploys` | `2` | Uploads extracted at the same time. Further uploads get 503 with `Retry-After` |
+| `deploy_timeout_seconds` | `600` | Time budget for extracting one upload; extraction also stops when the client disconnects |
+
+`max_extract_mb` counts decompressed bytes read from the archive, including entries that
+are skipped (symlinks and other special entries). A zip with more than `max_extract_files`
+entries is rejected before its directory is parsed, and one that declares more than
+`max_extract_mb` in total is rejected before anything is written.
 
 Archives breaking the extract limits, or with entries outside the site directory, are
 rejected with 400. Make sure a reverse proxy in front allows bodies of at least
