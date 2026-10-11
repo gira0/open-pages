@@ -104,12 +104,13 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 	if token, ok := bearerToken(r); ok {
 		return s.tokenUser(r.Context(), token)
 	}
-	c, err := r.Cookie(s.cookieName(siteSessionCookie))
-	if err != nil {
+	cookies := r.CookiesNamed(s.cookieName(siteSessionCookie))
+	if len(cookies) == 0 {
 		return 0, nil
 	}
+	c := cookies[0]
 	var uid int64
-	err = s.db.QueryRowContext(r.Context(),
+	err := s.db.QueryRowContext(r.Context(),
 		`SELECT ss.userid FROM site_session ss JOIN session ON session.sessionid = ss.sessionid
 		 WHERE ss.hash = ? AND ss.site = ? AND ss.expires > ? AND session.expires > ?`,
 		hashToken(c.Value), site, time.Now().Unix(), time.Now().Unix()).Scan(&uid)
@@ -176,11 +177,13 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().Unix()
-	for _, table := range []string{"site_login_code", "site_session"} {
-		if _, err := s.db.ExecContext(r.Context(), "DELETE FROM "+table+" WHERE expires <= ?", now); err != nil {
-			internalError(w, "prune site logins", err)
-			return
-		}
+	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM site_login_code WHERE expires <= ?", now); err != nil {
+		internalError(w, "prune site login codes", err)
+		return
+	}
+	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM site_session WHERE expires <= ?", now); err != nil {
+		internalError(w, "prune site sessions", err)
+		return
 	}
 	if _, err := s.db.ExecContext(r.Context(),
 		`INSERT INTO site_login_code (hash, site, userid, sessionid, state_hash, return_to, expires)

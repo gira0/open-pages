@@ -96,11 +96,11 @@ func location(t *testing.T, w *httptest.ResponseRecorder) *url.URL {
 	return u
 }
 
-// handoff runs the first two steps for uid (0: no app session): the visit to the site and
+// handoff runs the first two steps for uid (0: no app session): the visit to the site root and
 // the visit to the app host. It returns the code and the state cookie header of the site.
-func (e *loginEnv) handoff(t *testing.T, uid int64, site, target string) (code, stateCookie string) {
+func (e *loginEnv) handoff(t *testing.T, uid int64, site string) (code, stateCookie string) {
 	t.Helper()
-	w := do(e.s, "GET", siteHost(site), target)
+	w := do(e.s, "GET", siteHost(site), "/")
 	toApp := location(t, w)
 	st := cookieNamed(w, e.s.cookieName(siteStateCookie))
 	if st == nil {
@@ -126,7 +126,7 @@ func (e *loginEnv) redeem(site, code, stateCookie string) *httptest.ResponseReco
 // signIn runs the whole handoff and returns the site cookie header.
 func (e *loginEnv) signIn(t *testing.T, uid int64, site string) string {
 	t.Helper()
-	code, st := e.handoff(t, uid, site, "/")
+	code, st := e.handoff(t, uid, site)
 	w := e.redeem(site, code, st)
 	location(t, w)
 	c := cookieNamed(w, e.s.cookieName(siteSessionCookie))
@@ -255,7 +255,7 @@ func TestSiteLoginPorts(t *testing.T) {
 
 func TestSiteLoginCodeSingleUse(t *testing.T) {
 	e := newLoginEnv(t, false)
-	code, st := e.handoff(t, e.member, "secret", "/")
+	code, st := e.handoff(t, e.member, "secret")
 	if w := e.redeem("secret", code, st); w.Code != http.StatusFound {
 		t.Fatalf("first redeem: %d", w.Code)
 	}
@@ -272,7 +272,7 @@ func TestSiteLoginCodeSingleUse(t *testing.T) {
 
 func TestSiteLoginCodeExpires(t *testing.T) {
 	e := newLoginEnv(t, false)
-	code, st := e.handoff(t, e.member, "secret", "/")
+	code, st := e.handoff(t, e.member, "secret")
 	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE site_login_code SET expires = ?", time.Now().Unix()-1); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestSiteLoginCodeExpires(t *testing.T) {
 		t.Errorf("expired code: %d", w.Code)
 	}
 	// Expired codes are pruned when the next one is issued.
-	e.handoff(t, e.member, "secret", "/")
+	e.handoff(t, e.member, "secret")
 	if n := countRows(t, e.s, "site_login_code"); n != 1 {
 		t.Errorf("%d codes left", n)
 	}
@@ -295,7 +295,7 @@ func TestSiteLoginCodeExpires(t *testing.T) {
 
 func TestSiteLoginCodeBoundToSite(t *testing.T) {
 	e := newLoginEnv(t, false)
-	code, st := e.handoff(t, e.member, "secret", "/")
+	code, st := e.handoff(t, e.member, "secret")
 	// Same state cookie, other site host: rejected, and the code is spent.
 	if w := e.redeem("intra", code, st); w.Code != http.StatusNotFound || cookieNamed(w, e.s.cookieName(siteSessionCookie)) != nil {
 		t.Errorf("code on another site: %d", w.Code)
@@ -309,7 +309,7 @@ func TestSiteLoginStateCookie(t *testing.T) {
 	e := newLoginEnv(t, false)
 	other := e.s.cookieName(siteStateCookie) + "=" + strings.Repeat("0", 64)
 	for name, cookie := range map[string]string{"missing": "", "mismatched": other} {
-		code, st := e.handoff(t, e.member, "secret", "/")
+		code, st := e.handoff(t, e.member, "secret")
 		_ = st
 		w := e.redeem("secret", code, cookie)
 		if w.Code != http.StatusNotFound || cookieNamed(w, e.s.cookieName(siteSessionCookie)) != nil {
@@ -485,7 +485,7 @@ func TestSiteLoginLogoutRevokes(t *testing.T) {
 		t.Errorf("%d site sessions left", n)
 	}
 	// An unredeemed code dies with the session too.
-	e.handoff(t, e.owner, "secret", "/")
+	e.handoff(t, e.owner, "secret")
 	r = httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
 	r.Host = testAppHost
 	r.Header.Set("Cookie", e.appCookie(e.owner))
@@ -501,7 +501,7 @@ func TestSiteLoginExpiry(t *testing.T) {
 	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE session SET expires = ? WHERE userid = ?", time.Now().Unix()+120, e.member); err != nil {
 		t.Fatal(err)
 	}
-	code, st := e.handoff(t, e.member, "secret", "/")
+	code, st := e.handoff(t, e.member, "secret")
 	w := e.redeem("secret", code, st)
 	c := cookieNamed(w, e.s.cookieName(siteSessionCookie))
 	if c == nil || c.MaxAge <= 0 || c.MaxAge > 120 {

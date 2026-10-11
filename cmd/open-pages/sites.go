@@ -324,10 +324,11 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
-	for _, table := range []string{"site_session", "site_login_code"} {
-		if _, err := s.db.ExecContext(ctx, "DELETE FROM "+table+" WHERE site = ?", site.Name); err != nil {
-			return fmt.Errorf("delete site logins: %w", err)
-		}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM site_session WHERE site = ?", site.Name); err != nil {
+		return fmt.Errorf("delete site sessions: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM site_login_code WHERE site = ?", site.Name); err != nil {
+		return fmt.Errorf("delete site login codes: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM docs WHERE docid = ?", site.ID); err != nil {
 		return fmt.Errorf("delete site: %w", err)
