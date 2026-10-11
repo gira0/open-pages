@@ -98,6 +98,8 @@ func newServer(cfg config.Config) (*Server, error) {
 		sites: filepath.Join(cfg.DataPath, "op_data"),
 		tmp:   filepath.Join(cfg.TmpPath, "tmp"),
 
+		deploySem: make(chan struct{}, max(cfg.MaxDeploys, 1)),
+
 		metrics: newMetrics(),
 	}
 	if cfg.OIDC.Enabled {

@@ -5,9 +5,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -92,7 +97,7 @@ func run(t *testing.T, data []byte, limits Limits) (string, error) {
 		t.Fatal(err)
 	}
 	dest := t.TempDir()
-	return dest, Archive(f, dest, limits)
+	return dest, Archive(t.Context(), f, dest, limits)
 }
 
 func readFile(t *testing.T, path string) string {
@@ -214,6 +219,131 @@ func TestArchiveLimits(t *testing.T) {
 		}
 		if _, err := run(t, data, Limits{MaxBytes: 10, MaxFiles: 1}); err == nil {
 			t.Errorf("%s: file limit not enforced", kind)
+		}
+	}
+}
+
+// An entry of a skipped type still has its data decompressed by tar.Reader.Next, so the
+// budget has to apply to the stream, not to what is written.
+func TestSkippedEntryDataCountsAgainstBudget(t *testing.T) {
+	big := entry{name: "bomb", typ: 'Z', body: strings.Repeat("\x00", 8<<20)}
+	tarData := tarBytes(t, big)
+	limits := Limits{MaxBytes: 1 << 20, MaxFiles: 10}
+	for kind, data := range map[string][]byte{"tar": tarData, "tar.gz": gz(t, tarData)} {
+		dest, err := run(t, data, limits)
+		if err == nil || !strings.Contains(err.Error(), "expands to more than") {
+			t.Errorf("%s: err = %v, want expansion error", kind, err)
+		}
+		if entries, _ := os.ReadDir(dest); len(entries) != 0 {
+			t.Errorf("%s: wrote %v", kind, entries)
+		}
+	}
+}
+
+// An archive that holds exactly MaxBytes of files, with headers and padding, still fits.
+func TestStreamAllowanceCoversHeaders(t *testing.T) {
+	var es []entry
+	for i := range 20 {
+		es = append(es, entry{name: fmt.Sprintf("d/f%02d", i), body: "x"})
+	}
+	tarData := tarBytes(t, es...)
+	for kind, data := range map[string][]byte{"tar": tarData, "tar.gz": gz(t, tarData)} {
+		if _, err := run(t, data, Limits{MaxBytes: 20, MaxFiles: 20}); err != nil {
+			t.Errorf("%s: %v", kind, err)
+		}
+	}
+}
+
+func TestZipEntryCountCheckedBeforeParsing(t *testing.T) {
+	var es []entry
+	for i := range 200 {
+		es = append(es, entry{name: fmt.Sprintf("f%03d", i)})
+	}
+	data := zipBytes(t, es...)
+	err := checkZipDirectory(bytes.NewReader(data), int64(len(data)), Limits{MaxBytes: 1 << 20, MaxFiles: 100})
+	if err == nil || !strings.Contains(err.Error(), "more than 100 entries") {
+		t.Fatalf("err = %v, want entry count error", err)
+	}
+	if err := checkZipDirectory(bytes.NewReader(data), int64(len(data)), Limits{MaxBytes: 1 << 20, MaxFiles: 200}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A zip64 archive keeps its real count in the zip64 record, not in the end record.
+func TestZip64EntryCount(t *testing.T) {
+	le := binary.LittleEndian
+	rec := make([]byte, 56)
+	copy(rec, "PK\x06\x06")
+	le.PutUint64(rec[32:], 1_000_000)
+	le.PutUint64(rec[40:], 1_000_000*46)
+	loc := make([]byte, 20)
+	copy(loc, "PK\x06\x07")
+	le.PutUint64(loc[8:], 0)
+	eocd := make([]byte, 22)
+	copy(eocd, "PK\x05\x06")
+	le.PutUint16(eocd[10:], 0xffff)
+	le.PutUint32(eocd[12:], 0xffffffff)
+	data := slices.Concat(rec, loc, eocd)
+	err := checkZipDirectory(bytes.NewReader(data), int64(len(data)), Limits{MaxBytes: 1 << 20, MaxFiles: 100})
+	if err == nil || !strings.Contains(err.Error(), "more than 100 entries") {
+		t.Fatalf("err = %v, want entry count error", err)
+	}
+}
+
+// A record forged inside the archive comment must be read the way archive/zip reads it,
+// or the pre-check could approve a count that zip.NewReader never sees.
+func TestZipForgedRecordMatchesReader(t *testing.T) {
+	var es []entry
+	for i := range 50 {
+		es = append(es, entry{name: fmt.Sprintf("f%02d", i)})
+	}
+	data := zipBytes(t, es...)
+	forged := make([]byte, 22)
+	copy(forged, "PK\x05\x06")
+	eocdAt := bytes.LastIndex(data, []byte("PK\x05\x06"))
+	binary.LittleEndian.PutUint16(data[eocdAt+20:], uint16(len(forged)))
+	data = append(data, forged...)
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	seen := 0
+	if err == nil {
+		seen = len(zr.File)
+	}
+	// Whatever archive/zip makes of it, the check must not allow more than it will read.
+	limits := Limits{MaxBytes: 1 << 20, MaxFiles: 10}
+	if err := checkZipDirectory(bytes.NewReader(data), int64(len(data)), limits); err == nil && seen > limits.MaxFiles {
+		t.Fatalf("check passed but reader sees %d entries", seen)
+	}
+}
+
+func TestZipDeclaredSizeRejectedUpFront(t *testing.T) {
+	half := strings.Repeat("a", 600<<10)
+	data := zipBytes(t, entry{name: "a", body: half}, entry{name: "b", body: half})
+	dest, err := run(t, data, Limits{MaxBytes: 1 << 20, MaxFiles: 10})
+	if err == nil || !strings.Contains(err.Error(), "expands to more than") {
+		t.Fatalf("err = %v, want expansion error", err)
+	}
+	if entries, _ := os.ReadDir(dest); len(entries) != 0 {
+		t.Errorf("wrote %v before rejecting", entries)
+	}
+}
+
+func TestCanceledContextStopsExtraction(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for kind, data := range map[string][]byte{
+		"zip":    zipBytes(t, entry{name: "a", body: "a"}),
+		"tar":    tarBytes(t, entry{name: "a", body: "a"}),
+		"tar.gz": gz(t, tarBytes(t, entry{name: "a", body: "a"})),
+	} {
+		f, err := os.CreateTemp(t.TempDir(), "up-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Write(data)
+		err = Archive(ctx, f, t.TempDir(), bigLimits)
+		f.Close()
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("%s: err = %v, want context.Canceled", kind, err)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/gira0/open-pages/internal/logging"
 )
@@ -24,6 +25,8 @@ cors_origins = https://a.example, https://b.example
 
 [limits]
 max_upload_mb = 5
+max_concurrent_deploys = 4
+deploy_timeout_seconds = 90
 `
 	if err := os.WriteFile(path, []byte(ini), 0o600); err != nil {
 		t.Fatal(err)
@@ -46,6 +49,9 @@ max_upload_mb = 5
 	}
 	if cfg.MaxUploadBytes != 5<<20 {
 		t.Errorf("MaxUploadBytes = %d", cfg.MaxUploadBytes)
+	}
+	if cfg.MaxDeploys != 4 || cfg.DeployTimeout != 90*time.Second {
+		t.Errorf("MaxDeploys = %d, DeployTimeout = %v", cfg.MaxDeploys, cfg.DeployTimeout)
 	}
 	if cfg.MaxExtractFile != Default().MaxExtractFile {
 		t.Errorf("MaxExtractFile = %d, want default", cfg.MaxExtractFile)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gira0/open-pages/internal/logging"
 	"gopkg.in/ini.v1"
@@ -16,24 +17,26 @@ import (
 
 // Config holds all runtime settings, read from settings.ini.
 type Config struct {
-	Listen         string     // address to bind, e.g. ":8080"
-	DataPath       string     // absolute base dir; sites live in <DataPath>/op_data
-	TmpPath        string     // absolute base dir; uploads are staged in <TmpPath>/tmp
-	CookieSecure   bool       // set the Secure flag on the session cookie (enable behind HTTPS)
-	MaxUploadBytes int64      // max size of an uploaded archive
-	MaxExtractSize int64      // max total uncompressed size of an archive
-	MaxExtractFile int        // max number of entries in an archive
-	KeepVersions   int        // versions kept on disk per site, including the current one
-	CORSOrigins    []string   // allowed cross-origin callers; empty means same-origin only
-	URLMode        string     // how a request names its site: URLModePath or URLModeSubdomain
-	BaseDomain     string     // bare host (no port) of the API and UI; also the parent of site subdomains
-	LogLevel       slog.Level // minimum level written to the log
-	LogFormat      string     // logging.FormatText or logging.FormatJSON
-	MetricsListen  string     // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
-	MetricsToken   string     // bearer token for /metrics on the main listener; empty disables it there
-	LocalLogin     bool       // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
-	OIDC           OIDCConfig // optional OpenID Connect sign-in; disabled by default
-	SAML           SAMLConfig // optional SAML 2.0 sign-in; disabled by default
+	Listen         string        // address to bind, e.g. ":8080"
+	DataPath       string        // absolute base dir; sites live in <DataPath>/op_data
+	TmpPath        string        // absolute base dir; uploads are staged in <TmpPath>/tmp
+	CookieSecure   bool          // set the Secure flag on the session cookie (enable behind HTTPS)
+	MaxUploadBytes int64         // max size of an uploaded archive
+	MaxExtractSize int64         // max total uncompressed size of an archive
+	MaxExtractFile int           // max number of entries in an archive
+	MaxDeploys     int           // uploads extracted at once; more get 503 with Retry-After
+	DeployTimeout  time.Duration // time budget for extracting one upload
+	KeepVersions   int           // versions kept on disk per site, including the current one
+	CORSOrigins    []string      // allowed cross-origin callers; empty means same-origin only
+	URLMode        string        // how a request names its site: URLModePath or URLModeSubdomain
+	BaseDomain     string        // bare host (no port) of the API and UI; also the parent of site subdomains
+	LogLevel       slog.Level    // minimum level written to the log
+	LogFormat      string        // logging.FormatText or logging.FormatJSON
+	MetricsListen  string        // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
+	MetricsToken   string        // bearer token for /metrics on the main listener; empty disables it there
+	LocalLogin     bool          // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
+	OIDC           OIDCConfig    // optional OpenID Connect sign-in; disabled by default
+	SAML           SAMLConfig    // optional SAML 2.0 sign-in; disabled by default
 }
 
 // SAMLConfig is the [saml] section.
@@ -82,6 +85,8 @@ func Default() Config {
 		MaxUploadBytes: 100 << 20,
 		MaxExtractSize: 500 << 20,
 		MaxExtractFile: 10000,
+		MaxDeploys:     2,
+		DeployTimeout:  10 * time.Minute,
 		KeepVersions:   5,
 		URLMode:        URLModePath,
 		LogLevel:       slog.LevelInfo,
@@ -120,6 +125,8 @@ func Load(path string) (Config, error) {
 	cfg.MaxUploadBytes = limits.Key("max_upload_mb").MustInt64(cfg.MaxUploadBytes>>20) << 20
 	cfg.MaxExtractSize = limits.Key("max_extract_mb").MustInt64(cfg.MaxExtractSize>>20) << 20
 	cfg.MaxExtractFile = limits.Key("max_extract_files").MustInt(cfg.MaxExtractFile)
+	cfg.MaxDeploys = max(limits.Key("max_concurrent_deploys").MustInt(cfg.MaxDeploys), 1)
+	cfg.DeployTimeout = time.Duration(max(limits.Key("deploy_timeout_seconds").MustInt(int(cfg.DeployTimeout/time.Second)), 1)) * time.Second
 
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
