@@ -98,8 +98,13 @@ func (s *Server) routes() http.Handler {
 		mux.Handle(r.pattern, r.handler)
 	}
 	// Hosts that aren't the app host answer only health probes (see dispatch).
-	probes := http.NewServeMux()
-	probes.HandleFunc("GET /healthz", s.handleHealth)
+	probes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			s.handleHealth(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 	return s.observe(s.dispatch(s.cors(mux), probes))
 }
 

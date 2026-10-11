@@ -234,6 +234,10 @@ func TestHealthzOnAnyHost(t *testing.T) {
 		expectStatus(t, do(s, "GET", host, "/healthz").Code, http.StatusOK)
 		expectStatus(t, do(s, "HEAD", host, "/healthz").Code, http.StatusOK)
 	}
+	// Only GET and HEAD of the exact path: no 405s, no redirects.
+	for _, req := range [][2]string{{"POST", "/healthz"}, {"GET", "/healthz/"}, {"GET", "//healthz"}, {"GET", "/x/../healthz"}} {
+		expectStatus(t, do(s, req[0], "10.0.0.7", req[1]).Code, http.StatusNotFound)
+	}
 	// /metrics is for the app host only (and the dedicated listener).
 	expectStatus(t, do(s, "GET", "127.0.0.1:8080", "/metrics", "Authorization", "Bearer "+testMetricsToken).Code, http.StatusNotFound)
 	expectStatus(t, do(s, "GET", testAppHost, "/metrics", "Authorization", "Bearer "+testMetricsToken).Code, http.StatusOK)

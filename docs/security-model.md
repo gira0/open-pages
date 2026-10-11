@@ -14,7 +14,12 @@ hold, and what is not covered yet.
   `app_host` under it as a site host.
 - **Each site is its own origin.** Every site has its own host, so its scripts, cookies and
   local storage are separate from every other site's and from the app's. A site cannot read
-  or script another site.
+  or script another site. Cookies are the one exception, because browsers scope them by
+  domain, not origin: script on one site can set a cookie with `Domain=<content_domain>`
+  that the browser sends to every sibling site (and, unless `content_domain` is a public
+  suffix, nothing stops that). Sites and tools that keep security-relevant state in cookies
+  must use host-only cookies with the `__Host-` prefix, and must not trust a cookie a
+  sibling site could have set.
 - **The app session never reaches content hosts.** The session cookie is set without a
   `Domain` attribute (host-only), so a browser sends it to `app_host` and nowhere else,
   and it is `HttpOnly` and `SameSite=Lax`, so script on a site host can neither read it nor
