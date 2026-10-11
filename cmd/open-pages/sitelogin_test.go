@@ -645,3 +645,22 @@ func TestSiteDeleteRevokesSiteLogins(t *testing.T) {
 		t.Errorf("%d site sessions left for a deleted site", n)
 	}
 }
+
+// A planted cookie of the same name (possible without cookie_secure) must not shadow the real
+// site cookie, nor the state cookie at redeem.
+func TestSiteLoginIgnoresShadowCookies(t *testing.T) {
+	e := newLoginEnv(t, false)
+	name := e.s.cookieName(siteSessionCookie)
+	good := e.signIn(t, e.member, "secret")
+
+	w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", name+"=junk; "+good)
+	if w.Code != http.StatusOK {
+		t.Errorf("real cookie shadowed by a junk one: status %d", w.Code)
+	}
+
+	code, st := e.handoff(t, e.member, "secret")
+	w = e.redeem("secret", code, siteStateCookie+"=junk; "+st)
+	if cookieNamed(w, name) == nil {
+		t.Errorf("redeem shadowed by a junk state cookie: status %d", w.Code)
+	}
+}

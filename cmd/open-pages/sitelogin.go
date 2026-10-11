@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,20 +110,20 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 	if token, ok := bearerToken(r); ok {
 		return s.tokenUser(r.Context(), token)
 	}
-	cookies := r.CookiesNamed(s.cookieName(siteSessionCookie))
-	if len(cookies) == 0 {
-		return 0, nil
+	// Without cookie_secure a sibling site can plant a cookie of the same name that comes
+	// first, so every one is tried.
+	for _, c := range r.CookiesNamed(s.cookieName(siteSessionCookie)) {
+		var uid int64
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT ss.userid FROM site_session ss JOIN session ON session.sessionid = ss.sessionid
+			 WHERE ss.hash = ? AND ss.site = ? AND ss.expires > ? AND session.expires > ?`,
+			hashToken(c.Value), site, time.Now().Unix(), time.Now().Unix()).Scan(&uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		return uid, err
 	}
-	c := cookies[0]
-	var uid int64
-	err := s.db.QueryRowContext(r.Context(),
-		`SELECT ss.userid FROM site_session ss JOIN session ON session.sessionid = ss.sessionid
-		 WHERE ss.hash = ? AND ss.site = ? AND ss.expires > ? AND session.expires > ?`,
-		hashToken(c.Value), site, time.Now().Unix(), time.Now().Unix()).Scan(&uid)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return uid, err
+	return 0, nil
 }
 
 // redirectToLogin sends a GET or HEAD without credentials to the app host and sets the
@@ -220,9 +221,8 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
-	var state string
-	if c, err := r.Cookie(s.cookieName(siteStateCookie)); err == nil {
-		state = c.Value
+	states := r.CookiesNamed(s.cookieName(siteStateCookie))
+	if len(states) > 0 {
 		s.setCookie(w, siteStateCookie, "/", "", -1) // one attempt per nonce
 	}
 	var (
@@ -242,8 +242,9 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 		return
 	}
 	now := time.Now()
-	if expires <= now.Unix() || codeSite != site || state == "" ||
-		subtle.ConstantTimeCompare([]byte(hashToken(state)), []byte(stateHash)) != 1 {
+	if expires <= now.Unix() || codeSite != site || !slices.ContainsFunc(states, func(c *http.Cookie) bool {
+		return subtle.ConstantTimeCompare([]byte(hashToken(c.Value)), []byte(stateHash)) == 1
+	}) {
 		notFoundNoStore(w, r)
 		return
 	}
