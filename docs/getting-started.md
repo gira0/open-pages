@@ -117,7 +117,7 @@ rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 |---|---|---|
 | `keep_versions` | `5` | Versions kept per site, including the live one; older ones are deleted after each deploy and can no longer be rolled back to. Values below 1 are treated as 1 |
 | `app_host` | none, required | Bare host name of the API and UI (for example `pages.corp`). Lower-cased, one trailing dot removed; no scheme, port or path. See [URLs and hosts](#urls-and-hosts) |
-| `content_domain` | none, required | Bare domain whose subdomains serve the sites: a site `blog` is at `https://blog.<content_domain>/` (for example `pages-content.corp`). Same format as `app_host`. Must not equal `app_host`, and `app_host` must not be `<label>.<content_domain>` |
+| `content_domain` | none, required | Bare domain whose subdomains serve the sites: a site `blog` is at `https://blog.<content_domain>/` (for example `pages-content.corp`). Same format as `app_host`. Neither `app_host` nor `content_domain` may equal the other or be a subdomain of the other, at any depth |
 
 `url_mode` and `base_domain` no longer exist; a settings file that still sets either fails
 startup with a message pointing here.
