@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gira0/open-pages/internal/logging"
 )
@@ -25,6 +26,8 @@ cors_origins = https://a.example, https://b.example
 
 [limits]
 max_upload_mb = 5
+max_concurrent_deploys = 4
+deploy_timeout_seconds = 90
 
 [sites]
 app_host = pages.corp
@@ -51,6 +54,9 @@ content_domain = pages-content.corp
 	}
 	if cfg.MaxUploadBytes != 5<<20 {
 		t.Errorf("MaxUploadBytes = %d", cfg.MaxUploadBytes)
+	}
+	if cfg.MaxDeploys != 4 || cfg.DeployTimeout != 90*time.Second {
+		t.Errorf("MaxDeploys = %d, DeployTimeout = %v", cfg.MaxDeploys, cfg.DeployTimeout)
 	}
 	if cfg.MaxExtractFile != Default().MaxExtractFile {
 		t.Errorf("MaxExtractFile = %d, want default", cfg.MaxExtractFile)
@@ -318,6 +324,25 @@ func TestEmptyGroupsKeyDisablesMapping(t *testing.T) {
 	}
 	if cfg.SAML.GroupsAttribute != "" || cfg.OIDC.GroupsClaim != "" {
 		t.Fatalf("empty keys: groups_attribute = %q, groups_claim = %q, want mapping off", cfg.SAML.GroupsAttribute, cfg.OIDC.GroupsClaim)
+	}
+}
+
+func TestLoadDeployLimitErrors(t *testing.T) {
+	for _, line := range []string{
+		"max_concurrent_deploys = many",
+		"max_concurrent_deploys = 0",
+		"max_concurrent_deploys = -1",
+		"deploy_timeout_seconds = 10m",
+		"deploy_timeout_seconds = 0",
+		"deploy_timeout_seconds = 9223372037",
+	} {
+		path := filepath.Join(t.TempDir(), "settings.ini")
+		if err := os.WriteFile(path, []byte("[limits]\n"+line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("%q: expected an error", line)
+		}
 	}
 }
 

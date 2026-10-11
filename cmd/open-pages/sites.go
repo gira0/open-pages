@@ -353,7 +353,15 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	defer os.RemoveAll(staging)
 
 	limits := extract.Limits{MaxBytes: s.cfg.MaxExtractSize, MaxFiles: s.cfg.MaxExtractFile}
-	if err := extract.Archive(src, staging, limits); err != nil {
+	extractCtx, cancel := context.WithTimeout(ctx, s.cfg.DeployTimeout)
+	defer cancel()
+	if err := extract.Archive(extractCtx, src, staging, limits); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err() // the client went away; nobody reads the response
+		}
+		if extractCtx.Err() != nil {
+			return "", &badArchiveError{fmt.Errorf("extraction took longer than %d seconds", int(s.cfg.DeployTimeout.Seconds()))}
+		}
 		return "", &badArchiveError{err}
 	}
 	if err := os.Chmod(staging, 0o755); err != nil { //nolint:gosec // G302: public site content

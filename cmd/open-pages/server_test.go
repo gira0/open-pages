@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gira0/open-pages/internal/config"
 )
@@ -268,4 +270,41 @@ func TestCORS(t *testing.T) {
 func TestIndexPage(t *testing.T) {
 	ts, _ := newTestServer(t)
 	expectStatus(t, get(t, newClient(t), ts.URL+"/index"), http.StatusOK)
+}
+
+func TestUploadBusyWhenDeploySlotsTaken(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	createSiteVia(t, ts, c, "blog")
+	archive := zipArchive(t, map[string]string{"index.html": "hi"})
+
+	for range cap(s.deploySem) {
+		s.deploySem <- struct{}{}
+	}
+	resp, err := c.Post(ts.URL+"/v1/auth/sites/blog/upload", "application/zip", bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	expectStatus(t, resp.StatusCode, http.StatusServiceUnavailable)
+	if resp.Header.Get("Retry-After") == "" {
+		t.Error("503 without Retry-After")
+	}
+
+	<-s.deploySem
+	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/upload", "application/zip", archive), http.StatusOK)
+	if len(s.deploySem) != cap(s.deploySem)-1 {
+		t.Errorf("slot not released: %d of %d held", len(s.deploySem), cap(s.deploySem))
+	}
+}
+
+func TestDeployTimeBudget(t *testing.T) {
+	_, s := newTestServer(t)
+	ensureBlogSite(t, s)
+	s.cfg.DeployTimeout = time.Nanosecond
+	_, err := deployNamed(t, s, "blog", writeZip(t, map[string]string{"index.html": "hi"}))
+	var bad *badArchiveError
+	if !errors.As(err, &bad) || !strings.Contains(err.Error(), "took longer") {
+		t.Fatalf("err = %v, want time budget error", err)
+	}
 }

@@ -1228,6 +1228,18 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          description: |
+            `max_concurrent_deploys` extractions are already running. `Retry-After` gives the
+            seconds to wait.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/auth/sites/{name}/formupload:
     post:
@@ -1268,6 +1280,18 @@ paths:
           $ref: "#/components/responses/SiteNotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          description: |
+            `max_concurrent_deploys` extractions are already running. `Retry-After` gives the
+            seconds to wait.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
 components:
   securitySchemes:
@@ -1412,8 +1436,8 @@ components:
     BadArchive:
       description: |
         Unsupported format, corrupt archive, an entry outside the site, too many entries
-        (`max_extract_files`) or too large uncompressed (`max_extract_mb`), or the upload
-        could not be read.
+        (`max_extract_files`) or too large uncompressed (`max_extract_mb`), extraction
+        taking longer than `deploy_timeout_seconds`, or the upload could not be read.
       content:
         application/json:
           schema:

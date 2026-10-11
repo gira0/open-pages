@@ -540,9 +540,10 @@ archive is extracted into a new version which becomes live atomically.
 | Status | Body |
 |---|---|
 | 200 | `{"status":"File uploaded","site":"blog","version":"db4jkiu64plctc6e9140"}` |
-| 400 | unsupported format, corrupt archive, an entry outside the site, more than `max_extract_files` entries or more than `max_extract_mb` uncompressed, or `{"error":"failed to read upload"}` |
+| 400 | unsupported format, corrupt archive, an entry outside the site, more than `max_extract_files` entries or more than `max_extract_mb` uncompressed, extraction taking longer than `deploy_timeout_seconds`, or `{"error":"failed to read upload"}` |
 | 403 / 404 | not the owner / site not found (also if the site was deleted during the upload) |
 | 413 | `{"error":"upload exceeds 100 MiB"}` (the `max_upload_mb` value) |
+| 503 | `max_concurrent_deploys` extractions are already running; `Retry-After` says when to retry |
 
 Symlinks and other special entries in an archive are skipped. Versions beyond
 `keep_versions` are deleted after a successful deploy.
