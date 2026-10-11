@@ -134,7 +134,7 @@ func TestSessionCookieName(t *testing.T) {
 		creds := `{"email":"a@example.com","password":"correct horse"}`
 		hdr := map[string]string{"Content-Type": "application/json"}
 		expectStatus(t, send(t, http.DefaultClient, "POST", ts.URL+"/v1/user/register", creds, hdr), http.StatusCreated)
-		req, _ := http.NewRequest("POST", ts.URL+"/v1/user/login", strings.NewReader(creds))
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/user/login", strings.NewReader(creds))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -165,7 +165,7 @@ func TestSessionCookieName(t *testing.T) {
 
 func cookieStatus(t *testing.T, base, name, value string) int {
 	t.Helper()
-	r, _ := http.NewRequest("GET", base+"/v1/auth/user", nil)
+	r, _ := http.NewRequest(http.MethodGet, base+"/v1/auth/user", nil)
 	r.AddCookie(&http.Cookie{Name: name, Value: value})
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestSAMLACSAcceptsCrossSitePost(t *testing.T) {
 	ts := newSAMLTestServer(t, idp, nil)
 	// The identity provider's POST is cross-site by nature; the cross-origin check must let
 	// it through to the handler's own checks (which reject it here for lack of a cookie).
-	req, _ := http.NewRequest("POST", ts.ts.URL+"/v1/auth/saml/acs", strings.NewReader("SAMLResponse=x"))
+	req, _ := http.NewRequest(http.MethodPost, ts.ts.URL+"/v1/auth/saml/acs", strings.NewReader("SAMLResponse=x"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.Header.Set("Origin", "https://idp.example")
