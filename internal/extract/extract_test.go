@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -495,5 +496,53 @@ func TestCtxReaderAtStopsAfterCancel(t *testing.T) {
 	cancel()
 	if _, err := r.ReadAt(buf, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// readerAtHook runs after calls reads and reports how many reads happened so far.
+type readerAtHook struct {
+	r     io.ReaderAt
+	reads int
+	after func(reads int)
+}
+
+func (h *readerAtHook) ReadAt(p []byte, off int64) (int, error) {
+	h.reads++
+	if h.after != nil {
+		h.after(h.reads)
+	}
+	return h.r.ReadAt(p, off)
+}
+
+// Cancellation that lands while zip.NewReader parses the central directory must stop
+// extractZip there. Without the context-checking ReaderAt the reader would finish and the
+// per-entry check would report the cancellation later, without the "read zip" prefix.
+func TestZipCancelDuringDirectoryParse(t *testing.T) {
+	var es []entry
+	for i := range 5 {
+		es = append(es, entry{name: fmt.Sprintf("f%d", i), body: "x"})
+	}
+	data := zipBytes(t, es...)
+	limits := Limits{MaxBytes: 1 << 20, MaxFiles: 100}
+
+	// Count the reads the pre-check makes, so the cancel can be timed to the next read.
+	counter := &readerAtHook{r: bytes.NewReader(data)}
+	if err := checkZipDirectory(t.Context(), counter, int64(len(data)), limits); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	src := &readerAtHook{r: bytes.NewReader(data), after: func(reads int) {
+		if reads == counter.reads+1 {
+			cancel() // the first read zip.NewReader makes
+		}
+	}}
+	err := extractZip(ctx, src, int64(len(data)), t.TempDir(), limits)
+	if !errors.Is(err, errCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want a cancellation", err)
+	}
+	if !strings.Contains(err.Error(), "read zip") {
+		t.Fatalf("err = %v, want the cancellation to come from zip.NewReader's reads", err)
 	}
 }
