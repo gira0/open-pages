@@ -62,10 +62,11 @@ var errCanceled = errors.New("extraction stopped")
 
 // guardReader enforces the decompression budget and the context on a stream.
 type guardReader struct {
-	ctx   context.Context
-	r     io.Reader
-	n     int64
-	limit int64
+	ctx      context.Context
+	r        io.Reader
+	n        int64
+	limit    int64 // stream budget; zero means none
+	maxBytes int64 // the configured Limits.MaxBytes, which error messages report
 }
 
 func (g *guardReader) Read(p []byte) (int, error) {
@@ -75,9 +76,23 @@ func (g *guardReader) Read(p []byte) (int, error) {
 	n, err := g.r.Read(p)
 	g.n += int64(n)
 	if g.limit > 0 && g.n > g.limit {
-		return n, fmt.Errorf("archive expands to more than %d MiB", g.limit>>20)
+		return n, fmt.Errorf("archive expands to more than %d MiB", g.maxBytes>>20)
 	}
 	return n, err
+}
+
+// ctxReaderAt fails reads once the context is done, so zip.NewReader notices a
+// cancellation while it parses the central directory.
+type ctxReaderAt struct {
+	ctx context.Context
+	r   io.ReaderAt
+}
+
+func (c ctxReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, fmt.Errorf("%w: %w", errCanceled, err)
+	}
+	return c.r.ReadAt(p, off)
 }
 
 // streamLimit is how many decompressed bytes a tar stream may produce.
@@ -277,7 +292,7 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 	if err := checkZipDirectory(ctx, src, size, limits); err != nil {
 		return err
 	}
-	zr, err := zip.NewReader(src, size)
+	zr, err := zip.NewReader(ctxReaderAt{ctx, src}, size)
 	if err != nil {
 		return fmt.Errorf("read zip: %w", err)
 	}
@@ -318,7 +333,7 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 // tar.Reader.Next reads and discards the data of entries it skips, so only a limit on the
 // stream itself bounds that work.
 func extractTar(ctx context.Context, src io.Reader, dest string, limits Limits) error {
-	tr := tar.NewReader(&guardReader{ctx: ctx, r: src, limit: streamLimit(limits)})
+	tr := tar.NewReader(&guardReader{ctx: ctx, r: src, limit: streamLimit(limits), maxBytes: limits.MaxBytes})
 	e := &extractor{ctx: ctx, dest: dest, limits: limits}
 	for {
 		hdr, err := tr.Next()
