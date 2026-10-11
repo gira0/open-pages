@@ -1,7 +1,7 @@
 # open-pages
 
 A self-hosted, GitHub Pages-like service for publishing static sites on internal networks.
-People log in (local accounts or the company identity provider over OIDC), create a site,
+People log in (local accounts, or the company identity provider over OIDC or SAML), create a site,
 and upload a `.zip`, `.tar.gz` or `.tar` archive, from a browser, `curl` or CI. Each upload
 becomes a new version that goes live atomically and can be rolled back. A site is public,
 visible to any logged-in user, or restricted to its owner and a group.

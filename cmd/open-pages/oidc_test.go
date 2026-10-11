@@ -568,7 +568,7 @@ func TestOIDCSecretNeverServed(t *testing.T) {
 func TestOIDCConcurrentEmailVariants(t *testing.T) {
 	idp := newFakeIDP(t)
 	_, s := newOIDCTestServer(t, idp, nil)
-	ids := []oidcIdentity{
+	ids := []federatedIdentity{
 		{issuer: idp.srv.URL, subject: "sub-a", email: "Ann@Corp.example"},
 		{issuer: idp.srv.URL, subject: "sub-b", email: "ann@corp.example"},
 	}
@@ -578,13 +578,13 @@ func TestOIDCConcurrentEmailVariants(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = s.oidcUser(t.Context(), ids[i])
+			_, errs[i] = s.federatedUser(t.Context(), ids[i])
 		}()
 	}
 	wg.Wait()
 	taken := 0
 	for _, err := range errs {
-		if errors.Is(err, errOIDCEmailTaken) {
+		if errors.Is(err, errEmailTaken) {
 			taken++
 		} else if err != nil {
 			t.Fatal(err)

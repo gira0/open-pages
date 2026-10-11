@@ -135,14 +135,14 @@ func TestLoadOIDCConfigErrors(t *testing.T) {
 	}
 }
 
-func TestCheckOIDCURL(t *testing.T) {
+func TestCheckURL(t *testing.T) {
 	for _, ok := range []string{"https://sso.example/realms/corp", "http://localhost:8080/cb", "http://127.0.0.1/cb", "http://[::1]:9/cb"} {
-		if err := CheckOIDCURL("k", ok); err != nil {
+		if err := CheckURL("k", ok); err != nil {
 			t.Errorf("%q rejected: %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "/cb", "http://sso.example", "ftp://sso.example", "https://sso.example/#frag", "https://"} {
-		if err := CheckOIDCURL("k", bad); err == nil {
+		if err := CheckURL("k", bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
@@ -173,5 +173,74 @@ func TestLoadLogAndSites(t *testing.T) {
 	cfg, err = Load(writeConfig(t, ""))
 	if err != nil || cfg.URLMode != URLModePath || cfg.LogFormat != logging.FormatText || cfg.MetricsListen != "" {
 		t.Errorf("defaults = %+v, %v", cfg, err)
+	}
+}
+
+func TestSAMLDefaultsToDisabled(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "[server]\nhttp_port = 8080\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SAML.Enabled {
+		t.Fatal("SAML enabled without a [saml] section")
+	}
+}
+
+func TestLoadSAMLConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(writeConfig(t, `
+[saml]
+enabled = true
+idp_metadata_file = `+filepath.Join(dir, "idp.xml")+`
+entity_id = https://pages.example.com/saml
+acs_url = https://pages.example.com/v1/auth/saml/acs
+groups_attribute = memberOf
+nameid_attribute = employeeNumber
+allowed_email_domain = @Corp.Example
+key_file = `+filepath.Join(dir, "sp.key")+`
+cert_file = `+filepath.Join(dir, "sp.crt")+`
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.SAML
+	if !c.Enabled || c.IDPMetadataFile != filepath.Join(dir, "idp.xml") || c.EmailAttribute != "email" ||
+		c.GroupsAttribute != "memberOf" || c.NameIDAttribute != "employeeNumber" || c.AllowedEmailDomain != "corp.example" ||
+		c.KeyFile == "" || c.CertFile == "" {
+		t.Fatalf("unexpected SAML config: %+v", c)
+	}
+	// SAML alone is enough to switch local login off.
+	if _, err := Load(writeConfig(t, "[auth]\nlocal_login = false\n[saml]\nenabled = true\nidp_metadata_url = https://idp.example/metadata\n"+
+		"entity_id = sp\nacs_url = https://p.example/v1/auth/saml/acs\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadSAMLConfigErrors(t *testing.T) {
+	const ok = "entity_id = sp\nacs_url = https://p.example/v1/auth/saml/acs\nidp_metadata_url = https://idp.example/metadata\n"
+	cases := map[string]string{
+		"typo enabled":      "[saml]\nenabled = yes please\n",
+		"no metadata":       "[saml]\nenabled = true\nentity_id = sp\nacs_url = https://p.example/acs\n",
+		"both metadata":     "[saml]\nenabled = true\nidp_metadata_file = /x.xml\n" + ok,
+		"plain http url":    "[saml]\nenabled = true\nentity_id = sp\nacs_url = https://p.example/acs\nidp_metadata_url = http://idp.example/m\n",
+		"missing entity id": "[saml]\nenabled = true\nacs_url = https://p.example/acs\nidp_metadata_url = https://idp.example/m\n",
+		"missing acs":       "[saml]\nenabled = true\nentity_id = sp\nidp_metadata_url = https://idp.example/m\n",
+		"relative acs":      "[saml]\nenabled = true\nentity_id = sp\nacs_url = /v1/auth/saml/acs\nidp_metadata_url = https://idp.example/m\n",
+		"plain http acs":    "[saml]\nenabled = true\nentity_id = sp\nacs_url = http://p.example/acs\nidp_metadata_url = https://idp.example/m\n",
+		"key without cert":  "[saml]\nenabled = true\nkey_file = /k.pem\n" + ok,
+		"cert without key":  "[saml]\nenabled = true\ncert_file = /c.pem\n" + ok,
+		"nobody can log in": "[auth]\nlocal_login = false\n[saml]\nenabled = false\n",
+		"nobody (oidc off)": "[auth]\nlocal_login = false\n[oidc]\nenabled = false\n[saml]\nenabled = false\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeConfig(t, body)); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+	// A disabled section is ignored even when incomplete.
+	if _, err := Load(writeConfig(t, "[saml]\nenabled = false\nacs_url = junk\n")); err != nil {
+		t.Fatal(err)
 	}
 }

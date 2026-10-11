@@ -21,8 +21,8 @@ info:
     - A request with an `Authorization: Bearer` header is judged on the token alone and
       never falls back to the session cookie. A rejected session cookie is cleared.
     - Some routes exist only when configured (marked "optional"): `/metrics` needs
-      `[metrics] token`, register and login need `[auth] local_login`, and the OIDC routes
-      need `[oidc] enabled`. An unregistered route answers like any unknown path.
+      `[metrics] token`, register and login need `[auth] local_login`, the OIDC routes
+      need `[oidc] enabled` and the SAML routes need `[saml] enabled`. An unregistered route answers like any unknown path.
     - Deployed sites are served outside this API, at `/<site>/...` (`url_mode = path`) or
       `<site>.<base_domain>/...` (`url_mode = subdomain`), over GET and HEAD.
 servers:
@@ -34,7 +34,7 @@ tags:
   - name: service
     description: Probes, metrics and the API description itself.
   - name: accounts
-    description: Local accounts, sessions and OIDC sign-in.
+    description: Local accounts, sessions, and OIDC and SAML sign-in.
   - name: tokens
     description: API tokens. Session only; an API token cannot manage tokens.
   - name: groups
@@ -49,7 +49,7 @@ paths:
       operationId: getIndex
       summary: HTML test page
       description: |
-        A local login form (when local login is enabled), an OIDC sign-in link (when OIDC is
+        A local login form (when local login is enabled), an OIDC and a SAML sign-in link (when those are
         enabled) and a form that creates a site and uploads an archive. It is a test page,
         not a stable interface.
       security: []
@@ -271,7 +271,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: "`invalid email or password` (unknown email, wrong password, or an OIDC-only account)."
+          description: "`invalid email or password` (unknown email, wrong password, or an OIDC or SAML account)."
           content:
             application/json:
               schema:
@@ -391,6 +391,144 @@ paths:
           $ref: "#/components/responses/ProviderUnavailable"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /v1/auth/saml/login:
+    get:
+      tags: [accounts]
+      operationId: samlLogin
+      summary: Start SAML sign-in (optional)
+      description: Registered only with `[saml] enabled = true`.
+      security: []
+      parameters:
+        - name: return_to
+          in: query
+          description: |
+            A path on this server to land on afterwards: starts with a single `/`, at most
+            512 bytes, no backslash or line breaks.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: |
+            Redirect to the identity provider with an AuthnRequest (HTTP-Redirect binding).
+            Sets the short-lived `saml_request` cookie (`Path=/v1/auth/saml`, 10 minutes,
+            `SameSite=None; Secure` over https, `SameSite=Lax` over plain http).
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+        "400":
+          description: "`return_to must be a path on this server`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          description: "`too many sign-in attempts, try again later`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/saml/acs:
+    post:
+      tags: [accounts]
+      operationId: samlAcs
+      summary: Finish SAML sign-in (optional)
+      description: |
+        Registered only with `[saml] enabled = true`. The assertion consumer service: the
+        browser posts the identity provider's response here (HTTP-POST binding). It also
+        needs the `saml_request` cookie set by the login route; unsolicited and
+        IdP-initiated responses are refused.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [SAMLResponse]
+              properties:
+                SAMLResponse:
+                  type: string
+                  description: The base64-encoded SAML Response, with a signed assertion or a signed response.
+                RelayState:
+                  type: string
+                  description: Ignored.
+      responses:
+        "200":
+          description: Logged in (no `return_to` was given).
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "303":
+          description: Logged in; redirect to the `return_to` given at login.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+        "400":
+          description: "`unknown or expired login attempt`: no cookie, a response that answers no pending request of this browser, already used, or older than 10 minutes. Also a missing `SAMLResponse`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: The response failed verification (signature, issuer, audience, destination, recipient, validity period, replay, encryption, subject).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "`the identity has no usable email address` or `email domain is not allowed`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: An account with this email already exists; it is not linked automatically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          description: "`too many sign-ins in progress, try again later`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/saml/metadata:
+    get:
+      tags: [accounts]
+      operationId: samlMetadata
+      summary: SAML service provider metadata (optional)
+      description: |
+        Registered only with `[saml] enabled = true`. The SP metadata to import at the
+        identity provider; it does not depend on the provider being reachable.
+      security: []
+      responses:
+        "200":
+          description: The SAML 2.0 `EntityDescriptor`.
+          content:
+            application/samlmetadata+xml:
+              schema:
+                type: string
 
   /v1/auth/user:
     get:
@@ -1096,7 +1234,7 @@ components:
       type: apiKey
       in: cookie
       name: auth_cookie
-      description: Session cookie from local login or OIDC sign-in, valid 7 days.
+      description: Session cookie from local login, OIDC or SAML sign-in, valid 7 days.
     bearerAuth:
       type: http
       scheme: bearer
