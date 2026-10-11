@@ -99,6 +99,8 @@ One-time codes of the browser login for non-public sites (see
 | `return_to` | TEXT | NOT NULL | Validated path to redirect to afterwards |
 | `expires` | BIGINT | NOT NULL | Unix time; 60 seconds after issue |
 
+Index `site_login_code_expires` on `(expires)`.
+
 Deleted when redeemed (whatever the outcome); expired rows are deleted whenever a code is
 issued. Also deleted when the site is deleted or the session ends.
 
@@ -115,7 +117,7 @@ Per-site browser sessions made by redeeming a login code.
 | `sessionid` | INTEGER | NOT NULL, FK `session(sessionid)` ON DELETE CASCADE | The app session it came from; logout deletes these rows |
 | `expires` | BIGINT | NOT NULL | Unix time: at most 1 hour after redeeming, never later than the app session's expiry |
 
-Index `site_session_session` on `(sessionid)`. Expired rows are ignored when reading and
+Indexes `site_session_session` on `(sessionid)` and `site_session_expires` on `(expires)`. Expired rows are ignored when reading and
 deleted whenever a login code is issued, and when the site is deleted.
 
 ### api_token
