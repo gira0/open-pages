@@ -474,3 +474,26 @@ func TestCanceledContextStopsEmptyZip(t *testing.T) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
+
+// The expansion error names the configured limit, not the stream budget with its header
+// allowance.
+func TestStreamLimitErrorReportsConfiguredLimit(t *testing.T) {
+	data := tarBytes(t, entry{name: "bomb", typ: 'Z', body: strings.Repeat("\x00", 8<<20)})
+	_, err := run(t, data, Limits{MaxBytes: 2 << 20, MaxFiles: 10})
+	if err == nil || !strings.Contains(err.Error(), "more than 2 MiB") {
+		t.Fatalf("err = %v, want it to name the 2 MiB limit", err)
+	}
+}
+
+func TestCtxReaderAtStopsAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	r := ctxReaderAt{ctx, bytes.NewReader([]byte("abc"))}
+	buf := make([]byte, 1)
+	if _, err := r.ReadAt(buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := r.ReadAt(buf, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
