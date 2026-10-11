@@ -499,7 +499,7 @@ func TestCtxReaderAtStopsAfterCancel(t *testing.T) {
 	}
 }
 
-// readerAtHook runs after calls reads and reports how many reads happened so far.
+// readerAtHook counts ReadAt calls and runs after with the running count before delegating each read.
 type readerAtHook struct {
 	r     io.ReaderAt
 	reads int
