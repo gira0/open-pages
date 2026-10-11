@@ -290,3 +290,15 @@ func TestLoadDeployLimitErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsMalformedCORSOrigin(t *testing.T) {
+	for _, origin := range []string{"example.com", "https://a.example/path", "*", "https://user@example.com", "https://user:pw@example.com"} {
+		p := filepath.Join(t.TempDir(), "settings.ini")
+		if err := os.WriteFile(p, []byte("[server]\ncors_origins = "+origin+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p); err == nil {
+			t.Errorf("origin %q accepted", origin)
+		}
+	}
+}

@@ -73,21 +73,21 @@ func (s *Server) routeTable() []route {
 	handle("GET /v1/auth/user", s.requireAuth(s.handleUserInfo))
 	handle("POST /v1/auth/logout", s.requireSession(s.handleLogout))
 	// Token management needs a real session: an API token can't mint or revoke tokens.
-	handle("POST /v1/auth/tokens", s.requireSession(s.handleTokenCreate))
+	handle("POST /v1/auth/tokens", s.requireSession(requireJSON(s.handleTokenCreate)))
 	handle("GET /v1/auth/tokens", s.requireSession(s.handleTokenList))
 	handle("DELETE /v1/auth/tokens/{id}", s.requireSession(s.handleTokenRevoke))
 	handle("GET /v1/auth/groups", s.requireAuth(s.handleGroupList))
-	handle("POST /v1/auth/groups", s.requireAuth(s.handleGroupCreate))
+	handle("POST /v1/auth/groups", s.requireAuth(requireJSON(s.handleGroupCreate)))
 	handle("GET /v1/auth/groups/{id}", s.requireAuth(s.handleGroupGet))
 	handle("DELETE /v1/auth/groups/{id}", s.requireAuth(s.handleGroupDelete))
-	handle("POST /v1/auth/groups/{id}/members", s.requireAuth(s.handleMemberAdd))
+	handle("POST /v1/auth/groups/{id}/members", s.requireAuth(requireJSON(s.handleMemberAdd)))
 	handle("DELETE /v1/auth/groups/{id}/members/{uid}", s.requireAuth(s.handleMemberRemove))
-	handle("POST /v1/auth/sites", s.requireAuth(s.handleSiteCreate))
+	handle("POST /v1/auth/sites", s.requireAuth(requireJSON(s.handleSiteCreate)))
 	handle("GET /v1/auth/sites/{name}", s.requireAuth(s.handleSiteGet))
-	handle("PUT /v1/auth/sites/{name}", s.requireAuth(s.handleSiteUpdate))
+	handle("PUT /v1/auth/sites/{name}", s.requireAuth(requireJSON(s.handleSiteUpdate)))
 	handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
 	handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))
-	handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(s.handleRollback))
+	handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(requireJSON(s.handleRollback)))
 	handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
 	return rt
@@ -98,7 +98,7 @@ func (s *Server) routes() http.Handler {
 	for _, r := range s.routeTable() {
 		mux.Handle(r.pattern, r.handler)
 	}
-	return s.observe(s.cors(s.withSites(mux)))
+	return s.observe(s.cors(s.csrf(s.withSites(mux))))
 }
 
 // handleOpenAPI serves the embedded OpenAPI document. It needs no login.
@@ -177,7 +177,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Expose-Headers", requestIDHeader)
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Authorization, X-CSRF-Token")
+				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Authorization")
 				h.Set("Access-Control-Max-Age", "43200")
 				w.WriteHeader(http.StatusNoContent)
 				return

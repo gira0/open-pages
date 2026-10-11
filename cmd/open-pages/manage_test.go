@@ -19,6 +19,9 @@ func doJSON(t *testing.T, c *http.Client, method, url, body string) (int, map[st
 	if err != nil {
 		t.Fatal(err)
 	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)

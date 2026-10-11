@@ -85,7 +85,7 @@ func (s *Server) requireSession(next http.HandlerFunc) http.Handler {
 			return
 		}
 		if uid == 0 {
-			if _, err := r.Cookie(sessionCookie); err == nil {
+			if _, err := r.Cookie(s.cookieName(sessionCookie)); err == nil {
 				s.setSessionCookie(w, "", -1)
 			}
 			writeError(w, http.StatusUnauthorized, "a login session is required")

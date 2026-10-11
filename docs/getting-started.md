@@ -83,8 +83,8 @@ value fails startup. Integers that do not parse also fall back to the default.
 |---|---|---|
 | `host` | empty (all interfaces) | Interface to bind |
 | `http_port` | `8080` | Port to listen on |
-| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie. Set to `true` whenever users reach the service over HTTPS |
-| `cors_origins` | empty | Comma-separated origins allowed to call the API cross-origin with credentials; empty means same-origin only |
+| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie and name it `__Host-auth_cookie`, which sibling hosts cannot overwrite. Set to `true` whenever users reach the service over HTTPS; with `false` the server logs a startup warning |
+| `cors_origins` | empty | Comma-separated origins (`scheme://host[:port]`) allowed to call the API cross-origin with credentials; empty means same-origin only. Browser POST/PUT/DELETE from any other origin gets 403 |
 
 ### [paths]
 

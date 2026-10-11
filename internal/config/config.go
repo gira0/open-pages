@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -116,6 +117,13 @@ func Load(path string) (Config, error) {
 	if origins := server.Key("cors_origins").String(); origins != "" {
 		for _, o := range strings.Split(origins, ",") {
 			if o = strings.TrimSpace(o); o != "" {
+				if err := http.NewCrossOriginProtection().AddTrustedOrigin(o); err != nil {
+					return cfg, fmt.Errorf("cors_origins entry %q: %w", o, err)
+				}
+				// AddTrustedOrigin tolerates userinfo, which no browser sends in an Origin.
+				if u, err := url.Parse(o); err != nil || u.User != nil {
+					return cfg, fmt.Errorf("cors_origins entry %q must be scheme://host[:port] without credentials", o)
+				}
 				cfg.CORSOrigins = append(cfg.CORSOrigins, o)
 			}
 		}

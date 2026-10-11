@@ -20,6 +20,9 @@ func bearerStatus(t *testing.T, method, url, authorization string, body []byte) 
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
