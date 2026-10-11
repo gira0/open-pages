@@ -241,8 +241,9 @@ XML parsing and signature verification are done by
 
 - A SAML user is identified by the IdP's entity ID plus the subject (stored in `oidc_issuer`
   and `oidc_subject`, see [schema.md](schema.md#user)), never by email. The subject is the
-  NameID, or the value of `nameid_attribute` if set. A `transient` NameID is refused, since it
-  would create a new account at every login; configure the IdP to send a persistent one.
+  NameID, or the value of `nameid_attribute` if set. Without `nameid_attribute`, a `transient`
+  NameID is refused, since it would create a new account at every login; configure the IdP
+  to send a persistent one, or point `nameid_attribute` at a stable attribute.
 - The email comes from `email_attribute`, or from an email-format NameID, at first sign-in and
   is then kept. It must parse as a bare address; if `allowed_email_domain` is set it must be in
   that domain. Failures answer 403. SAML has no "email verified" flag, so the IdP is trusted to

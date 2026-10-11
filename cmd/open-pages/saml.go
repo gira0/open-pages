@@ -526,12 +526,14 @@ func (c *samlClient) accept(sp *saml2.SAMLServiceProvider, encoded, cookie strin
 
 	id := federatedIdentity{issuer: sp.IdentityProviderIssuer}
 	nameID := a.Subject.NameID
-	if nameID.Format == nameIDTransient {
-		return samlResult{}, errSAMLSubject // a different value at every login
-	}
-	id.subject = strings.TrimSpace(nameID.Value)
 	if attr := c.cfg.NameIDAttribute; attr != "" {
+		// The configured attribute is the stable identifier, so the NameID format does not matter.
 		id.subject = firstAttribute(a, attr)
+	} else {
+		if nameID.Format == nameIDTransient {
+			return samlResult{}, errSAMLSubject // a different value at every login
+		}
+		id.subject = strings.TrimSpace(nameID.Value)
 	}
 	if id.subject == "" || len(id.subject) > samlMaxSubjectLen {
 		return samlResult{}, errSAMLSubject

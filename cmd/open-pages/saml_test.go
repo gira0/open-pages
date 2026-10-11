@@ -682,6 +682,24 @@ func TestSAMLNameIDAttribute(t *testing.T) {
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusUnauthorized)
 }
 
+func TestSAMLNameIDAttributeWithTransientNameID(t *testing.T) {
+	idp := newFakeSAMLIdP(t)
+	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.NameIDAttribute = "employeeNumber" })
+	idp.update(func(s *samlSettings) {
+		s.nameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+		s.attrs = []samlAttr{{"employeeNumber", []string{"E-42"}}}
+	})
+	// A transient NameID is fine when the subject comes from the attribute: both sign-ins land
+	// on the same account.
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
+	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
+	var n int
+	var subject string
+	if err := ts.s.db.QueryRow("SELECT COUNT(*), MAX(oidc_subject) FROM user").Scan(&n, &subject); err != nil || n != 1 || subject != "E-42" {
+		t.Fatalf("users = %d, subject = %q (%v), want one user keyed on the attribute", n, subject, err)
+	}
+}
+
 func TestSAMLGroupsAttributeMultiValued(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.GroupsAttribute = "memberOf" })
