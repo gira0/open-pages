@@ -111,7 +111,7 @@ func (s *Server) viewerMaySee(r *http.Request, name string, site Site, missing b
 	if err != nil {
 		return false, false, err
 	}
-	signedIn = uid != 0 || r.Header.Get("Authorization") != "" // any scheme counts as an attempt
+	signedIn = uid != 0 || len(r.Header.Values("Authorization")) > 0 // any scheme counts as an attempt
 	if missing {
 		return false, signedIn, nil
 	}

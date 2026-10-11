@@ -14,6 +14,8 @@ SQLite's default (rollback journal); the code does not enable WAL.
 ```mermaid
 erDiagram
     user ||--o{ session : "has"
+    user ||--o{ site_session : "signed in as"
+    user ||--o{ site_login_code : "issued to"
     session ||--o{ site_session : "backs"
     session ||--o{ site_login_code : "issued in"
     docs ||--o{ site_session : "valid for"
@@ -30,6 +32,8 @@ As plain text:
 
 ```text
 user 1---* session        (session.userid)
+user 1---* site_session   (site_session.userid)
+user 1---* site_login_code (site_login_code.userid)
 session 1---* site_session     (site_session.sessionid, ON DELETE CASCADE)
 session 1---* site_login_code  (site_login_code.sessionid, ON DELETE CASCADE)
 docs 1---* site_session        (site_session.siteid, ON DELETE CASCADE)

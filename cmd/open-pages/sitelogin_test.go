@@ -715,7 +715,7 @@ func TestSiteLoginAnyAuthorizationHeaderBlocksCookie(t *testing.T) {
 	e := newLoginEnv(t, false)
 	cookie := e.signIn(t, e.member, "secret")
 	expectStatus(t, do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie).Code, http.StatusOK)
-	for _, auth := range []string{"Basic dTpw", "Token abc", "Bearer nope"} {
+	for _, auth := range []string{"Basic dTpw", "Token abc", "Bearer nope", ""} {
 		w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie, "Authorization", auth)
 		expectStatus(t, w.Code, http.StatusNotFound)
 		w = do(e.s, "GET", siteHost("secret"), "/", "Authorization", auth)

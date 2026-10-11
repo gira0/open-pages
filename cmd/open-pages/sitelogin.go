@@ -110,7 +110,7 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 	if token, ok := bearerToken(r); ok {
 		return s.tokenUser(r.Context(), token)
 	}
-	if r.Header.Get("Authorization") != "" {
+	if len(r.Header.Values("Authorization")) > 0 {
 		return 0, nil // an attempt with another scheme is rejected, not answered by a cookie
 	}
 	// Without cookie_secure a sibling site can plant a cookie of the same name that comes
