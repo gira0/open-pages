@@ -19,13 +19,16 @@ func TestValidSite(t *testing.T) {
 }
 
 func TestReservedSite(t *testing.T) {
-	for _, n := range []string{"v1", "api", "www", "docs", "metrics"} {
+	for _, n := range []string{"api", "www", "admin", "docs"} {
 		if !ReservedSite(n) {
 			t.Errorf("ReservedSite(%q) = false, want true", n)
 		}
 	}
-	if ReservedSite("my-site") {
-		t.Error("ReservedSite(my-site) = true, want false")
+	// Route names only mattered when sites shared the app's host.
+	for _, n := range []string{"my-site", "v1", "index", "healthz", "metrics"} {
+		if ReservedSite(n) {
+			t.Errorf("ReservedSite(%q) = true, want false", n)
+		}
 	}
 }
 

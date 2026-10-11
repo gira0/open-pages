@@ -209,7 +209,7 @@ func TestCurrentNeverMissingDuringDeploy(t *testing.T) {
 
 func TestKeepVersionsConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.ini")
-	if err := os.WriteFile(path, []byte("[sites]\nkeep_versions = 0\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(validSites+"keep_versions = 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(path)

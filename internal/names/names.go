@@ -16,14 +16,12 @@ const MaxGroupNameLen = 64
 // siteNameRe is a DNS label: lowercase letters, digits and inner hyphens, 1 to 63 chars.
 var siteNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// reservedSites can't be used as site names in either URL mode: in path mode they
-// would shadow API and UI routes on the base domain, in subdomain mode they collide with
-// hosts operators commonly point at the service itself (www.pages.corp, api.pages.corp).
+// reservedSites can't be used as site names: they are hosts operators commonly point at
+// the service itself or at other infrastructure (www.pages-content.corp, api.pages-content.corp),
+// and names that would look like an official login or admin page.
 var reservedSites = map[string]bool{
-	"v1": true, "index": true, "api": true, "www": true, "admin": true, "ui": true,
-	"static": true, "assets": true, "health": true, "healthz": true, "readyz": true, "metrics": true,
-	"login": true, "logout": true, "register": true, "auth": true, "user": true,
-	"users": true, "sites": true, "docs": true, "app": true, "mail": true,
+	"www": true, "api": true, "app": true, "admin": true, "ui": true, "static": true,
+	"assets": true, "login": true, "auth": true, "docs": true, "mail": true,
 }
 
 // ValidSite reports whether name is usable as a site name (a DNS label).

@@ -20,7 +20,6 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/logging"
-	"github.com/gira0/open-pages/internal/names"
 )
 
 const testMetricsToken = "0123456789abcdef-token"
@@ -88,7 +87,7 @@ func bearer(token string) http.Header {
 func TestLogConfig(t *testing.T) {
 	write := func(ini string) string {
 		path := filepath.Join(t.TempDir(), "settings.ini")
-		if err := os.WriteFile(path, []byte(ini), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(validSites+ini), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return path
@@ -379,23 +378,6 @@ func TestMetricsDedicatedListener(t *testing.T) {
 	}
 }
 
-// Site names can't shadow the operational endpoints in path mode.
-func TestOpsNamesAreReserved(t *testing.T) {
-	for _, name := range []string{"healthz", "readyz", "metrics"} {
-		if !names.ReservedSite(name) {
-			t.Errorf("%q must be a reserved site name", name)
-		}
-	}
-	ts, _ := newTestServer(t)
-	c := loggedInClient(t, ts)
-	for _, name := range []string{"healthz", "metrics"} {
-		body := []byte(`{"name":"` + name + `"}`)
-		if got := post(t, c, ts.URL+"/v1/auth/sites", "application/json", body); got == http.StatusCreated {
-			t.Errorf("site %q was created", name)
-		}
-	}
-}
-
 func TestHealthProbeSingleFlight(t *testing.T) {
 	var p healthProbe
 	var calls atomic.Int32
@@ -449,7 +431,7 @@ func TestLogLevelStrict(t *testing.T) {
 	}
 	for _, level := range []string{"INFO+1", "WARN-2"} {
 		path := filepath.Join(t.TempDir(), "settings.ini")
-		if err := os.WriteFile(path, []byte("[log]\nlevel = "+level+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(validSites+"[log]\nlevel = "+level+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := config.Load(path); err == nil {

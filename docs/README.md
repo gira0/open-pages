@@ -10,6 +10,7 @@ known limits.
 | [api.md](api.md) | Look up a route: method, auth, request and response, status codes, `curl` example |
 | [`api/openapi.yaml`](../api/openapi.yaml) | Feed the API to tools: OpenAPI 3.1, also served at `/v1/openapi.yaml` |
 | [auth.md](auth.md) | Understand local accounts, sessions, API tokens, OIDC and SAML sign-in, groups and per-site visibility |
+| [security-model.md](security-model.md) | Know what separates hosted content from the app, and what a deployment must provide (content domain, wildcard TLS, HTTPS) |
 | [schema.md](schema.md) | See every database table and column, the indexes, and how migrations work |
 
 Other files in the repository:

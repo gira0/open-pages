@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/logging"
+	"github.com/gira0/open-pages/internal/names"
 	"gopkg.in/ini.v1"
 )
 
@@ -30,8 +31,8 @@ type Config struct {
 	DeployTimeout  time.Duration // time budget for extracting one upload
 	KeepVersions   int           // versions kept on disk per site, including the current one
 	CORSOrigins    []string      // allowed cross-origin callers; empty means same-origin only
-	URLMode        string        // how a request names its site: URLModePath or URLModeSubdomain
-	BaseDomain     string        // bare host (no port) of the API and UI; also the parent of site subdomains
+	AppHost        string        // bare host (no port) of the API and UI
+	ContentDomain  string        // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
 	LogLevel       slog.Level    // minimum level written to the log
 	LogFormat      string        // logging.FormatText or logging.FormatJSON
 	MetricsListen  string        // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
@@ -69,12 +70,6 @@ type OIDCConfig struct {
 	AllowedEmailDomain string   // when set, only emails in this domain may sign in
 }
 
-// URL modes for [sites] url_mode.
-const (
-	URLModePath      = "path"      // <base_domain>/<site>/...
-	URLModeSubdomain = "subdomain" // <site>.<base_domain>/...
-)
-
 // maxTimeoutSecs is the longest timeout in seconds that fits a time.Duration.
 const maxTimeoutSecs = int(math.MaxInt64 / int64(time.Second))
 
@@ -93,7 +88,6 @@ func Default() Config {
 		MaxDeploys:     2,
 		DeployTimeout:  10 * time.Minute,
 		KeepVersions:   5,
-		URLMode:        URLModePath,
 		LogLevel:       slog.LevelInfo,
 		LogFormat:      logging.FormatText,
 		LocalLogin:     true,
@@ -152,13 +146,27 @@ func Load(path string) (Config, error) {
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
 	sites := f.Section("sites")
-	cfg.URLMode = strings.ToLower(sites.Key("url_mode").MustString(cfg.URLMode))
-	cfg.BaseDomain = strings.ToLower(strings.TrimSuffix(sites.Key("base_domain").String(), "."))
-	if cfg.URLMode != URLModePath && cfg.URLMode != URLModeSubdomain {
-		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, URLModePath, URLModeSubdomain)
+	for _, old := range []string{"url_mode", "base_domain"} {
+		if sites.HasKey(old) {
+			return cfg, fmt.Errorf("sites.%s is no longer supported: sites are served from subdomains of a content domain; set sites.app_host and sites.content_domain instead", old)
+		}
 	}
-	if cfg.URLMode == URLModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
-		return cfg, fmt.Errorf("sites.base_domain %q: subdomain mode needs a bare host name, for example pages.corp", cfg.BaseDomain)
+	if cfg.AppHost, err = hostSetting(sites, "app_host"); err != nil {
+		return cfg, err
+	}
+	if cfg.ContentDomain, err = hostSetting(sites, "content_domain"); err != nil {
+		return cfg, err
+	}
+	// Neither host may be, or sit under, the other, at any depth. A site under the app host
+	// could set Domain= cookies that reach the app; an app host under the content domain
+	// would be a site host.
+	switch {
+	case cfg.AppHost == cfg.ContentDomain:
+		return cfg, fmt.Errorf("sites.content_domain %q: must differ from sites.app_host", cfg.ContentDomain)
+	case strings.HasSuffix(cfg.ContentDomain, "."+cfg.AppHost):
+		return cfg, fmt.Errorf("sites.content_domain %q: must not be a subdomain of sites.app_host %q, or sites could set cookies for the app; use a sibling or a separate domain", cfg.ContentDomain, cfg.AppHost)
+	case strings.HasSuffix(cfg.AppHost, "."+cfg.ContentDomain):
+		return cfg, fmt.Errorf("sites.app_host %q: must not be under sites.content_domain %q, where site hosts live; use a separate domain for sites", cfg.AppHost, cfg.ContentDomain)
 	}
 
 	logSec := f.Section("log")
@@ -197,6 +205,25 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("tmppath: %w", err)
 	}
 	return cfg, nil
+}
+
+// hostSetting reads a required bare host name: lowercased, one trailing dot trimmed, no
+// scheme, port, path or spaces.
+func hostSetting(sec *ini.Section, name string) (string, error) {
+	raw := strings.TrimSpace(sec.Key(name).String())
+	host := strings.TrimSuffix(strings.ToLower(raw), ".")
+	if host == "" {
+		return "", fmt.Errorf("sites.%s: required, a bare host name such as pages.corp", name)
+	}
+	if len(host) > 253 {
+		return "", fmt.Errorf("sites.%s %q: host name too long", name, raw)
+	}
+	for _, label := range strings.Split(host, ".") {
+		if !names.ValidSite(label) { // a DNS label: letters, digits, inner hyphens, 1 to 63 chars
+			return "", fmt.Errorf("sites.%s %q: must be a bare host name (letters, digits and hyphens in each dot-separated label), without scheme, port or path", name, raw)
+		}
+	}
+	return host, nil
 }
 
 // strictBool reads a boolean key, failing on anything that isn't a boolean instead of

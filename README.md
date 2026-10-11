@@ -17,17 +17,17 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini
 ```
 
-Then open http://localhost:8080/index, or use the API:
+Then open http://app.localhost:8080/index, or use the API:
 
 ```sh
-curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
+curl -X POST app.localhost:8080/v1/user/register -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -c cookies -X POST localhost:8080/v1/user/login -H 'Content-Type: application/json' \
+curl -c cookies -X POST app.localhost:8080/v1/user/login -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -b cookies -X POST localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
+curl -b cookies -X POST app.localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
   -d '{"name":"hello"}'
-curl -b cookies -X POST --data-binary @site.zip localhost:8080/v1/auth/sites/hello/upload
-curl localhost:8080/hello/
+curl -b cookies -X POST --data-binary @site.zip app.localhost:8080/v1/auth/sites/hello/upload
+curl http://hello.sites.localhost:8080/   # sites get their own host, here <site>.sites.localhost
 ```
 
 As a container:
@@ -38,6 +38,10 @@ docker compose -f deploy/docker-compose.yml up --build
 docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
+
+The image's defaults serve the API on `app.localhost` and sites on `<site>.sites.localhost`; a
+real deployment sets its own `app_host` and `content_domain` (see
+[docs/getting-started.md](docs/getting-started.md#urls-and-hosts)).
 
 Deploy a directory from CI with the same binary:
 
@@ -50,10 +54,12 @@ OPEN_PAGES_TOKEN=opt_... open-pages deploy -server https://pages.corp blog ./pub
 All reference material is in [`docs/`](docs/README.md):
 
 - [Getting started and operations](docs/getting-started.md): install, every settings key,
-  URL modes, containers, health and metrics, CLI and CI deploys, backups.
+  sites and hosts, containers, health and metrics, CLI and CI deploys, backups.
 - [API reference](docs/api.md): every route with auth, request and response shapes, status
   codes and examples. The OpenAPI 3.1 version is [`api/openapi.yaml`](api/openapi.yaml),
   also served at `/v1/openapi.yaml`.
+- [Security model](docs/security-model.md): what separates user content from the app, and
+  what it requires of your deployment (separate content domain, wildcard TLS, HTTPS).
 - [Access control and authentication](docs/auth.md): accounts, sessions, API tokens, OIDC,
   groups, site visibility, known limits.
 - [Database schema](docs/schema.md): tables, columns, indexes, migrations.

@@ -25,6 +25,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	cfg := config.Default()
 	cfg.DataPath = t.TempDir()
 	cfg.TmpPath = t.TempDir()
+	cfg.AppHost, cfg.ContentDomain = "127.0.0.1", testContentDomain
 	cfg.MaxUploadBytes = 1 << 20
 	cfg.MaxExtractSize = 1 << 20
 	cfg.MaxExtractFile = 50
