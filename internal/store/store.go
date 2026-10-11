@@ -38,29 +38,36 @@ CREATE TABLE IF NOT EXISTS site_login_code (
 	codeid     INTEGER PRIMARY KEY,
 	hash       CHAR(64) NOT NULL UNIQUE,
 	site       VARCHAR(256) NOT NULL,
+	siteid     INTEGER NOT NULL,
 	userid     INTEGER NOT NULL,
 	sessionid  INTEGER NOT NULL,
 	state_hash CHAR(64) NOT NULL,
 	return_to  TEXT NOT NULL,
 	expires    BIGINT NOT NULL,
+	FOREIGN KEY (siteid) REFERENCES docs(docid) ON DELETE CASCADE,
 	FOREIGN KEY (userid) REFERENCES user(userid),
 	FOREIGN KEY (sessionid) REFERENCES session(sessionid) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS site_login_code_session ON site_login_code (sessionid);
+CREATE INDEX IF NOT EXISTS site_login_code_site ON site_login_code (siteid);
 CREATE INDEX IF NOT EXISTS site_login_code_expires ON site_login_code (expires);
 
 CREATE TABLE IF NOT EXISTS site_session (
 	sitesessionid INTEGER PRIMARY KEY,
 	hash          CHAR(64) NOT NULL UNIQUE,
 	site          VARCHAR(256) NOT NULL,
+	siteid        INTEGER NOT NULL,
 	userid        INTEGER NOT NULL,
 	sessionid     INTEGER NOT NULL,
 	expires       BIGINT NOT NULL,
+	FOREIGN KEY (siteid) REFERENCES docs(docid) ON DELETE CASCADE,
 	FOREIGN KEY (userid) REFERENCES user(userid),
 	FOREIGN KEY (sessionid) REFERENCES session(sessionid) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS site_session_session ON site_session (sessionid);
+CREATE INDEX IF NOT EXISTS site_session_site ON site_session (siteid);
 CREATE INDEX IF NOT EXISTS site_session_expires ON site_session (expires);
 
 CREATE TABLE IF NOT EXISTS api_token (

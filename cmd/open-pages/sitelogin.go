@@ -119,8 +119,9 @@ func (s *Server) siteUser(r *http.Request, site string) (int64, error) {
 		var uid int64
 		err := s.db.QueryRowContext(r.Context(),
 			`SELECT ss.userid FROM site_session ss JOIN session ON session.sessionid = ss.sessionid
-			 WHERE ss.hash = ? AND ss.site = ? AND ss.expires > ? AND session.expires > ?`,
-			hashToken(c.Value), site, time.Now().Unix(), time.Now().Unix()).Scan(&uid)
+			 WHERE ss.hash = ? AND ss.site = ? AND ss.siteid = (SELECT docid FROM docs WHERE name = ?)
+			   AND ss.expires > ? AND session.expires > ?`,
+			hashToken(c.Value), site, site, time.Now().Unix(), time.Now().Unix()).Scan(&uid)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -196,9 +197,9 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.ExecContext(r.Context(),
-		`INSERT INTO site_login_code (hash, site, userid, sessionid, state_hash, return_to, expires)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		hashToken(code), site, uid, sid, hashToken(state), ret,
+		`INSERT INTO site_login_code (hash, site, siteid, userid, sessionid, state_hash, return_to, expires)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		hashToken(code), site, rec.ID, uid, sid, hashToken(state), ret,
 		min(now+int64(siteLoginCodeTTL.Seconds()), sessionEnd)); err != nil {
 		internalError(w, "store login code", err)
 		return
@@ -228,12 +229,12 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 	states := r.CookiesNamed(s.cookieName(siteStateCookie))
 	var (
 		codeSite, stateHash, returnTo string
-		uid, sid, expires             int64
+		siteID, uid, sid, expires     int64
 	)
 	err := s.db.QueryRowContext(r.Context(),
 		`DELETE FROM site_login_code WHERE hash = ?
-		 RETURNING site, userid, sessionid, state_hash, return_to, expires`,
-		hashToken(r.URL.Query().Get("code"))).Scan(&codeSite, &uid, &sid, &stateHash, &returnTo, &expires)
+		 RETURNING site, siteid, userid, sessionid, state_hash, return_to, expires`,
+		hashToken(r.URL.Query().Get("code"))).Scan(&codeSite, &siteID, &uid, &sid, &stateHash, &returnTo, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		notFoundNoStore(w, r)
 		return
@@ -256,6 +257,18 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 		notFoundNoStore(w, r)
 		return
 	}
+	// The site must still be the one the code was issued for (not deleted, not recreated
+	// under the same name).
+	var current int64
+	err = s.db.QueryRowContext(r.Context(), "SELECT docid FROM docs WHERE name = ?", site).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && current != siteID) {
+		notFoundNoStore(w, r)
+		return
+	}
+	if err != nil {
+		siteInternalError(w, "look up site", err)
+		return
+	}
 	// The site session must not outlive the app session it came from.
 	var sessionEnd int64
 	err = s.db.QueryRowContext(r.Context(), "SELECT expires FROM session WHERE sessionid = ?", sid).Scan(&sessionEnd)
@@ -274,8 +287,8 @@ func (s *Server) handleSiteRedeem(w http.ResponseWriter, r *http.Request, site s
 	}
 	end := min(now.Add(siteSessionTTL).Unix(), sessionEnd)
 	if _, err := s.db.ExecContext(r.Context(),
-		"INSERT INTO site_session (hash, site, userid, sessionid, expires) VALUES (?, ?, ?, ?, ?)",
-		hashToken(token), site, uid, sid, end); err != nil {
+		"INSERT INTO site_session (hash, site, siteid, userid, sessionid, expires) VALUES (?, ?, ?, ?, ?, ?)",
+		hashToken(token), site, siteID, uid, sid, end); err != nil {
 		siteInternalError(w, "store site session", err)
 		return
 	}

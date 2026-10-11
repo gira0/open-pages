@@ -482,8 +482,8 @@ func addSiteSession(t *testing.T, s *Server, uid int64, site, token string) {
 	}
 	sid, _ := res.LastInsertId()
 	if _, err := s.db.ExecContext(t.Context(),
-		"INSERT INTO site_session (hash, site, userid, sessionid, expires) VALUES (?, ?, ?, ?, ?)",
-		hashToken(token), site, uid, sid, exp); err != nil {
+		"INSERT INTO site_session (hash, site, siteid, userid, sessionid, expires) VALUES (?, ?, (SELECT docid FROM docs WHERE name = ?), ?, ?, ?)",
+		hashToken(token), site, site, uid, sid, exp); err != nil {
 		t.Fatal(err)
 	}
 }

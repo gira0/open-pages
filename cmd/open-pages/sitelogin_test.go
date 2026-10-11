@@ -452,7 +452,7 @@ func TestSiteLoginSiteCookieIsPerSite(t *testing.T) {
 	}
 	// A missing site and a refusal look alike for the same cookie.
 	cookie = e.signIn(t, e.outsider, "intra")
-	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE site_session SET site = 'secret'"); err != nil {
+	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE site_session SET site = 'secret', siteid = (SELECT docid FROM docs WHERE name = 'secret')"); err != nil {
 		t.Fatal(err)
 	}
 	if w := do(e.s, "GET", siteHost("intra"), "/", "Cookie", cookie); w.Code != http.StatusFound {
@@ -546,18 +546,22 @@ func TestSiteLoginMissingLooksLikeDenied(t *testing.T) {
 			t.Errorf("%s redirects to %q, want %q", site, l, want)
 		}
 	}
-	// Signed in with a site cookie but not allowed, or a missing site: the same plain 404.
+	// Signed in with a site cookie but not allowed: the plain 404. A cookie left over for a
+	// site that is gone counts for nothing, like no cookie at all.
 	cookie := e.signIn(t, e.outsider, "intra")
 	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE docs SET visibility = 'restricted' WHERE name = 'intra'"); err != nil {
 		t.Fatal(err)
 	}
-	denied := do(e.s, "GET", siteHost("intra"), "/", "Cookie", cookie)
+	if denied := do(e.s, "GET", siteHost("intra"), "/", "Cookie", cookie); denied.Code != http.StatusNotFound {
+		t.Errorf("denied with a valid cookie: %d", denied.Code)
+	}
 	if _, err := e.s.db.ExecContext(t.Context(), "UPDATE site_session SET site = 'ghost'"); err != nil {
 		t.Fatal(err)
 	}
-	missing := do(e.s, "GET", siteHost("ghost"), "/", "Cookie", cookie)
-	if denied.Code != 404 || missing.Code != 404 || denied.Body.String() != missing.Body.String() {
-		t.Errorf("denied %d %q, missing %d %q", denied.Code, denied.Body, missing.Code, missing.Body)
+	stale := do(e.s, "GET", siteHost("ghost"), "/", "Cookie", cookie)
+	anon := do(e.s, "GET", siteHost("ghost"), "/")
+	if stale.Code != http.StatusFound || anon.Code != http.StatusFound {
+		t.Errorf("missing site: stale cookie %d, no cookie %d, want 302 for both", stale.Code, anon.Code)
 	}
 }
 
@@ -643,6 +647,46 @@ func TestSiteDeleteRevokesSiteLogins(t *testing.T) {
 	}
 	if n := countRows(t, e.s, "site_session"); n != 0 {
 		t.Errorf("%d site sessions left for a deleted site", n)
+	}
+}
+
+// Rows are tied to the site's id, not just its name: deleting a site removes pending codes
+// too, and a site recreated under the same name rejects cookies and codes of the old one.
+func TestRecreatedSiteRejectsOldLogins(t *testing.T) {
+	e := newLoginEnv(t, false)
+	ctx := t.Context()
+	cookie := e.signIn(t, e.member, "secret")
+	pending, st := e.handoff(t, e.member, "secret")
+
+	site, err := e.s.getSite(ctx, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.deleteSite(ctx, site); err != nil {
+		t.Fatal(err)
+	}
+	if n := countRows(t, e.s, "site_login_code") + countRows(t, e.s, "site_session"); n != 0 {
+		t.Errorf("%d login rows left after deleting the site", n)
+	}
+
+	// Bring back stale rows as a race would have left them (the foreign key refuses them
+	// for a missing site, so recreate first), then check the id binding.
+	if _, err := e.s.createSite(ctx, "secret", "", e.owner, e.group, visRestricted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployNamed(t, e.s, "secret", writeZip(t, map[string]string{"index.html": "new"})); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie); w.Code == http.StatusOK {
+		t.Error("old cookie works on the recreated site")
+	}
+	if w := e.redeem("secret", pending, st); cookieNamed(w, e.s.cookieName(siteSessionCookie)) != nil {
+		t.Error("old code redeemed on the recreated site")
+	}
+	// A fresh login works.
+	cookie = e.signIn(t, e.member, "secret")
+	if w := do(e.s, "GET", siteHost("secret"), "/", "Cookie", cookie); w.Code != http.StatusOK {
+		t.Errorf("fresh login on the recreated site: %d", w.Code)
 	}
 }
 
