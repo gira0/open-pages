@@ -219,7 +219,7 @@ func TestUnknownHosts(t *testing.T) {
 		}
 	}
 	// An empty Host header is just another unknown host.
-	r := httptest.NewRequest("GET", "/v1/ping", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/ping", nil)
 	r.Host = ""
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
@@ -452,7 +452,7 @@ func TestSessionCookieIsHostOnly(t *testing.T) {
 	s := newServeTestServer(t, func(c *config.Config) { c.CookieSecure = true })
 	send := func(path string) *httptest.ResponseRecorder {
 		body := strings.NewReader(`{"email":"a@example.com","password":"correct horse"}`)
-		r := httptest.NewRequest("POST", path, body)
+		r := httptest.NewRequest(http.MethodPost, path, body)
 		r.Host = testAppHost
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()

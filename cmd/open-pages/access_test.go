@@ -15,8 +15,8 @@ import (
 	"github.com/gira0/open-pages/internal/store"
 )
 
-// fetchURL sends a GET, with an optional bearer token, and returns status, body and headers.
-func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string, http.Header) {
+// fetchURL sends a GET, with an optional bearer token, and returns status and body.
+func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	if err != nil {
@@ -34,7 +34,7 @@ func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string, ht
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode, string(b), resp.Header
+	return resp.StatusCode, string(b)
 }
 
 // fetchSite sends a GET for path of site to the test server on the site's content host.
@@ -271,7 +271,7 @@ func TestSiteMetadataAccess(t *testing.T) {
 		{"anonymous", w.anon, "", http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if status, _, _ := fetchURL(t, tc.client, meta, tc.bearer); status != tc.status {
+			if status, _ := fetchURL(t, tc.client, meta, tc.bearer); status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
 		})
@@ -345,7 +345,7 @@ func TestPublicSiteListing(t *testing.T) {
 	if got := list(w.anon, ""); strings.Join(got, ",") != "secret" {
 		t.Errorf("after flipping visibility: %v, want [secret]", got)
 	}
-	_, body, _ := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
+	_, body := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
 	if !strings.Contains(body, `"description":"now open"`) || strings.Contains(body, "owner") {
 		t.Errorf("listing body = %s", body)
 	}
@@ -452,14 +452,6 @@ func TestMigrateAddsVisibility(t *testing.T) {
 	}
 }
 
-// noRedirect is a copy of c that returns redirects instead of following them.
-func noRedirect(c *http.Client) *http.Client {
-	return &http.Client{
-		Jar:           c.Jar,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-}
-
 // Everything served for a gated site depends on the viewer, so it must all be private:
 // content, custom and plain 404s, never-deployed sites and directory redirects.
 func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
@@ -545,7 +537,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	}
 
 	// Never listed publicly.
-	_, listing, _ := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
+	_, listing := fetchURL(t, w.anon, w.ts.URL+"/v1/sites", "")
 	if strings.Contains(listing, "members") {
 		t.Errorf("public listing shows an authenticated site: %s", listing)
 	}
@@ -556,7 +548,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	if out["visibility"] != visAuthenticated {
 		t.Errorf("metadata = %v", out)
 	}
-	if status, _, _ := fetchURL(t, w.anon, meta, ""); status != http.StatusUnauthorized {
+	if status, _ := fetchURL(t, w.anon, meta, ""); status != http.StatusUnauthorized {
 		t.Errorf("anonymous metadata: %d", status)
 	}
 	// Still owner-only to change or list versions.
