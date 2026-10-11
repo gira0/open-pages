@@ -329,19 +329,69 @@ Consequences:
 - A group that is still the `group` of any site cannot be deleted.
 - A site's group is stored regardless of visibility, but only `restricted` sites use it for
   access. `public` and `authenticated` ignore it.
-- Credentials: both the session cookie and an API token (`Authorization: Bearer`) are
-  honoured when serving.
+- Credentials: on a site host an API token (`Authorization: Bearer`) or the per-site cookie
+  described in [Signing in to a site](#signing-in-to-a-site) is honoured, never the app
+  session cookie.
 
 What a refused viewer sees:
 
-- **Serving the site.** Anyone who may not view a non-public site, anonymous visitors
-  included, gets the same plain `404 page not found` as for a site that does not exist
-  (`Cache-Control: no-store`), so the response does not reveal that the site exists. Content
+- **Serving the site.** A GET or HEAD without credentials (no valid site cookie and no
+  `Authorization` header) is redirected to sign in, for a missing site exactly as for a
+  non-public one, so the response does not reveal that a site exists. Anyone with
+  credentials who may not view the site, and every request with an `Authorization` header
+  (a rejected token included, no redirect), gets the plain `404 page not found` of a missing
+  site (`Cache-Control: no-store`). Content
   served for non-public sites, including its 404 pages and redirects, is sent with
   `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
 - **JSON API.** `GET /v1/auth/sites/{name}` returns `403 {"error":"you may not view this
   site"}` to a logged-in user who may not view it (the management routes tell logged-in
   users which sites exist), and 404 for an unknown site.
+
+### Signing in to a site
+
+The app session cookie is host-only on `app_host` and never reaches `<site>.<content_domain>`.
+A browser opens a non-public site through a handoff, like GitHub private Pages, so a content
+host never sees the app session:
+
+1. A `GET` or `HEAD` for the site without a valid site cookie or `Authorization` header is
+   redirected (`302`, `Cache-Control: no-store`) to
+   `https://<app_host>/v1/auth/site-login?site=<name>&return=<path>&state=<nonce>`. The site
+   host also sets a 5 minute `HttpOnly` cookie `site_login_state` (`__Host-` prefixed with
+   `cookie_secure`) holding the nonce, which defends against login CSRF: a code is only
+   redeemable by the browser that started the login. `return` is the requested path and query.
+2. `site-login` on the app host needs the app session; without one it redirects to
+   `/index?next=<that URL>`, and the UI sends the browser back after sign-in (local login, or
+   OIDC and SAML, which land on `/index` again; the UI keeps `next` in `sessionStorage`
+   meanwhile and only follows a relative path starting with `/v1/auth/site-login?`). It then
+   checks `canView`. If the site is missing or the user may not view it the answer is the same
+   plain `404`. Otherwise it stores a random 32 byte code (hashed, single use, valid 60
+   seconds, bound to the site, user, app session, `return` and the hash of `state`) and
+   redirects to `<site>.<content_domain>/__open-pages/auth?code=...`. The scheme is `https`
+   with `cookie_secure`, otherwise `http`, and the port of the request is kept.
+   `return` must be a path starting with a single `/` (not `//`), at most 2048 bytes, without
+   backslash or control characters and not under `/__open-pages/`; anything else becomes `/`.
+3. The site host redeems the code in `GET /__open-pages/auth?code=...`. The code is consumed
+   whatever the outcome; it must belong to this site, be unexpired and come with the
+   matching state cookie, which is cleared. The response sets the site cookie and redirects
+   to `return`. Both redirects carry `Referrer-Policy: no-referrer` and `Cache-Control:
+   no-store`; a failed redeem is a plain `404`.
+
+The site cookie is `site_session` (`__Host-site_session` with `cookie_secure`): `HttpOnly`,
+`SameSite=Lax`, `Path=/`, host-only, `Secure` with `cookie_secure`. Its value is a random
+256-bit token unrelated to the app session; the `site_session` table keeps only its hash, the
+site, the user and the app session it came from. It lasts at most 1 hour and never beyond
+the app session. On every request the server looks the token up for exactly that site and
+then runs `canView` again, so removing someone from a group, or narrowing a site's
+visibility, takes effect on the next request. Logging out of the app deletes the site
+sessions and unredeemed codes of that app session; deleting a site deletes its own.
+A cookie of one site is rejected on every other site. Visiting another site, or a
+site after an hour, repeats the handoff, usually without any page showing since the app
+session is still valid. API tokens keep working unchanged on site hosts, and a request with
+an `Authorization` header never falls back to cookies.
+
+The path prefix `/__open-pages/` is reserved on site hosts: it is handled before any file
+lookup, so a site's own files cannot shadow it, and anything under it except
+`GET /__open-pages/auth` is a `404`.
 
 ### Site ownership
 
@@ -351,11 +401,6 @@ versions and roll back.
 
 ## Known limits
 
-- **Non-public sites and browsers.** Sites are served on `<site>.<content_domain>`, never on
-  the app host. The session cookie is host-only (no `Domain` attribute) and never reaches a
-  site host, so a browser cannot open `authenticated` or `restricted` sites, and signing in
-  does not change that. API tokens work (`curl -H "Authorization: Bearer ..."`). Per-site
-  sign-in for browsers does not exist yet. See the [security model](security-model.md).
 - **No IP-based visibility.** There is no "intranet" level that depends on the client
   address. Restrict by network at the reverse proxy.
 - **SSO maps only to existing groups.** Groups are never created from tokens or assertions.

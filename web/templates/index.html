@@ -7,7 +7,7 @@
 	</div>
 </section>
 {{if or .oidc .saml .localLogin}}
-<section class="pf-v6-c-page__main-section">
+<section class="pf-v6-c-page__main-section" id="sign-in">
 	<div class="pf-v6-c-page__main-body">
 		<h2 class="pf-v6-c-title pf-m-lg">Sign in</h2>
 		{{if .oidc}}
@@ -17,7 +17,7 @@
 		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/saml/login"><span class="pf-v6-c-button__text">Sign in with your company account{{if .oidc}} (SAML){{end}}</span></a></p>
 		{{end}}
 		{{if .localLogin}}
-		<form class="pf-v6-c-form op-narrow" action="/v1/user/login" method="post">
+		<form class="pf-v6-c-form op-narrow" id="login-form" action="/v1/user/login" method="post">
 			<div class="pf-v6-c-form__group">
 				<div class="pf-v6-c-form__group-label">
 					<label class="pf-v6-c-form__label" for="email"><span class="pf-v6-c-form__label-text">Email</span></label>
@@ -39,6 +39,7 @@
 					<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Sign in</span></button>
 				</div>
 			</div>
+			<pre id="login-result" role="status" aria-live="polite"></pre>
 		</form>
 		{{end}}
 	</div>

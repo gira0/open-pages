@@ -73,20 +73,27 @@ func generateToken() (string, error) {
 
 // sessionUser returns the user id for a valid session cookie, or 0 if there is none.
 func (s *Server) sessionUser(r *http.Request) (int64, error) {
+	uid, _, _, err := s.sessionRow(r)
+	return uid, err
+}
+
+// sessionRow returns the user id, session id and expiry (Unix time) of a valid session
+// cookie, or zeros if there is none.
+func (s *Server) sessionRow(r *http.Request) (uid, sid, expires int64, err error) {
 	c, err := r.Cookie(s.cookieName(sessionCookie))
 	if errors.Is(err, http.ErrNoCookie) {
-		return 0, nil
+		return 0, 0, 0, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
-	var uid int64
 	err = s.db.QueryRowContext(r.Context(),
-		"SELECT userid FROM session WHERE token = ? AND expires > ?", c.Value, time.Now().Unix()).Scan(&uid)
+		"SELECT userid, sessionid, expires FROM session WHERE token = ? AND expires > ?",
+		c.Value, time.Now().Unix()).Scan(&uid, &sid, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+		return 0, 0, 0, nil
 	}
-	return uid, err
+	return uid, sid, expires, err
 }
 
 // cookieName returns the name a cookie is set and read under. With cookie_secure the
@@ -231,9 +238,16 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, uid int64)
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	c, _ := r.Cookie(s.cookieName(sessionCookie))
-	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM session WHERE token = ?", c.Value); err != nil {
-		internalError(w, "delete session", err)
-		return
+	// Site sessions and unredeemed login codes hang off the app session and die with it.
+	for _, q := range []string{
+		"DELETE FROM site_session WHERE sessionid IN (SELECT sessionid FROM session WHERE token = ?)",
+		"DELETE FROM site_login_code WHERE sessionid IN (SELECT sessionid FROM session WHERE token = ?)",
+		"DELETE FROM session WHERE token = ?",
+	} {
+		if _, err := s.db.ExecContext(r.Context(), q, c.Value); err != nil {
+			internalError(w, "delete session", err)
+			return
+		}
 	}
 	s.setSessionCookie(w, "", -1)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})

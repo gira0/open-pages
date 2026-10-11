@@ -18,26 +18,27 @@ import (
 // control happen here.
 func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePath string) {
 	rec, err := s.getSite(r.Context(), site)
-	if errors.Is(err, errSiteNotFound) {
-		notFoundNoStore(w, r)
-		return
-	}
-	if err != nil {
+	missing := errors.Is(err, errSiteNotFound)
+	if err != nil && !missing {
 		slog.Error("look up site", "err", err, "request_id", requestIDOf(w))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	gated := rec.Visibility != visPublic
+	gated := missing || rec.Visibility != visPublic
 	if gated {
-		// Session cookie or API token. Anyone not allowed, anonymous included, gets exactly the
-		// response of a missing site, so it doesn't reveal that the site exists.
-		ok, err := s.viewerMaySee(r, rec)
+		// Site cookie or API token. A missing site and one the viewer may not see are handled
+		// by the same code, so the response does not reveal that the site exists.
+		ok, signedIn, err := s.viewerMaySee(r, site, rec, missing)
 		if err != nil {
 			slog.Error("check site access", "err", err, "request_id", requestIDOf(w))
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if !ok {
+			if !signedIn {
+				s.redirectToLogin(w, r, site)
+				return
+			}
 			notFoundNoStore(w, r)
 			return
 		}
@@ -101,14 +102,22 @@ func notFoundNoStore(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// viewerMaySee resolves who sent the request (API token or session cookie, 0 if neither is
-// valid) and whether that user may view site.
-func (s *Server) viewerMaySee(r *http.Request, site Site) (bool, error) {
-	uid, err := s.authUser(r)
+// viewerMaySee resolves who sent the request (API token or the site's cookie, 0 if neither
+// is valid) and whether that user may view site. signedIn reports whether the request
+// carries valid credentials, or a bearer header at all: only a request that does not is sent
+// to log in. A missing site is never viewable.
+func (s *Server) viewerMaySee(r *http.Request, name string, site Site, missing bool) (ok, signedIn bool, err error) {
+	uid, err := s.siteUser(r, name)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return s.canView(r.Context(), site, uid)
+	_, bearer := bearerToken(r)
+	signedIn = uid != 0 || bearer
+	if missing {
+		return false, signedIn, nil
+	}
+	ok, err = s.canView(r.Context(), site, uid)
+	return ok, signedIn, err
 }
 
 // serveNotFound sends the site's own 404.html with status 404, or a plain 404.

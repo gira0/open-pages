@@ -23,7 +23,7 @@ Other files in the repository:
 Where to start:
 
 - Running a server: [getting-started.md](getting-started.md), then
-  [auth.md](auth.md#known-limits) for what to expect from non-public sites.
+  [auth.md](auth.md#signing-in-to-a-site) for how browsers open non-public sites.
 - Deploying a site: [getting-started.md](getting-started.md#deploying-with-the-cli-and-ci).
 - Writing a client or script: [api.md](api.md).
 - Changing the code: [schema.md](schema.md#migrations) for the schema rules, and the

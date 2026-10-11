@@ -34,6 +34,32 @@ CREATE TABLE IF NOT EXISTS session (
 	FOREIGN KEY (userid) REFERENCES user(userid)
 );
 
+CREATE TABLE IF NOT EXISTS site_login_code (
+	codeid     INTEGER PRIMARY KEY,
+	hash       CHAR(64) NOT NULL UNIQUE,
+	site       VARCHAR(256) NOT NULL,
+	userid     INTEGER NOT NULL,
+	sessionid  INTEGER NOT NULL,
+	state_hash CHAR(64) NOT NULL,
+	return_to  TEXT NOT NULL,
+	expires    BIGINT NOT NULL,
+	FOREIGN KEY (userid) REFERENCES user(userid),
+	FOREIGN KEY (sessionid) REFERENCES session(sessionid) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS site_session (
+	sitesessionid INTEGER PRIMARY KEY,
+	hash          CHAR(64) NOT NULL UNIQUE,
+	site          VARCHAR(256) NOT NULL,
+	userid        INTEGER NOT NULL,
+	sessionid     INTEGER NOT NULL,
+	expires       BIGINT NOT NULL,
+	FOREIGN KEY (userid) REFERENCES user(userid),
+	FOREIGN KEY (sessionid) REFERENCES session(sessionid) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS site_session_session ON site_session (sessionid);
+
 CREATE TABLE IF NOT EXISTS api_token (
 	tokenid INTEGER PRIMARY KEY,
 	userid  INTEGER NOT NULL,

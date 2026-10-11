@@ -197,7 +197,9 @@ func TestContentHostServesOnlySites(t *testing.T) {
 			t.Errorf("%s on a content host: %d %q", target, w.Code, w.Body)
 		}
 	}
-	expectStatus(t, do(s, "GET", siteHost("ghost"), "/").Code, http.StatusNotFound)
+	// A missing site answers like a private one: a browser without credentials is sent to sign in.
+	expectStatus(t, do(s, "GET", siteHost("ghost"), "/").Code, http.StatusFound)
+	expectStatus(t, do(s, "GET", siteHost("ghost"), "/", "Authorization", "Bearer nope").Code, http.StatusNotFound)
 }
 
 // Hosts that are neither the app host nor a site host get a 404 and never reach the API.

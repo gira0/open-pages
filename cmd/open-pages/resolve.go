@@ -46,6 +46,10 @@ func (s *Server) dispatch(app, probes http.Handler) http.Handler {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+			if reservedPath(r.URL.Path) {
+				s.serveReserved(w, r, site)
+				return
+			}
 			s.serveSite(w, r, site, r.URL.Path)
 			return
 		}

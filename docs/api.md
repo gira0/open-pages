@@ -76,6 +76,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | GET | `/v1/auth/saml/login` | none | Start SAML sign-in (optional) |
 | POST | `/v1/auth/saml/acs` | none | Finish SAML sign-in (optional) |
 | GET | `/v1/auth/saml/metadata` | none | SAML service provider metadata (optional) |
+| GET | `/v1/auth/site-login` | session | Browser login for a non-public site (redirects) |
 | GET | `/v1/auth/user` | any | Current user, groups, sites |
 | POST | `/v1/auth/logout` | session | End the session |
 | POST | `/v1/auth/tokens` | session | Create an API token |
@@ -237,6 +238,23 @@ Auth: session. Deletes the session row and clears the cookie.
 ```sh
 curl -b cookies -X POST https://pages.corp/v1/auth/logout
 ```
+
+### GET /v1/auth/site-login
+
+Auth: session cookie (without one it redirects to `/index?next=...` to sign in). Step two of
+the browser login for `authenticated` and `restricted` sites; the whole flow is described in
+[auth.md](auth.md#signing-in-to-a-site). Query parameters: `site` (required), `state`
+(required, 64 lowercase hex characters) and `return` (a path on the site, starting with a
+single `/`, at most 2048 bytes; anything else becomes `/`).
+
+| Status | Meaning |
+|---|---|
+| 302 | To `<site>.<content_domain>/__open-pages/auth?code=...` (`Referrer-Policy: no-referrer`), or to `/index?next=...` without a session |
+| 400 | `{"error":"invalid state"}` |
+| 404 | Plain text: invalid or unknown site, or the user may not view it (indistinguishable) |
+
+Every response is `Cache-Control: no-store`. Logging out deletes the site cookies issued from
+that session.
 
 ### GET /v1/auth/user
 
@@ -613,13 +631,19 @@ Behaviour for every site:
   `Cache-Control: no-cache` so a deploy or rollback shows up at once.
 - Files are opened through `os.Root`: `..` segments are cleaned and symlinks inside a site
   that point outside it are refused.
-- A site that does not exist, has never been deployed, or that the viewer may not see is a
-  plain 404. For non-public sites the response is identical for "missing" and "not allowed"
+- A site that has never been deployed, or that the viewer may not see, is a plain 404; a
+  missing site, a non-public one and a request without credentials are redirected to sign
+  in alike (see below). For non-public sites the response is identical for "missing" and "not allowed"
   (`Cache-Control: no-store`), and everything served for a non-public site carries
   `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
-- Non-public sites accept the session cookie or an `Authorization: Bearer` API token. The
-  session cookie is host-only and does not reach `<site>.<content_domain>` (see
-  [auth.md](auth.md#known-limits)), so in practice only API tokens work there:
+- Non-public sites accept an `Authorization: Bearer` API token or, in a browser, the
+  per-site cookie issued by the login handoff (see
+  [auth.md](auth.md#signing-in-to-a-site)). A GET or HEAD with neither is redirected
+  (`302`, `Cache-Control: no-store`) to `GET /v1/auth/site-login` on `app_host`, the same
+  for a missing site. A request with an `Authorization` header is never redirected: a bad
+  token gets the plain 404. `/__open-pages/` is reserved on site hosts (only
+  `GET /__open-pages/auth?code=...` exists, redeeming a login code; anything else under it
+  is a 404). For scripts a token is simpler:
 
 ```sh
 curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" https://blog.pages-content.corp/
