@@ -36,6 +36,7 @@ servers:
   - url: /
 security:
   - cookieAuth: []
+  - hostCookieAuth: []
   - bearerAuth: []
 tags:
   - name: service
@@ -244,6 +245,8 @@ paths:
                 $ref: "#/components/schemas/Status"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "409":
           description: "`user already exists`."
           content:
@@ -283,6 +286,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -562,6 +567,7 @@ paths:
       description: Deletes the session and clears the cookie.
       security:
         - cookieAuth: []
+        - hostCookieAuth: []
       responses:
         "200":
           description: Logged out.
@@ -576,6 +582,8 @@ paths:
                 $ref: "#/components/schemas/Status"
         "401":
           $ref: "#/components/responses/SessionRequired"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -590,6 +598,7 @@ paths:
         `Cache-Control: no-store`.
       security:
         - cookieAuth: []
+        - hostCookieAuth: []
       requestBody:
         required: true
         content:
@@ -617,6 +626,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/SessionRequired"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "409":
           description: "`token limit reached; revoke one first`."
           content:
@@ -634,6 +645,7 @@ paths:
       description: The caller's tokens, ordered by id. Never contains the token itself.
       security:
         - cookieAuth: []
+        - hostCookieAuth: []
       responses:
         "200":
           description: The tokens.
@@ -659,6 +671,7 @@ paths:
       summary: Revoke an API token
       security:
         - cookieAuth: []
+        - hostCookieAuth: []
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -670,6 +683,8 @@ paths:
                 $ref: "#/components/schemas/Status"
         "401":
           $ref: "#/components/responses/SessionRequired"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "404":
           description: "`token not found`, also for another user's token."
           content:
@@ -729,6 +744,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CrossOrigin"
         "409":
           description: "`a group with that name already exists`."
           content:
@@ -951,7 +968,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
-          description: "`you are not a member of this group`."
+          description: "`you are not a member of this group`, or `cross-origin request rejected`."
           content:
             application/json:
               schema:
@@ -1046,7 +1063,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
-          description: "`you do not own this site` or `you are not a member of this group`."
+          description: "`you do not own this site`, `you are not a member of this group` or `cross-origin request rejected`."
           content:
             application/json:
               schema:
@@ -1254,8 +1271,16 @@ components:
       in: cookie
       name: auth_cookie
       description: >-
-        Session cookie from local login, OIDC or SAML sign-in, valid 7 days. With
-        `cookie_secure = true` it is named `__Host-auth_cookie` instead.
+        Session cookie from local login, OIDC or SAML sign-in, valid 7 days. Used when
+        `cookie_secure = false`; with `cookie_secure = true` the cookie is `__Host-auth_cookie`
+        (`hostCookieAuth`) and this one is ignored.
+    hostCookieAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-auth_cookie
+      description: >-
+        The session cookie when `cookie_secure = true`: `Secure`, `Path=/`, no `Domain`, so
+        other hosts cannot set or shadow it. Otherwise as `cookieAuth`.
     bearerAuth:
       type: http
       scheme: bearer
@@ -1284,7 +1309,7 @@ components:
 
   headers:
     SessionCookie:
-      description: "`auth_cookie=...` session cookie."
+      description: "`auth_cookie=...` session cookie (`__Host-auth_cookie=...` with `cookie_secure = true`)."
       schema:
         type: string
 
@@ -1319,7 +1344,7 @@ components:
       description: "`unauthenticated`: no valid session cookie or API token."
       headers:
         Set-Cookie:
-          description: Expires `auth_cookie`, sent only when the request carried a rejected session cookie (not with a bearer token).
+          description: Expires the session cookie (`auth_cookie` or `__Host-auth_cookie`), sent only when the request carried a rejected session cookie (not with a bearer token).
           schema:
             type: string
       content:
@@ -1330,7 +1355,7 @@ components:
       description: "`a login session is required`: API tokens are not accepted here."
       headers:
         Set-Cookie:
-          description: Expires `auth_cookie`, sent only when the request carried a rejected session cookie.
+          description: Expires the session cookie (`auth_cookie` or `__Host-auth_cookie`), sent only when the request carried a rejected session cookie.
           schema:
             type: string
       content:
@@ -1354,7 +1379,9 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: The caller is not a member or not the owner, as the message says.
+      description: >-
+        The caller is not a member or not the owner, as the message says. On POST, PUT and
+        DELETE it is also `cross-origin request rejected` (see `CrossOrigin`).
       content:
         application/json:
           schema:
@@ -1372,7 +1399,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     NotSiteOwner:
-      description: "`you do not own this site`."
+      description: "`you do not own this site`, or `cross-origin request rejected`."
       content:
         application/json:
           schema:
