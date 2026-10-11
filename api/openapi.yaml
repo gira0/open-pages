@@ -33,7 +33,7 @@ info:
     - Deployed sites are served outside this API, on their own hosts
       `<site>.<content_domain>/...` over GET and HEAD, never on the API host. A browser
       opens a non-public site through `GET /v1/auth/site-login`; the site host's own
-      `GET /__open-pages/auth?code=...` (the path prefix `/__open-pages/` is reserved on site hosts)
+      `GET` or `HEAD /__open-pages/auth?code=...` (the path prefix `/__open-pages/` is reserved on site hosts)
       redeems the one-time code and sets the per-site cookie `site_session`
       (`__Host-site_session` with `cookie_secure`), `HttpOnly`, `SameSite=Lax`, valid 1 hour.
       It is not part of the API and is described in `docs/auth.md`. Every route

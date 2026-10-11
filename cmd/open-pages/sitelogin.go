@@ -53,9 +53,10 @@ func reservedPath(p string) bool {
 }
 
 // serveReserved answers the paths under /__open-pages/ before any file lookup, so a site's
-// own files can't shadow them. Only GET /__open-pages/auth exists.
+// own files can't shadow them. Only GET and HEAD /__open-pages/auth exist (a client that follows the
+// login redirects with HEAD can finish the handoff too).
 func (s *Server) serveReserved(w http.ResponseWriter, r *http.Request, site string) {
-	if r.URL.Path == siteRedeemPath && r.Method == http.MethodGet {
+	if r.URL.Path == siteRedeemPath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		s.handleSiteRedeem(w, r, site)
 		return
 	}

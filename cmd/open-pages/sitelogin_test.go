@@ -616,7 +616,7 @@ func TestSiteReservedPrefix(t *testing.T) {
 			}
 		}
 	}
-	// Only GET redeems.
+	// GET and HEAD redeem; an invalid code is a 404 for both.
 	if w := do(e.s, "HEAD", siteHost("open"), "/__open-pages/auth?code=x"); w.Code != http.StatusNotFound {
 		t.Errorf("HEAD: %d", w.Code)
 	}
@@ -791,5 +791,15 @@ func TestSiteLoginRedeemRejectsReusedSessionID(t *testing.T) {
 	}
 	if n := countRows(t, e.s, "site_session"); n != 0 {
 		t.Errorf("%d site sessions stored", n)
+	}
+}
+
+// The handoff completes for a client that follows redirects with HEAD.
+func TestSiteLoginRedeemAcceptsHEAD(t *testing.T) {
+	e := newLoginEnv(t, false)
+	code, st := e.handoff(t, e.member, "secret")
+	w := do(e.s, http.MethodHead, siteHost("secret"), "/__open-pages/auth?code="+url.QueryEscape(code), "Cookie", st)
+	if w.Code != http.StatusFound || cookieNamed(w, e.s.cookieName(siteSessionCookie)) == nil {
+		t.Errorf("HEAD redeem: %d, cookie %v", w.Code, cookieNamed(w, e.s.cookieName(siteSessionCookie)))
 	}
 }

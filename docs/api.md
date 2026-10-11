@@ -642,7 +642,7 @@ Behaviour for every site:
   (`302`, `Cache-Control: no-store`) to `GET /v1/auth/site-login` on `app_host`, the same
   for a missing site. A request with an `Authorization` header is never redirected: a bad
   token gets the plain 404. `/__open-pages/` is reserved on site hosts (only
-  `GET /__open-pages/auth?code=...` exists, redeeming a login code; anything else under it
+  `GET` (or `HEAD`) `/__open-pages/auth?code=...` exists, redeeming a login code; anything else under it
   is a 404). For scripts a token is simpler:
 
 ```sh
