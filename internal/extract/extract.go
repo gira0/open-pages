@@ -160,26 +160,27 @@ func int64Of(v uint64) (int64, bool) {
 }
 
 // checkZipDirectory refuses a zip with too many entries before zip.NewReader parses its
-// central directory into memory. The counts in the end records are attacker-controlled
-// (archive/zip keeps reading headers past the declared count), so it also walks the real
-// directory headers, which costs one small read per entry and stops at MaxFiles+1.
-func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
-	const eocdLen, maxComment = 22, 1<<16 - 1
-	tailLen := min(size, eocdLen+maxComment)
+// central directory into memory. It follows archive/zip's own reading of the end records
+// (readDirectoryEnd and findDirectory64End) so that it looks at the directory the reader
+// will use. The counts in those records are attacker-controlled, and archive/zip keeps
+// reading headers past the declared count, so it also walks the real directory headers,
+// which costs one small read per entry and stops at MaxFiles+1.
+func checkZipDirectory(ctx context.Context, src io.ReaderAt, size int64, limits Limits) error {
+	const eocdLen, locLen, end64Len = 22, 20, 56
+	tailLen := min(size, 65*1024)
 	tail := make([]byte, tailLen)
 	if _, err := src.ReadAt(tail, size-tailLen); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read zip: %w", err)
 	}
-	// Pick the record the way archive/zip does, the last signature whose comment length fits,
-	// so a forged record inside a comment cannot hide the real count.
+	// The last end-record signature in the tail, as archive/zip finds it: a comment that
+	// runs past the end of the file is an error there, not a reason to look further back.
 	i := len(tail) - eocdLen
 	for ; i >= 0; i-- {
-		if bytes.HasPrefix(tail[i:], []byte("PK\x05\x06")) &&
-			i+eocdLen+int(binary.LittleEndian.Uint16(tail[i+20:])) <= len(tail) {
+		if bytes.HasPrefix(tail[i:], []byte("PK\x05\x06")) {
 			break
 		}
 	}
-	if i < 0 {
+	if i < 0 || i+eocdLen+int(binary.LittleEndian.Uint16(tail[i+20:])) > len(tail) {
 		return errors.New("read zip: no end of central directory")
 	}
 	eocd := tail[i:]
@@ -187,27 +188,32 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 	entries := uint64(binary.LittleEndian.Uint16(eocd[10:]))
 	dirSize := uint64(binary.LittleEndian.Uint32(eocd[12:]))
 	dirOffset := uint64(binary.LittleEndian.Uint32(eocd[16:]))
-	if entries == 0xffff || dirSize == 0xffffffff || dirOffset == 0xffffffff {
-		// zip64: the locator sits right before the end record and points at the real one.
-		if endAt < 20 {
-			return errors.New("read zip: bad zip64 locator")
+	// archive/zip tests the 16-bit value 0xffff for the size as well as the count.
+	if entries == 0xffff || dirSize == 0xffff || dirOffset == 0xffffffff {
+		// The zip64 locator sits right before the end record. One that is missing, or
+		// that names another disk or a disk total other than 1, is ignored, and the
+		// values above stay in force.
+		var loc [locLen]byte
+		if endAt >= locLen {
+			if _, err := src.ReadAt(loc[:], endAt-locLen); err != nil {
+				return fmt.Errorf("read zip: %w", err)
+			}
 		}
-		var loc [20]byte
-		if _, err := src.ReadAt(loc[:], endAt-20); err != nil || !bytes.HasPrefix(loc[:], []byte("PK\x06\x07")) {
-			return errors.New("read zip: bad zip64 locator")
+		if endAt >= locLen && bytes.HasPrefix(loc[:], []byte("PK\x06\x07")) &&
+			binary.LittleEndian.Uint32(loc[4:]) == 0 && binary.LittleEndian.Uint32(loc[16:]) == 1 {
+			at, ok := int64Of(binary.LittleEndian.Uint64(loc[8:]))
+			var rec [end64Len]byte
+			if !ok || at > size-end64Len {
+				return errors.New("read zip: bad zip64 record")
+			}
+			if _, err := src.ReadAt(rec[:], at); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) {
+				return errors.New("read zip: bad zip64 record")
+			}
+			endAt = at
+			entries = binary.LittleEndian.Uint64(rec[32:])
+			dirSize = binary.LittleEndian.Uint64(rec[40:])
+			dirOffset = binary.LittleEndian.Uint64(rec[48:])
 		}
-		at, ok := int64Of(binary.LittleEndian.Uint64(loc[8:]))
-		var rec [56]byte
-		if !ok || at > size || size-at < int64(len(rec)) {
-			return errors.New("read zip: bad zip64 record")
-		}
-		if _, err := src.ReadAt(rec[:], at); err != nil || !bytes.HasPrefix(rec[:], []byte("PK\x06\x06")) {
-			return errors.New("read zip: bad zip64 record")
-		}
-		endAt = at
-		entries = binary.LittleEndian.Uint64(rec[32:])
-		dirSize = binary.LittleEndian.Uint64(rec[40:])
-		dirOffset = binary.LittleEndian.Uint64(rec[48:])
 	}
 	tooMany := fmt.Errorf("archive has more than %d entries", limits.MaxFiles)
 	if n, ok := int64Of(entries); !ok || n > int64(limits.MaxFiles) {
@@ -223,7 +229,7 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 		starts = append(starts, endAt-ds)
 	}
 	for _, off := range starts {
-		n, err := walkDirectory(src, size, off, limits)
+		n, err := walkDirectory(ctx, src, size, off, limits)
 		if err != nil {
 			return err
 		}
@@ -236,12 +242,15 @@ func checkZipDirectory(src io.ReaderAt, size int64, limits Limits) error {
 
 // walkDirectory counts the central directory headers that follow one another from off,
 // stopping at the first position that is not a header or after MaxFiles+1 of them.
-func walkDirectory(src io.ReaderAt, size, off int64, limits Limits) (int, error) {
+func walkDirectory(ctx context.Context, src io.ReaderAt, size, off int64, limits Limits) (int, error) {
 	const headerLen = 46
 	end := off + int64(limits.MaxFiles+1)*maxDirEntryBytes
 	var hdr [headerLen]byte
 	n := 0
 	for n <= limits.MaxFiles {
+		if err := ctx.Err(); err != nil {
+			return n, fmt.Errorf("%w: %w", errCanceled, err)
+		}
 		if off < 0 || size-off < headerLen {
 			break
 		}
@@ -262,7 +271,10 @@ func walkDirectory(src io.ReaderAt, size, off int64, limits Limits) (int, error)
 }
 
 func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, limits Limits) error {
-	if err := checkZipDirectory(src, size, limits); err != nil {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errCanceled, err)
+	}
+	if err := checkZipDirectory(ctx, src, size, limits); err != nil {
 		return err
 	}
 	zr, err := zip.NewReader(src, size)

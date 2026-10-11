@@ -107,9 +107,11 @@ The `op_data/` and `tmp/` directories are created if missing (`op_data` mode 075
 | `deploy_timeout_seconds` | `600` | Time budget for extracting one upload; extraction also stops when the client disconnects |
 
 `max_extract_mb` counts decompressed bytes read from the archive, including entries that
-are skipped (symlinks and other special entries), and a zip that declares more than
-`max_extract_files` entries or more than `max_extract_mb` in total is rejected before its
-entries are read. Archives breaking the extract limits, or with entries outside the site directory, are
+are skipped (symlinks and other special entries). A zip with more than `max_extract_files`
+entries is rejected before its directory is parsed, and one that declares more than
+`max_extract_mb` in total is rejected before anything is written.
+
+Archives breaking the extract limits, or with entries outside the site directory, are
 rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 `max_upload_mb` (nginx: `client_max_body_size`).
 
