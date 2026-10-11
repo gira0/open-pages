@@ -24,7 +24,7 @@ func (s *Server) csrf(next http.Handler) http.Handler {
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only the method is logged: the other values are attacker-controlled, and the
 		// request log line with the same request_id carries the route.
-		slog.Warn("cross-origin request rejected", "method", r.Method, "request_id", requestIDOf(w))
+		slog.Warn("cross-origin request rejected", "method", methodLabel(r.Method), "request_id", requestIDOf(w))
 		writeError(w, http.StatusForbidden, "cross-origin request rejected")
 	}))
 	return cop.Handler(next)

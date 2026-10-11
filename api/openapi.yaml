@@ -263,8 +263,8 @@ paths:
       summary: Start a session (optional)
       description: |
         Not registered when `[auth] local_login = false`. Sets the `auth_cookie` session
-        cookie (`HttpOnly`, `SameSite=Lax`, `Path=/`, 7 days, `Secure` when
-        `cookie_secure = true`).
+        cookie, or `__Host-auth_cookie` with `cookie_secure = true` (`HttpOnly`,
+        `SameSite=Lax`, `Path=/`, 7 days; `Secure` only with `cookie_secure = true`).
       security: []
       requestBody:
         $ref: "#/components/requestBodies/Credentials"
@@ -310,7 +310,8 @@ paths:
         "302":
           description: |
             Redirect to the identity provider. Sets the short-lived `oidc_state` cookie
-            (`Path=/v1/auth/oidc`, 10 minutes).
+            (`Path=/v1/auth/oidc`, 10 minutes); with `cookie_secure = true` it is
+            `__Host-oidc_state` with `Path=/`.
           headers:
             Location:
               schema:
@@ -340,7 +341,7 @@ paths:
       summary: Finish OIDC sign-in (optional)
       description: |
         Registered only with `[oidc] enabled = true`. This is the redirect URI registered at
-        the provider; it also needs the `oidc_state` cookie set by the login route.
+        the provider; it also needs the `oidc_state` (`__Host-oidc_state`) cookie set by the login route.
       security: []
       parameters:
         - name: state
@@ -573,7 +574,7 @@ paths:
           description: Logged out.
           headers:
             Set-Cookie:
-              description: Expires `auth_cookie`.
+              description: Expires the session cookie (`auth_cookie` or `__Host-auth_cookie`).
               schema:
                 type: string
           content:
