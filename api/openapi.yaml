@@ -23,8 +23,10 @@ info:
     - Some routes exist only when configured (marked "optional"): `/metrics` needs
       `[metrics] token`, register and login need `[auth] local_login`, the OIDC routes
       need `[oidc] enabled` and the SAML routes need `[saml] enabled`. An unregistered route answers like any unknown path.
-    - Deployed sites are served outside this API, at `/<site>/...` (`url_mode = path`) or
-      `<site>.<base_domain>/...` (`url_mode = subdomain`), over GET and HEAD.
+    - Deployed sites are served outside this API, on their own hosts
+      `<site>.<content_domain>/...` over GET and HEAD, never on the API host. Every route
+      in this document is served on `app_host` only; a request for any other host is a
+      404, except `GET /healthz`, which answers on any host that is not a site host.
 servers:
   - url: /
 security:
@@ -126,7 +128,8 @@ paths:
       description: |
         Pings the database and checks that the site and staging directories accept new
         files, giving up after 2 seconds. The response never says why a check failed; the
-        reason is logged. Responses carry `Cache-Control: no-store`.
+        reason is logged. Responses carry `Cache-Control: no-store`. Unlike the other routes
+        it answers on any host that is not a site host, so probes by IP address work.
       security: []
       responses:
         "200":
@@ -1462,7 +1465,7 @@ components:
     SiteName:
       description: |
         A DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending
-        with a hyphen. Reserved names (such as `v1`, `api`, `www`, `admin`) are refused.
+        with a hyphen. Reserved names (such as `api`, `www`, `admin`) are refused.
       type: string
       pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
     Visibility:

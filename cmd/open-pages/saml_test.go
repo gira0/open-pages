@@ -391,6 +391,7 @@ func newSAMLTestServer(t *testing.T, idp *fakeSAMLIdP, mutate func(*config.Confi
 	acs := "http://" + ts.Listener.Addr().String() + "/v1/auth/saml/acs"
 	cfg := config.Default()
 	cfg.DataPath, cfg.TmpPath = t.TempDir(), t.TempDir()
+	cfg.AppHost, cfg.ContentDomain = "127.0.0.1", testContentDomain
 	cfg.SAML = config.SAMLConfig{
 		Enabled: true, IDPMetadataURL: idp.srv.URL + "/metadata", EntityID: testSPEntityID, ACSURL: acs,
 		EmailAttribute: "email", GroupsAttribute: "groups",
@@ -649,7 +650,7 @@ func TestSAMLUnsolicitedResponses(t *testing.T) {
 		expectStatus(t, code, http.StatusBadRequest)
 		code, _ = ts.postACS(t, c, "%%%not-base64")
 		expectStatus(t, code, http.StatusUnauthorized)
-		expectStatus(t, get(t, c, ts.ts.URL+"/v1/auth/saml/acs"), http.StatusNotFound) // POST only
+		expectStatus(t, get(t, c, ts.ts.URL+"/v1/auth/saml/acs"), http.StatusMethodNotAllowed) // POST only
 	})
 	if countUsers(t, ts.s) != 0 {
 		t.Fatal("an unsolicited response created a user")
@@ -1010,7 +1011,7 @@ func TestSAMLOnlyDisablesLocalLogin(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.LocalLogin = false })
 	creds := []byte(`{"email":"a@example.com","password":"correct horse"}`)
-	expectStatus(t, post(t, newClient(t), ts.ts.URL+"/v1/user/login", "application/json", creds), http.StatusMethodNotAllowed)
+	expectStatus(t, post(t, newClient(t), ts.ts.URL+"/v1/user/login", "application/json", creds), http.StatusNotFound)
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
 }
 

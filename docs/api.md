@@ -12,7 +12,9 @@ A test fails when a registered route is missing from the spec or the spec lists 
 server does not register. Nothing checks this page automatically, so a route change should
 update it by hand alongside the spec.
 
-The `curl` examples assume the server is at `https://pages.corp`. `cookies` is a cookie jar
+All routes below are served on `app_host` only (see [Serving sites](#serving-sites)); a
+request for any other host is a `404`, except `GET /healthz`. The `curl` examples assume
+`app_host = pages.corp`. `cookies` is a cookie jar
 file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 
 ## Conventions
@@ -83,7 +85,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | POST | `/v1/auth/sites/{name}/rollback` | any | Make a version live |
 | POST | `/v1/auth/sites/{name}/upload` | any | Deploy an archive (raw body) |
 | POST | `/v1/auth/sites/{name}/formupload` | any | Deploy an archive (multipart) |
-| GET, HEAD | `/<site>/...` or `<site>.<base_domain>/...` | per visibility | Serve a site |
+| GET, HEAD | `<site>.<content_domain>/...` | per visibility | Serve a site (content hosts only, never on `app_host`) |
 
 Unknown paths answer 404; a known path with the wrong method answers 405.
 
@@ -107,7 +109,9 @@ a check failed; the reason is logged at `warn`.
 - `200 {"status":"ok","checks":{"database":"ok","data_dir":"ok"}}`
 - `503 {"status":"fail","checks":{"database":"fail","data_dir":"ok"}}` (any check failed)
 
-Responses carry `Cache-Control: no-store`.
+Responses carry `Cache-Control: no-store`. It is the one route that answers on any host
+that is not a site host (probes by IP address or `localhost` have no meaningful `Host`);
+every other route needs `Host: <app_host>`.
 
 ### GET /v1/openapi.yaml
 
@@ -153,8 +157,7 @@ No authentication. Serves the files embedded from `web/static/`: the PatternFly 
 fonts, `open-pages.css`, `theme.js` and `app.js`. `{hash}` covers the content of every file, so
 it changes whenever an asset does, and responses carry
 `Cache-Control: public, max-age=31536000, immutable`. Any other hash is a `404`. Text assets are
-sent gzip-compressed when the request's `Accept-Encoding` allows it. `static` is a reserved site
-name, so in path mode no site can shadow this route.
+sent gzip-compressed when the request's `Accept-Encoding` allows it.
 
 ### GET /v1/sites
 
@@ -441,10 +444,11 @@ member may remove themselves.
 ## Sites
 
 A site name is a DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or
-ending with a hyphen. These names are reserved in both URL modes and are refused with 400:
-`v1`, `index`, `api`, `www`, `admin`, `ui`, `static`, `assets`, `health`, `healthz`,
-`readyz`, `metrics`, `login`, `logout`, `register`, `auth`, `user`, `users`, `sites`,
-`docs`, `app`, `mail` (`reservedSites` in `internal/names/names.go`).
+ending with a hyphen. These names are reserved because operators commonly point such hosts
+at the service or other infrastructure, and are refused with 400: `www`, `api`, `app`,
+`admin`, `ui`, `static`, `assets`, `login`, `auth`, `docs`, `mail` (`reservedSites` in
+`internal/names/names.go`). Route names like `v1` are fine: a site never shares a host with
+the API.
 
 Whoever creates a site owns it. Routes that change a site, or list or roll back its
 versions, are owner-only: `404 {"error":"site not found"}` for an unknown or invalid name,
@@ -576,14 +580,17 @@ curl -b cookies -X POST https://pages.corp/v1/auth/sites/blog/rollback \
 
 ## Serving sites
 
-Deployed sites are served over `GET` and `HEAD`; where depends on `[sites] url_mode`.
+Deployed sites are served over `GET` and `HEAD` at `https://<site>.<content_domain>/<file>`
+(for example `https://blog.pages-content.corp/app.css`). The host decides what a request
+means (see [URLs and hosts](getting-started.md#urls-and-hosts)):
 
-| url_mode | Site URL | Everything else |
-|---|---|---|
-| `path` (default) | `https://pages.corp/<site>/<file>` | API, UI and probes on the same host; the reserved names cannot be sites |
-| `subdomain` | `https://<site>.pages.corp/<file>` | Hosts that are not under `base_domain` reach the API and UI routes only; there is no site fallback. Other methods on a site host: `405` with `Allow: GET, HEAD` |
+| Host | Behaviour |
+|---|---|
+| `<site>.<content_domain>` | Serves that site only. Other methods: `405` with `Allow: GET, HEAD`. A host whose label is not a valid site name (`a.b.<content_domain>`, `Bad_Name`) is a `404` |
+| `app_host` | API, UI and static assets only. A path that looks like a site (`/blog/`) is a plain `404` |
+| any other host | `404`, except `GET /healthz` |
 
-Behaviour in both modes:
+Behaviour for every site:
 
 - A directory serves its `index.html`; `/docs` redirects to `/docs/` with `301`; there are
   no directory listings. `/file.html/` is a 404.
@@ -598,10 +605,10 @@ Behaviour in both modes:
   plain 404. For non-public sites the response is identical for "missing" and "not allowed"
   (`Cache-Control: no-store`), and everything served for a non-public site carries
   `Cache-Control: private, no-cache` and `Vary: Cookie, Authorization`.
-- Non-public sites accept the session cookie or an `Authorization: Bearer` API token. In
-  subdomain mode the session cookie does not reach `<site>.<base_domain>` (see
-  [auth.md](auth.md#known-limits)), so only API tokens work there:
+- Non-public sites accept the session cookie or an `Authorization: Bearer` API token. The
+  session cookie is host-only and does not reach `<site>.<content_domain>` (see
+  [auth.md](auth.md#known-limits)), so in practice only API tokens work there:
 
 ```sh
-curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" https://blog.pages.corp/
+curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" https://blog.pages-content.corp/
 ```

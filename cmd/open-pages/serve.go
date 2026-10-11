@@ -12,46 +12,10 @@ import (
 	"path"
 	"strconv"
 	"strings"
-
-	"github.com/gira0/open-pages/internal/config"
 )
 
-// withSites adds site serving around the API mux.
-//
-// Path mode: the mux serves sites for the paths no API route claims.
-// Subdomain mode: requests for <site>.<base_domain> go to the site handler; everything
-// else (the bare base_domain) goes to the mux, so the API and UI stay there.
-func (s *Server) withSites(mux *http.ServeMux) http.Handler {
-	if s.cfg.URLMode != config.URLModeSubdomain {
-		mux.HandleFunc("GET /{path...}", s.handleSite)
-		return mux
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, under := s.subdomainOf(r.Host); !under {
-			mux.ServeHTTP(w, r)
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		s.handleSite(w, r)
-	})
-}
-
-// handleSite serves a file of a site. HEAD requests are routed here too.
-func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
-	site, filePath := s.siteFromRequest(r)
-	if site == "" {
-		http.NotFound(w, r)
-		return
-	}
-	s.serveSite(w, r, site, filePath)
-}
-
 // serveSite serves filePath from the live version of site. Lookup and (later) access
-// control happen here, whatever the URL mode.
+// control happen here.
 func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePath string) {
 	rec, err := s.getSite(r.Context(), site)
 	if errors.Is(err, errSiteNotFound) {

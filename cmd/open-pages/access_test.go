@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,38 @@ func fetchURL(t *testing.T, c *http.Client, url, bearer string) (int, string, ht
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(b), resp.Header
+}
+
+// fetchSite sends a GET for path of site to the test server on the site's content host.
+// The client's cookies for the app are sent along. A browser would not do that (the
+// session cookie is host-only), so this checks what the server does with such a request,
+// and the bearer token is the way a browser-less client really gets in.
+func fetchSite(t *testing.T, c *http.Client, w *accessWorld, site, path, bearer string) (int, string, http.Header) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, w.ts.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = siteHost(site)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if c.Jar != nil {
+		appURL, _ := url.Parse(w.ts.URL)
+		for _, ck := range c.Jar.Cookies(appURL) {
+			req.AddCookie(ck)
+		}
+	}
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +113,11 @@ func newAccessWorld(t *testing.T) *accessWorld {
 	return w
 }
 
-func TestRestrictedSiteServingPathMode(t *testing.T) {
+func TestRestrictedSiteServing(t *testing.T) {
 	w := newAccessWorld(t)
-	url := w.ts.URL + "/secret/"
+	site := "secret"
 
-	_, missing, _ := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	_, missing, _ := fetchSite(t, w.anon, w, "nonexistent", "/", "")
 	cases := []struct {
 		name   string
 		client *http.Client
@@ -103,7 +136,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body, h := fetchURL(t, tc.client, url, tc.bearer)
+			status, body, h := fetchSite(t, tc.client, w, site, "/", tc.bearer)
 			if status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
@@ -127,7 +160,7 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 	}
 
 	// Public sites stay open to everyone and are not marked private.
-	status, body, h := fetchURL(t, w.anon, w.ts.URL+"/open/", "")
+	status, body, h := fetchSite(t, w.anon, w, "open", "/", "")
 	if status != http.StatusOK || strings.TrimSpace(body) != "<h1>open</h1>" {
 		t.Fatalf("public site: %d %q", status, body)
 	}
@@ -135,22 +168,22 @@ func TestRestrictedSiteServingPathMode(t *testing.T) {
 		t.Errorf("public site Cache-Control = %q", h.Get("Cache-Control"))
 	}
 	// A broken token on a public site is ignored.
-	if status, _, _ := fetchURL(t, w.anon, w.ts.URL+"/open/", "opt_nope"); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.anon, w, "open", "/", "opt_nope"); status != http.StatusOK {
 		t.Errorf("public site with bad token: %d", status)
 	}
 }
 
 func TestVisibilityChangesAccess(t *testing.T) {
 	w := newAccessWorld(t)
-	url := w.ts.URL + "/secret/"
+	site := "secret"
 
 	// Restricted without a group is private to the owner.
 	code, _ := doJSON(t, w.owner, http.MethodPut, w.ts.URL+"/v1/auth/sites/secret", `{"group":0}`)
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetchURL(t, w.member, url, ""); status != http.StatusNotFound {
+	if status, _, _ := fetchSite(t, w.member, w, site, "/", ""); status != http.StatusNotFound {
 		t.Errorf("member of no group on private site: %d", status)
 	}
-	if status, _, _ := fetchURL(t, w.owner, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.owner, w, site, "/", ""); status != http.StatusOK {
 		t.Errorf("owner on private site: %d", status)
 	}
 
@@ -160,7 +193,7 @@ func TestVisibilityChangesAccess(t *testing.T) {
 	if out["visibility"] != visPublic {
 		t.Fatalf("update response = %v", out)
 	}
-	if status, _, _ := fetchURL(t, w.anon, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.anon, w, site, "/", ""); status != http.StatusOK {
 		t.Errorf("anonymous on public site: %d", status)
 	}
 
@@ -200,7 +233,7 @@ func TestSiteGroupMustIncludeOwner(t *testing.T) {
 	expectStatus(t, code, http.StatusCreated)
 	arch := zipArchive(t, map[string]string{"index.html": "team"})
 	expectStatus(t, post(t, w.member, sites+"/team/upload", "application/zip", arch), http.StatusOK)
-	if status, _, _ := fetchURL(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.owner, w, "team", "/", ""); status != http.StatusOK {
 		t.Fatalf("group owner on member's site: %d", status)
 	}
 
@@ -212,10 +245,10 @@ func TestSiteGroupMustIncludeOwner(t *testing.T) {
 	}
 	code, _ = doJSON(t, w.member, http.MethodDelete, groupURL(w.ts, w.group, fmt.Sprintf("/members/%d", memberID)), "")
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetchURL(t, w.owner, w.ts.URL+"/team/", ""); status != http.StatusNotFound {
+	if status, _, _ := fetchSite(t, w.owner, w, "team", "/", ""); status != http.StatusNotFound {
 		t.Errorf("group owner after site owner left the group: %d, want 404", status)
 	}
-	if status, _, _ := fetchURL(t, w.member, w.ts.URL+"/team/", ""); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.member, w, "team", "/", ""); status != http.StatusOK {
 		t.Errorf("site owner after leaving the group: %d, want 200", status)
 	}
 }
@@ -318,8 +351,8 @@ func TestPublicSiteListing(t *testing.T) {
 	}
 }
 
-func TestRestrictedSiteSubdomainMode(t *testing.T) {
-	s := newSubdomainServer(t)
+func TestRestrictedSiteOnContentHost(t *testing.T) {
+	s := newServeTestServer(t, nil)
 	ctx := t.Context()
 	ids := map[string]int64{}
 	for _, email := range []string{"owner@example.com", "member@example.com", "outsider@example.com"} {
@@ -369,13 +402,13 @@ func TestRestrictedSiteSubdomainMode(t *testing.T) {
 		{"anonymous", "X-Anything", "x", 404},
 	} {
 		t.Run(tc.who, func(t *testing.T) {
-			if w := do(s, "GET", "secret.pages.corp", "/", tc.header, tc.value); w.Code != tc.status {
+			if w := do(s, "GET", siteHost("secret"), "/", tc.header, tc.value); w.Code != tc.status {
 				t.Fatalf("status %d, want %d", w.Code, tc.status)
 			}
 		})
 	}
 	// HEAD is checked the same way.
-	if w := do(s, "HEAD", "secret.pages.corp", "/"); w.Code != 404 {
+	if w := do(s, "HEAD", siteHost("secret"), "/"); w.Code != 404 {
 		t.Errorf("anonymous HEAD: %d", w.Code)
 	}
 }
@@ -441,15 +474,15 @@ func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
 		expectStatus(t, code, http.StatusCreated)
 
 		for _, tc := range []struct {
-			what, path string
-			status     int
+			what, site, path string
+			status           int
 		}{
-			{"content", "/" + name + "/", http.StatusOK},
-			{"custom 404", "/" + name + "/nope", http.StatusNotFound},
-			{"directory redirect", "/" + name + "/docs", http.StatusMovedPermanently},
-			{"never deployed", "/" + name + "-empty/", http.StatusNotFound},
+			{"content", name, "/", http.StatusOK},
+			{"custom 404", name, "/nope", http.StatusNotFound},
+			{"directory redirect", name, "/docs", http.StatusMovedPermanently},
+			{"never deployed", name + "-empty", "/", http.StatusNotFound},
 		} {
-			status, _, h := fetchURL(t, noRedirect(w.owner), w.ts.URL+tc.path, "")
+			status, _, h := fetchSite(t, w.owner, w, tc.site, tc.path, "")
 			if status != tc.status {
 				t.Errorf("%s %s: status %d, want %d", vis, tc.what, status, tc.status)
 			}
@@ -462,8 +495,8 @@ func TestGatedSiteCacheHeadersEverywhere(t *testing.T) {
 		}
 	}
 	// A denied request and a missing site answer with identical headers, both uncacheable.
-	_, _, missing := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
-	_, _, denied := fetchURL(t, w.anon, w.ts.URL+"/g-restricted/", "")
+	_, _, missing := fetchSite(t, w.anon, w, "nonexistent", "/", "")
+	_, _, denied := fetchSite(t, w.anon, w, "g-restricted", "/", "")
 	if missing.Get("Cache-Control") != "no-store" {
 		t.Errorf("missing-site Cache-Control = %q", missing.Get("Cache-Control"))
 	}
@@ -483,8 +516,8 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	}
 	expectStatus(t, post(t, w.owner, w.ts.URL+"/v1/auth/sites/members/upload", "application/zip",
 		zipArchive(t, map[string]string{"index.html": "members only"})), http.StatusOK)
-	url := w.ts.URL + "/members/"
-	_, missing, _ := fetchURL(t, w.anon, w.ts.URL+"/nonexistent/", "")
+	site := "members"
+	_, missing, _ := fetchSite(t, w.anon, w, "nonexistent", "/", "")
 
 	for _, tc := range []struct {
 		name   string
@@ -501,7 +534,7 @@ func TestAuthenticatedVisibility(t *testing.T) {
 		{"bogus token with valid cookie", w.outsider, "opt_nope", http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body, _ := fetchURL(t, tc.client, url, tc.bearer)
+			status, body, _ := fetchSite(t, tc.client, w, site, "/", tc.bearer)
 			if status != tc.status {
 				t.Fatalf("status %d, want %d", status, tc.status)
 			}
@@ -553,18 +586,18 @@ func TestAuthenticatedVisibility(t *testing.T) {
 	if out["visibility"] != visRestricted {
 		t.Fatalf("update response = %v", out)
 	}
-	if status, _, _ := fetchURL(t, w.outsider, url, ""); status != http.StatusNotFound {
+	if status, _, _ := fetchSite(t, w.outsider, w, site, "/", ""); status != http.StatusNotFound {
 		t.Errorf("outsider after restricting: %d", status)
 	}
 	code, _ = doJSON(t, w.owner, http.MethodPut, meta, `{"visibility":"authenticated"}`)
 	expectStatus(t, code, http.StatusOK)
-	if status, _, _ := fetchURL(t, w.outsider, url, ""); status != http.StatusOK {
+	if status, _, _ := fetchSite(t, w.outsider, w, site, "/", ""); status != http.StatusOK {
 		t.Errorf("outsider after re-opening to logged-in users: %d", status)
 	}
 }
 
 func TestAuthenticatedSiteSubdomainMode(t *testing.T) {
-	s := newSubdomainServer(t)
+	s := newServeTestServer(t, nil)
 	ctx := t.Context()
 	uid := testOwner(t, s)
 	if _, err := s.createSite(ctx, "intra", "", uid, 0, visAuthenticated); err != nil {
@@ -577,13 +610,13 @@ func TestAuthenticatedSiteSubdomainMode(t *testing.T) {
 		uid, time.Now().Add(time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
-	if w := do(s, "GET", "intra.pages.corp", "/", "Cookie", sessionCookie+"=tok"); w.Code != 200 {
+	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", sessionCookie+"=tok"); w.Code != 200 {
 		t.Errorf("logged in: %d", w.Code)
 	}
-	if w := do(s, "GET", "intra.pages.corp", "/"); w.Code != 404 {
+	if w := do(s, "GET", siteHost("intra"), "/"); w.Code != 404 {
 		t.Errorf("anonymous: %d", w.Code)
 	}
-	if w := do(s, "GET", "intra.pages.corp", "/", "Cookie", sessionCookie+"=expired"); w.Code != 404 {
+	if w := do(s, "GET", siteHost("intra"), "/", "Cookie", sessionCookie+"=expired"); w.Code != 404 {
 		t.Errorf("unknown session: %d", w.Code)
 	}
 }

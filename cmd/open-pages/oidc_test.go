@@ -213,6 +213,7 @@ func newOIDCTestServer(t *testing.T, idp *fakeIDP, mutate func(*config.Config)) 
 	t.Helper()
 	cfg := config.Default()
 	cfg.DataPath, cfg.TmpPath = t.TempDir(), t.TempDir()
+	cfg.AppHost, cfg.ContentDomain = "127.0.0.1", testContentDomain
 	cfg.OIDC = config.OIDCConfig{
 		Enabled: true, Issuer: idp.srv.URL, ClientID: testClientID, ClientSecret: testClientSecret,
 		RedirectURL: testRedirectURL, Scopes: []string{"openid", "email", "profile"},
@@ -563,8 +564,8 @@ func TestOIDCOnlyDisablesLocalLogin(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, _ := newOIDCTestServer(t, idp, func(c *config.Config) { c.LocalLogin = false })
 	creds := []byte(`{"email":"a@example.com","password":"correct horse"}`)
-	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/register", "application/json", creds), http.StatusMethodNotAllowed)
-	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/login", "application/json", creds), http.StatusMethodNotAllowed)
+	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/register", "application/json", creds), http.StatusNotFound)
+	expectStatus(t, post(t, newClient(t), ts.URL+"/v1/user/login", "application/json", creds), http.StatusNotFound)
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
 }
 

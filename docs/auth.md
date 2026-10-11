@@ -338,15 +338,13 @@ versions and roll back.
 
 ## Known limits
 
-- **Subdomain mode and browsers.** In `url_mode = subdomain` the session cookie is host-only
-  (no `Domain` attribute) and never reaches `<site>.<base_domain>`. A browser therefore
-  cannot open `authenticated` or `restricted` sites there, and signing in does not change
-  that. API tokens work (`curl -H "Authorization: Bearer ..."`). Use path mode if
-  non-public sites must open in a browser.
+- **Non-public sites and browsers.** Sites are served on `<site>.<content_domain>`, never on
+  the app host. The session cookie is host-only (no `Domain` attribute) and never reaches a
+  site host, so a browser cannot open `authenticated` or `restricted` sites, and signing in
+  does not change that. API tokens work (`curl -H "Authorization: Bearer ..."`). Per-site
+  sign-in for browsers does not exist yet. See the [security model](security-model.md).
 - **No IP-based visibility.** There is no "intranet" level that depends on the client
   address. Restrict by network at the reverse proxy.
-- **Path mode shares an origin.** All sites in path mode share cookies and local storage with
-  the API and with each other. Do not host untrusted content in path mode.
 - **SSO maps only to existing groups.** Groups are never created from tokens or assertions.
 - **SAML is SP-initiated only.** IdP-initiated sign-in (an unsolicited response) is refused.
 - **SAML: no single logout.** `POST /v1/auth/logout` ends only the open-pages session; the

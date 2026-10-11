@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gira0/open-pages/internal/logging"
@@ -24,6 +25,10 @@ cors_origins = https://a.example, https://b.example
 
 [limits]
 max_upload_mb = 5
+
+[sites]
+app_host = pages.corp
+content_domain = pages-content.corp
 `
 	if err := os.WriteFile(path, []byte(ini), 0o600); err != nil {
 		t.Fatal(err)
@@ -65,7 +70,16 @@ func TestLoadShippedConfig(t *testing.T) {
 	}
 }
 
+// validSites are the required [sites] settings; writeConfig prepends them so each test
+// only states what it is about.
+const validSites = "[sites]\napp_host = pages.corp\ncontent_domain = pages-content.corp\n"
+
 func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	return writeRawConfig(t, validSites+body)
+}
+
+func writeRawConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "settings.ini")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -149,30 +163,65 @@ func TestCheckURL(t *testing.T) {
 }
 
 func TestLoadLogAndSites(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[log]\nlevel = DEBUG\nformat = JSON\n[sites]\nurl_mode = Subdomain\nbase_domain = Pages.Corp.\nkeep_versions = 0\n"))
+	cfg, err := Load(writeRawConfig(t, "[log]\nlevel = DEBUG\nformat = JSON\n[sites]\napp_host = Pages.Corp.\ncontent_domain = Pages-Content.Corp\nkeep_versions = 0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.LogLevel != slog.LevelDebug || cfg.LogFormat != logging.FormatJSON {
 		t.Errorf("log = %v %q", cfg.LogLevel, cfg.LogFormat)
 	}
-	if cfg.URLMode != URLModeSubdomain || cfg.BaseDomain != "pages.corp" || cfg.KeepVersions != 1 {
-		t.Errorf("sites = %q %q %d", cfg.URLMode, cfg.BaseDomain, cfg.KeepVersions)
+	if cfg.AppHost != "pages.corp" || cfg.ContentDomain != "pages-content.corp" || cfg.KeepVersions != 1 {
+		t.Errorf("sites = %q %q %d", cfg.AppHost, cfg.ContentDomain, cfg.KeepVersions)
 	}
 	for _, bad := range []string{
 		"[log]\nlevel = INFO+1\n",
 		"[log]\nformat = xml\n",
 		"[metrics]\ntoken = short\n",
-		"[sites]\nurl_mode = bogus\n",
-		"[sites]\nurl_mode = subdomain\n",
 	} {
 		if _, err := Load(writeConfig(t, bad)); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
 	}
 	cfg, err = Load(writeConfig(t, ""))
-	if err != nil || cfg.URLMode != URLModePath || cfg.LogFormat != logging.FormatText || cfg.MetricsListen != "" {
+	if err != nil || cfg.LogFormat != logging.FormatText || cfg.MetricsListen != "" {
 		t.Errorf("defaults = %+v, %v", cfg, err)
+	}
+}
+
+func TestLoadSiteHosts(t *testing.T) {
+	sites := func(app, content string) string {
+		return "[sites]\napp_host = " + app + "\ncontent_domain = " + content + "\n"
+	}
+	// A separate registrable domain, a sibling and a subdomain of the app's parent all work.
+	for _, ok := range [][2]string{
+		{"pages.corp", "pages-content.corp"},
+		{"pages.corp", "content.pages.corp"},
+		{"pages.corp", "sites.corp"},
+		{"a.b.corp", "b.corp.example"}, // unrelated hosts
+		{"a.b.c.corp", "c.corp"},       // too deep to be a site label
+	} {
+		if _, err := Load(writeRawConfig(t, sites(ok[0], ok[1]))); err != nil {
+			t.Errorf("%v: %v", ok, err)
+		}
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"missing app_host":       {"[sites]\ncontent_domain = c.corp\n", "app_host"},
+		"missing content_domain": {"[sites]\napp_host = pages.corp\n", "content_domain"},
+		"no sites section":       {"[paths]\ndatapath = .\n", "app_host"},
+		"port":                   {sites("pages.corp:8080", "c.corp"), "app_host"},
+		"scheme":                 {sites("https://pages.corp", "c.corp"), "app_host"},
+		"path":                   {sites("pages.corp", "c.corp/x"), "content_domain"},
+		"equal hosts":            {sites("pages.corp", "Pages.Corp."), "differ"},
+		"app host is a site":     {sites("app.c.corp", "c.corp"), "site host"},
+		"url_mode":               {sites("pages.corp", "c.corp") + "url_mode = path\n", "url_mode"},
+		"base_domain":            {sites("pages.corp", "c.corp") + "base_domain = pages.corp\n", "base_domain"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeRawConfig(t, tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
 	}
 }
 

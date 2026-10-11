@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gira0/open-pages/internal/logging"
+	"github.com/gira0/open-pages/internal/names"
 	"gopkg.in/ini.v1"
 )
 
@@ -25,8 +26,8 @@ type Config struct {
 	MaxExtractFile int        // max number of entries in an archive
 	KeepVersions   int        // versions kept on disk per site, including the current one
 	CORSOrigins    []string   // allowed cross-origin callers; empty means same-origin only
-	URLMode        string     // how a request names its site: URLModePath or URLModeSubdomain
-	BaseDomain     string     // bare host (no port) of the API and UI; also the parent of site subdomains
+	AppHost        string     // bare host (no port) of the API and UI
+	ContentDomain  string     // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
 	LogLevel       slog.Level // minimum level written to the log
 	LogFormat      string     // logging.FormatText or logging.FormatJSON
 	MetricsListen  string     // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
@@ -64,12 +65,6 @@ type OIDCConfig struct {
 	AllowedEmailDomain string   // when set, only emails in this domain may sign in
 }
 
-// URL modes for [sites] url_mode.
-const (
-	URLModePath      = "path"      // <base_domain>/<site>/...
-	URLModeSubdomain = "subdomain" // <site>.<base_domain>/...
-)
-
 // minMetricsTokenLen keeps an obviously guessable token from being configured.
 const minMetricsTokenLen = 16
 
@@ -83,7 +78,6 @@ func Default() Config {
 		MaxExtractSize: 500 << 20,
 		MaxExtractFile: 10000,
 		KeepVersions:   5,
-		URLMode:        URLModePath,
 		LogLevel:       slog.LevelInfo,
 		LogFormat:      logging.FormatText,
 		LocalLogin:     true,
@@ -124,13 +118,22 @@ func Load(path string) (Config, error) {
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
 	sites := f.Section("sites")
-	cfg.URLMode = strings.ToLower(sites.Key("url_mode").MustString(cfg.URLMode))
-	cfg.BaseDomain = strings.ToLower(strings.TrimSuffix(sites.Key("base_domain").String(), "."))
-	if cfg.URLMode != URLModePath && cfg.URLMode != URLModeSubdomain {
-		return cfg, fmt.Errorf("sites.url_mode %q: must be %q or %q", cfg.URLMode, URLModePath, URLModeSubdomain)
+	for _, old := range []string{"url_mode", "base_domain"} {
+		if sites.HasKey(old) {
+			return cfg, fmt.Errorf("sites.%s is no longer supported: sites are served from subdomains of a content domain; set sites.app_host and sites.content_domain instead", old)
+		}
 	}
-	if cfg.URLMode == URLModeSubdomain && (cfg.BaseDomain == "" || strings.ContainsAny(cfg.BaseDomain, ":/")) {
-		return cfg, fmt.Errorf("sites.base_domain %q: subdomain mode needs a bare host name, for example pages.corp", cfg.BaseDomain)
+	if cfg.AppHost, err = hostSetting(sites, "app_host"); err != nil {
+		return cfg, err
+	}
+	if cfg.ContentDomain, err = hostSetting(sites, "content_domain"); err != nil {
+		return cfg, err
+	}
+	if cfg.AppHost == cfg.ContentDomain {
+		return cfg, fmt.Errorf("sites.content_domain %q: must differ from sites.app_host", cfg.ContentDomain)
+	}
+	if label, ok := strings.CutSuffix(cfg.AppHost, "."+cfg.ContentDomain); ok && names.ValidSite(label) {
+		return cfg, fmt.Errorf("sites.app_host %q: would be a site host under sites.content_domain %q; use a separate domain for sites", cfg.AppHost, cfg.ContentDomain)
 	}
 
 	logSec := f.Section("log")
@@ -169,6 +172,20 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("tmppath: %w", err)
 	}
 	return cfg, nil
+}
+
+// hostSetting reads a required bare host name: lowercased, one trailing dot trimmed, no
+// scheme, port, path or spaces.
+func hostSetting(sec *ini.Section, name string) (string, error) {
+	raw := strings.TrimSpace(sec.Key(name).String())
+	host := strings.TrimSuffix(strings.ToLower(raw), ".")
+	if host == "" {
+		return "", fmt.Errorf("sites.%s: required, a bare host name such as pages.corp", name)
+	}
+	if strings.ContainsAny(host, ":/@?#[] \t") || strings.HasPrefix(host, ".") || strings.Contains(host, "..") {
+		return "", fmt.Errorf("sites.%s %q: must be a bare host name without scheme, port or path", name, raw)
+	}
+	return host, nil
 }
 
 // strictBool reads a boolean key, failing on anything that isn't a boolean instead of
