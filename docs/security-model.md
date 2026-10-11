@@ -40,9 +40,14 @@ hold, and what is not covered yet.
 - **A separate content domain, ideally a separate registrable domain.** Use something like
   `pages.corp` for the app and `pages-content.corp` for the sites, the way GitHub uses
   `github.com` and `github.io`. Siblings under a shared parent (`app.pages.corp` and `sites.pages.corp`) are
-  accepted, but then nothing on the parent domain may set cookies for it (a `Domain=` cookie
-  on the parent would reach both), and the browser's same-site checks no longer separate
-  the app from the sites.
+  accepted, but then the app and the sites are same-site, so `SameSite` no longer separates
+  them. That layout is safe only because of these protections, all of which need
+  `cookie_secure = true` on HTTPS: the app rejects cross-origin browser `POST`, `PUT` and
+  `DELETE` requests (Go's `http.CrossOriginProtection`, using `Sec-Fetch-Site` and `Origin`);
+  JSON routes answer 415 unless the body is `application/json`, so a site cannot send a
+  "simple" cross-site request with the session cookie; and the session cookie is named
+  `__Host-auth_cookie`, so a site cannot overwrite it from a sibling host. Nothing on the
+  parent domain may set cookies for it either (a `Domain=` cookie would reach both).
 - **Wildcard DNS and a wildcard TLS certificate** for `*.<content_domain>`, plus DNS and a
   certificate for `app_host`. See [URLs and hosts](getting-started.md#urls-and-hosts).
 - **HTTPS everywhere, with `cookie_secure = true`.** open-pages itself speaks plain HTTP and

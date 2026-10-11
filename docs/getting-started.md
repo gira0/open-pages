@@ -86,8 +86,8 @@ value fails startup. Integers that do not parse also fall back to the default.
 |---|---|---|
 | `host` | empty (all interfaces) | Interface to bind |
 | `http_port` | `8080` | Port to listen on |
-| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie. Set to `true` whenever users reach the service over HTTPS, which production requires (see [security model](security-model.md)) |
-| `cors_origins` | empty | Comma-separated origins allowed to call the API cross-origin with credentials; empty means same-origin only |
+| `cookie_secure` | `false` | Set the `Secure` flag on the session cookie and name it `__Host-auth_cookie`, which sibling hosts cannot overwrite. Set to `true` whenever users reach the service over HTTPS, which production requires (see [security model](security-model.md)); with `false` the server logs a startup warning |
+| `cors_origins` | empty | Comma-separated origins (`scheme://host[:port]`) allowed to call the API cross-origin with credentials; empty means same-origin only. Browser POST/PUT/DELETE from any other origin gets 403 |
 
 ### [paths]
 
@@ -213,8 +213,10 @@ the whole of its host.
 (the way GitHub uses `github.com` and `github.io`): browsers then treat the app and the sites
 as different sites, not just different origins, and a cookie scoped to the parent domain can
 never reach both. Two siblings under a shared parent (`app.pages.corp` and `sites.pages.corp`) are
-accepted, but then the app and the sites are same-site and nothing on the parent domain may
-set cookies for it. A content domain under the app host, or the reverse, is refused at startup.
+accepted, but then the app and the sites are same-site. That layout relies on the app's
+cross-origin request check, `application/json`-only JSON routes and the `__Host-` session
+cookie, so it needs `cookie_secure = true` on HTTPS (see [security model](security-model.md)), and
+nothing on the parent domain may set cookies for it. A content domain under the app host, or the reverse, is refused at startup.
 
 **DNS and TLS.** Point `app_host` and the wildcard `*.<content_domain>` at the reverse
 proxy, and give the proxy a certificate for `app_host` and a wildcard certificate for

@@ -976,19 +976,23 @@ func TestSAMLRequestCookieFlags(t *testing.T) {
 				t.Fatal(err)
 			}
 			resp.Body.Close()
+			wantName, wantPath := samlRequestCookie, "/v1/auth/saml"
+			if tc.secure {
+				wantName, wantPath = "__Host-"+samlRequestCookie, "/"
+			}
 			var found bool
 			for _, ck := range resp.Cookies() {
-				if ck.Name != samlRequestCookie {
+				if ck.Name != wantName {
 					continue
 				}
 				found = true
 				ss := map[http.SameSite]string{http.SameSiteNoneMode: "None", http.SameSiteLaxMode: "Lax"}[ck.SameSite]
-				if !ck.HttpOnly || ck.Secure != tc.secure || ss != tc.sameSite || ck.Path != "/v1/auth/saml" || ck.MaxAge != 600 {
+				if !ck.HttpOnly || ck.Secure != tc.secure || ss != tc.sameSite || ck.Path != wantPath || ck.Domain != "" || ck.MaxAge != 600 {
 					t.Errorf("cookie = %+v, want HttpOnly, secure=%v, SameSite=%s", ck, tc.secure, tc.sameSite)
 				}
 			}
 			if !found {
-				t.Fatal("no saml_request cookie set")
+				t.Fatalf("no %s cookie set", wantName)
 			}
 		})
 	}

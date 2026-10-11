@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	sessionCookie   = "auth_cookie"
+	sessionCookie   = "auth_cookie" // see cookieName for the name actually used
 	sessionLifetime = 7 * 24 * time.Hour
 	minPasswordLen  = 8
 	maxPasswordLen  = 72 // bcrypt ignores anything past 72 bytes
@@ -73,7 +73,7 @@ func generateToken() (string, error) {
 
 // sessionUser returns the user id for a valid session cookie, or 0 if there is none.
 func (s *Server) sessionUser(r *http.Request) (int64, error) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := r.Cookie(s.cookieName(sessionCookie))
 	if errors.Is(err, http.ErrNoCookie) {
 		return 0, nil
 	}
@@ -89,11 +89,27 @@ func (s *Server) sessionUser(r *http.Request) (int64, error) {
 	return uid, err
 }
 
+// cookieName returns the name a cookie is set and read under. With cookie_secure the
+// browser-enforced __Host- prefix is added: such a cookie must be Secure, have Path=/ and
+// no Domain, so a page on a sibling host cannot set or shadow it (cookie tossing).
+func (s *Server) cookieName(base string) string {
+	if s.cfg.CookieSecure {
+		return "__Host-" + base
+	}
+	return base
+}
+
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge int) {
 	s.setCookie(w, sessionCookie, "/", token, maxAge)
 }
 
-func (s *Server) setCookie(w http.ResponseWriter, name, path, value string, maxAge int) {
+// setCookie sets a cookie under cookieName(base). With cookie_secure the path must be "/"
+// for the __Host- prefix to be accepted, so callers' paths are overridden then.
+func (s *Server) setCookie(w http.ResponseWriter, base, path, value string, maxAge int) {
+	name := s.cookieName(base)
+	if s.cfg.CookieSecure {
+		path = "/"
+	}
 	// Secure is configurable so the service also works over plain HTTP on internal networks.
 	s.setCookieAttrs(w, name, path, value, maxAge, s.cfg.CookieSecure, http.SameSiteLaxMode)
 }
@@ -123,7 +139,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 		if uid == 0 {
 			// A rejected API token says nothing about the session cookie.
 			if _, bearer := bearerToken(r); !bearer {
-				if _, err := r.Cookie(sessionCookie); err == nil {
+				if _, err := r.Cookie(s.cookieName(sessionCookie)); err == nil {
 					s.setSessionCookie(w, "", -1)
 				}
 			}
@@ -214,7 +230,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, uid int64)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	c, _ := r.Cookie(sessionCookie)
+	c, _ := r.Cookie(s.cookieName(sessionCookie))
 	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM session WHERE token = ?", c.Value); err != nil {
 		internalError(w, "delete session", err)
 		return
