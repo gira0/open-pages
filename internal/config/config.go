@@ -129,11 +129,16 @@ func Load(path string) (Config, error) {
 	if cfg.ContentDomain, err = hostSetting(sites, "content_domain"); err != nil {
 		return cfg, err
 	}
-	if cfg.AppHost == cfg.ContentDomain {
+	// Neither host may be, or sit under, the other, at any depth. A site under the app host
+	// could set Domain= cookies that reach the app; an app host under the content domain
+	// would be a site host.
+	switch {
+	case cfg.AppHost == cfg.ContentDomain:
 		return cfg, fmt.Errorf("sites.content_domain %q: must differ from sites.app_host", cfg.ContentDomain)
-	}
-	if label, ok := strings.CutSuffix(cfg.AppHost, "."+cfg.ContentDomain); ok && names.ValidSite(label) {
-		return cfg, fmt.Errorf("sites.app_host %q: would be a site host under sites.content_domain %q; use a separate domain for sites", cfg.AppHost, cfg.ContentDomain)
+	case strings.HasSuffix(cfg.ContentDomain, "."+cfg.AppHost):
+		return cfg, fmt.Errorf("sites.content_domain %q: must not be a subdomain of sites.app_host %q, or sites could set cookies for the app; use a sibling or a separate domain", cfg.ContentDomain, cfg.AppHost)
+	case strings.HasSuffix(cfg.AppHost, "."+cfg.ContentDomain):
+		return cfg, fmt.Errorf("sites.app_host %q: must not be under sites.content_domain %q, where site hosts live; use a separate domain for sites", cfg.AppHost, cfg.ContentDomain)
 	}
 
 	logSec := f.Section("log")

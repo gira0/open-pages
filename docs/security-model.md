@@ -10,8 +10,8 @@ hold, and what is not covered yet.
   cookie live on `app_host`. Hosted sites are served only from `<site>.<content_domain>`.
   The app host never serves site content, whatever the path, and a site host never serves
   the API, the UI or static assets. There is no path-based mode and no setting that turns
-  this off. Startup refuses a `content_domain` equal to `app_host`, or one that would put
-  `app_host` under it as a site host.
+  this off. Startup refuses a `content_domain` equal to `app_host`, and any layout where one is a
+  subdomain of the other, at any depth.
 - **Each site is its own origin.** Every site has its own host, so its scripts, cookies and
   local storage are separate from every other site's and from the app's. A site cannot read
   or script another site. Cookies are the one exception, because browsers scope them by
@@ -39,7 +39,7 @@ hold, and what is not covered yet.
 
 - **A separate content domain, ideally a separate registrable domain.** Use something like
   `pages.corp` for the app and `pages-content.corp` for the sites, the way GitHub uses
-  `github.com` and `github.io`. A subdomain of the app's parent (`content.pages.corp`) is
+  `github.com` and `github.io`. Siblings under a shared parent (`app.pages.corp` and `sites.pages.corp`) are
   accepted, but then nothing on the parent domain may set cookies for it (a `Domain=` cookie
   on the parent would reach both), and the browser's same-site checks no longer separate
   the app from the sites.

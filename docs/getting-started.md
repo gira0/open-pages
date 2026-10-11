@@ -43,21 +43,21 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini &
 
 # create an account and log in
-curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
+curl -X POST app.localhost:8080/v1/user/register -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -c cookies -X POST localhost:8080/v1/user/login -H 'Content-Type: application/json' \
+curl -c cookies -X POST app.localhost:8080/v1/user/login -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
 
 # create a site, upload a zip of your files, open it (the shipped settings serve the API on
-# localhost and sites on <site>.sites.localhost, which needs no DNS setup)
-curl -b cookies -X POST localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
+# app.localhost and sites on <site>.sites.localhost, which needs no DNS setup)
+curl -b cookies -X POST app.localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
   -d '{"name":"hello"}'
 (cd ./public && zip -qr ../site.zip .)
-curl -b cookies -X POST --data-binary @site.zip localhost:8080/v1/auth/sites/hello/upload
+curl -b cookies -X POST --data-binary @site.zip app.localhost:8080/v1/auth/sites/hello/upload
 curl http://hello.sites.localhost:8080/
 ```
 
-`http://localhost:8080/index` serves a small test page with the same actions.
+`http://app.localhost:8080/index` serves a small test page with the same actions.
 
 ## Command line
 
@@ -185,8 +185,9 @@ flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
 The server refuses to start, with the reason on stderr, when: the file cannot be read;
 `sites.url_mode` or `sites.base_domain` is set; `sites.app_host` or `sites.content_domain`
 is missing or not a bare host name (a scheme, port, path or space in it); `content_domain`
-equals `app_host`, or `app_host` is `<label>.<content_domain>` with `label` a valid site
-name (the app host would fall under the content domain);
+equals `app_host`, or either one is a subdomain of the other at any depth (a site under the
+app host could set cookies for the app, and an app host under the content domain would be
+a site host);
 `log.level` or `log.format` is invalid; `metrics.token` is shorter than 16 characters;
 `local_login`, `oidc.enabled` or `saml.enabled` is not a boolean; `local_login = false` without
 OIDC or SAML; OIDC is enabled with a required key missing or a non-https URL; SAML is enabled
@@ -211,9 +212,9 @@ the whole of its host.
 **Choosing the domains.** Use a separate registrable domain for `content_domain` where you can
 (the way GitHub uses `github.com` and `github.io`): browsers then treat the app and the sites
 as different sites, not just different origins, and a cookie scoped to the parent domain can
-never reach both. A subdomain of the app's parent (`pages.corp` and `content.pages.corp`) is
-allowed, and so is a subdomain of the app host itself, but then take care that nothing
-sets cookies for the shared parent domain.
+never reach both. Two siblings under a shared parent (`app.pages.corp` and `sites.pages.corp`) are
+accepted, but then the app and the sites are same-site and nothing on the parent domain may
+set cookies for it. A content domain under the app host, or the reverse, is refused at startup.
 
 **DNS and TLS.** Point `app_host` and the wildcard `*.<content_domain>` at the reverse
 proxy, and give the proxy a certificate for `app_host` and a wildcard certificate for
@@ -245,7 +246,7 @@ docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
 
-The baked-in settings use `app_host = localhost` and `content_domain = sites.localhost`, which
+The baked-in settings use `app_host = app.localhost` and `content_domain = sites.localhost`, which
 only suit trying the image out on one machine. For a real deployment mount your own file
 with your domains (and `cookie_secure = true` behind HTTPS).
 

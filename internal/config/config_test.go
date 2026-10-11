@@ -192,13 +192,12 @@ func TestLoadSiteHosts(t *testing.T) {
 	sites := func(app, content string) string {
 		return "[sites]\napp_host = " + app + "\ncontent_domain = " + content + "\n"
 	}
-	// A separate registrable domain, a sibling and a subdomain of the app's parent all work.
+	// A separate registrable domain and siblings under a shared parent work.
 	for _, ok := range [][2]string{
 		{"pages.corp", "pages-content.corp"},
-		{"pages.corp", "content.pages.corp"},
+		{"app.pages.corp", "sites.pages.corp"},
 		{"pages.corp", "sites.corp"},
 		{"a.b.corp", "b.corp.example"}, // unrelated hosts
-		{"a.b.c.corp", "c.corp"},       // too deep to be a site label
 	} {
 		if _, err := Load(writeRawConfig(t, sites(ok[0], ok[1]))); err != nil {
 			t.Errorf("%v: %v", ok, err)
@@ -216,7 +215,10 @@ func TestLoadSiteHosts(t *testing.T) {
 		"double trailing dot":    {sites("pages.corp..", "c.corp"), "app_host"},
 		"too long":               {sites("pages.corp", strings.Repeat("a.", 130)+"corp"), "content_domain"},
 		"equal hosts":            {sites("pages.corp", "Pages.Corp."), "differ"},
-		"app host is a site":     {sites("app.c.corp", "c.corp"), "site host"},
+		"app host is a site":     {sites("app.c.corp", "c.corp"), "under sites.content_domain"},
+		"app host deep under it": {sites("a.b.c.corp", "c.corp"), "under sites.content_domain"},
+		"content under app":      {sites("pages.corp", "sites.pages.corp"), "subdomain of sites.app_host"},
+		"content deep under app": {sites("pages.corp", "x.y.pages.corp"), "subdomain of sites.app_host"},
 		"url_mode":               {sites("pages.corp", "c.corp") + "url_mode = path\n", "url_mode"},
 		"base_domain":            {sites("pages.corp", "c.corp") + "base_domain = pages.corp\n", "base_domain"},
 	} {

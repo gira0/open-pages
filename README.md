@@ -17,16 +17,16 @@ go build -o open-pages ./cmd/open-pages
 ./open-pages -config configs/settings.ini
 ```
 
-Then open http://localhost:8080/index, or use the API:
+Then open http://app.localhost:8080/index, or use the API:
 
 ```sh
-curl -X POST localhost:8080/v1/user/register -H 'Content-Type: application/json' \
+curl -X POST app.localhost:8080/v1/user/register -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -c cookies -X POST localhost:8080/v1/user/login -H 'Content-Type: application/json' \
+curl -c cookies -X POST app.localhost:8080/v1/user/login -H 'Content-Type: application/json' \
   -d '{"email":"me@example.com","password":"change-me-please"}'
-curl -b cookies -X POST localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
+curl -b cookies -X POST app.localhost:8080/v1/auth/sites -H 'Content-Type: application/json' \
   -d '{"name":"hello"}'
-curl -b cookies -X POST --data-binary @site.zip localhost:8080/v1/auth/sites/hello/upload
+curl -b cookies -X POST --data-binary @site.zip app.localhost:8080/v1/auth/sites/hello/upload
 curl http://hello.sites.localhost:8080/   # sites get their own host, here <site>.sites.localhost
 ```
 
@@ -39,7 +39,7 @@ docker build -t open-pages .
 docker run -p 8080:8080 -v open-pages-data:/data open-pages
 ```
 
-The image's defaults serve the API on `localhost` and sites on `<site>.sites.localhost`; a
+The image's defaults serve the API on `app.localhost` and sites on `<site>.sites.localhost`; a
 real deployment sets its own `app_host` and `content_domain` (see
 [docs/getting-started.md](docs/getting-started.md#urls-and-hosts)).
 
