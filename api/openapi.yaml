@@ -76,6 +76,24 @@ paths:
               schema:
                 type: string
 
+  /manage:
+    get:
+      tags: [service]
+      operationId: getManage
+      summary: HTML site management page
+      description: |
+        The page where a signed-in user lists, creates, updates, deploys, rolls back and deletes
+        their sites. It carries no data of its own: its script calls the `/v1/auth` endpoints, and
+        a visitor without a session sees a prompt to sign in. It is not a stable interface.
+      security: []
+      responses:
+        "200":
+          description: The page.
+          content:
+            text/html:
+              schema:
+                type: string
+
   /static/{hash}/{path}:
     get:
       tags: [service]
@@ -1579,7 +1597,7 @@ components:
                 $ref: "#/components/schemas/SiteSummary"
     SiteSummary:
       type: object
-      required: [id, name, description, owner_id, group_id]
+      required: [id, name, description, owner_id, group_id, visibility]
       properties:
         id:
           type: integer
@@ -1594,6 +1612,8 @@ components:
         group_id:
           type: [integer, "null"]
           format: int64
+        visibility:
+          $ref: "#/components/schemas/Visibility"
     Site:
       type: object
       required: [name, description, owner_id, group, visibility, current]

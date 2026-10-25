@@ -63,6 +63,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/index` | none | HTML test page (login form, upload form) |
+| GET | `/manage` | none | HTML site management page (needs a session to show data) |
 | GET | `/static/{hash}/{path}` | none | UI stylesheets, scripts and fonts |
 | GET | `/v1/ping` | none | Liveness |
 | GET | `/healthz` | none | Health check |
@@ -161,6 +162,15 @@ UI pages are sent with `Content-Security-Policy: default-src 'self'; base-uri 'n
 form-action 'self'; frame-ancestors 'none'; object-src 'none'`, plus `X-Frame-Options: DENY`,
 `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. Hosted sites never get
 the CSP, `X-Frame-Options` or `Referrer-Policy` (they keep only their existing `nosniff`).
+
+### GET /manage
+
+No authentication for the page itself; it carries no data. Its script reads `GET /v1/auth/user`
+and shows the caller's own sites with their visibility and group. A visitor without a session
+sees a prompt to sign in. The page creates sites, changes a site's description, visibility and
+group, uploads a new version, lists the kept versions with rollback, and deletes a site, all
+through the `/v1/auth/sites` endpoints. `/manage?site=<name>` opens one site. It sends the same
+security headers as `/index`.
 
 ### GET /static/{hash}/{path}
 
@@ -268,8 +278,8 @@ Auth: any. Returns the caller's account, groups and sites.
   "email": "ada@corp.example",
   "groups": [{"id": 3, "name": "Eng", "owner_id": 1}],
   "docs": {
-    "owned":    [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3}],
-    "viewable": [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3}]
+    "owned":    [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3, "visibility": "public"}],
+    "viewable": [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3, "visibility": "public"}]
   }
 }
 ```

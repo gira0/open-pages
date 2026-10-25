@@ -56,6 +56,7 @@ func (s *Server) routeTable() []route {
 	handleFunc := func(pattern string, h http.HandlerFunc) { handle(pattern, h) }
 
 	handleFunc("GET /index", s.handleIndex)
+	handleFunc("GET /manage", s.handleManage)
 	handleFunc("GET /static/{hash}/{path...}", s.handleStatic)
 	handleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
@@ -150,6 +151,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	data["sites"] = rows
 	s.render(w, r, "index.html", data)
+}
+
+// handleManage serves the site management page. It is a shell: the script loads the
+// caller's sites and groups from the API, so a signed-out visitor gets a sign-in prompt.
+func (s *Server) handleManage(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "manage.html", map[string]any{
+		"title": "My sites", "nav": "manage",
+		// The script swaps in the site name where it finds the "{site}" placeholder.
+		"siteOrigin": s.originFor("{site}."+s.cfg.ContentDomain, r),
+	})
 }
 
 // uiCSP is the Content-Security-Policy of the UI pages. It is never sent with hosted

@@ -33,3 +33,14 @@
 .pf-v6-c-progress[hidden] {
   display: none;
 }
+
+/* The hidden attribute must win over PatternFly display rules on the manage page blocks. */
+#manage [hidden] {
+  display: none;
+}
+
+.op-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-t--global--spacer--sm);
+}

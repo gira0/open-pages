@@ -32,6 +32,7 @@ type docInfo struct {
 	Description string `json:"description"`
 	OwnerID     *int64 `json:"owner_id"`
 	GroupID     *int64 `json:"group_id"`
+	Visibility  string `json:"visibility"`
 }
 
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +58,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	// DISTINCT guards against a duplicate user_group row repeating a doc.
 	docRows, err := s.db.QueryContext(r.Context(),
-		`SELECT DISTINCT d.docid, d.name, COALESCE(d.description, ''), d.uowner, d.ugroup FROM docs d
+		`SELECT DISTINCT d.docid, d.name, COALESCE(d.description, ''), d.uowner, d.ugroup, d.visibility FROM docs d
 		 WHERE d.uowner = ? OR d.visibility = 'authenticated' OR (d.ugroup IN (SELECT gid FROM user_group WHERE uid = ?)
 		   AND EXISTS (SELECT 1 FROM user_group og WHERE og.uid = d.uowner AND og.gid = d.ugroup))
 		 ORDER BY d.name`, uid, uid)
@@ -69,7 +70,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	for docRows.Next() {
 		var d docInfo
 		var owner, group sql.NullInt64
-		if err := docRows.Scan(&d.ID, &d.Name, &d.Description, &owner, &group); err != nil {
+		if err := docRows.Scan(&d.ID, &d.Name, &d.Description, &owner, &group, &d.Visibility); err != nil {
 			internalError(w, "scan doc", err)
 			return
 		}

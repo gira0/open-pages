@@ -51,7 +51,7 @@ func TestUserInfo(t *testing.T) {
 	if len(got.Groups) != 1 || got.Groups[0].Name != "eng" {
 		t.Fatalf("groups = %+v", got.Groups)
 	}
-	if len(got.Docs.Owned) != 1 || got.Docs.Owned[0].Name != "mine" || got.Docs.Owned[0].Description != "my doc" {
+	if len(got.Docs.Owned) != 1 || got.Docs.Owned[0].Name != "mine" || got.Docs.Owned[0].Description != "my doc" || got.Docs.Owned[0].Visibility != "public" {
 		t.Fatalf("owned = %+v", got.Docs.Owned)
 	}
 	var names []string
