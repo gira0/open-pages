@@ -13,3 +13,23 @@
 .op-narrow {
   max-width: 36rem;
 }
+
+/* The native file input stays in the DOM (for form data and the file dialog) but the
+   PatternFly file upload controls in front of it are what people see. */
+.op-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Alerts built by app.js. */
+.op-result:empty {
+  display: none;
+}
+
+.pf-v6-c-progress[hidden] {
+  display: none;
+}

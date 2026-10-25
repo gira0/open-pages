@@ -9,7 +9,8 @@
 {{if or .oidc .saml .localLogin}}
 <section class="pf-v6-c-page__main-section" id="sign-in">
 	<div class="pf-v6-c-page__main-body">
-		<h2 class="pf-v6-c-title pf-m-lg">Sign in</h2>
+		<div class="pf-v6-c-card op-narrow"><div class="pf-v6-c-card__body">
+		<h2 class="pf-v6-c-title pf-m-xl">Sign in</h2>
 		{{if .oidc}}
 		<p><a class="pf-v6-c-button pf-m-secondary" href="/v1/auth/oidc/login?return_to=/index"><span class="pf-v6-c-button__text">Sign in with your company account{{if .saml}} (OpenID Connect){{end}}</span></a></p>
 		{{end}}
@@ -39,12 +40,53 @@
 					<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Sign in</span></button>
 				</div>
 			</div>
-			<pre id="login-result" role="status" aria-live="polite"></pre>
+			<div id="login-result" class="op-result" aria-live="polite"></div>
 		</form>
 		{{end}}
+		</div></div>
 	</div>
 </section>
 {{end}}
+<section class="pf-v6-c-page__main-section">
+	<div class="pf-v6-c-page__main-body">
+		<h2 class="pf-v6-c-title pf-m-lg">Public sites</h2>
+		{{if .sitesError}}
+		<div class="pf-v6-c-alert pf-m-danger pf-m-inline" role="alert">
+			<div class="pf-v6-c-alert__icon"><i class="fas fa-fw fa-exclamation-circle" aria-hidden="true"></i></div>
+			<p class="pf-v6-c-alert__title"><span class="pf-v6-screen-reader">Danger alert:</span>Could not load the list of sites.</p>
+		</div>
+		{{else if .sites}}
+		<div class="pf-v6-c-scroll-inner-wrapper">
+		<table class="pf-v6-c-table pf-m-compact pf-m-grid-md" role="grid" aria-label="Public sites" id="sites-table">
+			<thead class="pf-v6-c-table__thead">
+				<tr class="pf-v6-c-table__tr">
+					<th class="pf-v6-c-table__th" scope="col">Site</th>
+					<th class="pf-v6-c-table__th" scope="col">Description</th>
+				</tr>
+			</thead>
+			<tbody class="pf-v6-c-table__tbody">
+				{{range .sites}}
+				<tr class="pf-v6-c-table__tr">
+					<td class="pf-v6-c-table__td" data-label="Site"><a href="{{.URL}}">{{.Name}}</a></td>
+					<td class="pf-v6-c-table__td" data-label="Description">{{.Description}}</td>
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+		</div>
+		{{else}}
+		<div class="pf-v6-c-empty-state pf-m-sm" id="sites-empty">
+			<div class="pf-v6-c-empty-state__content">
+				<div class="pf-v6-c-empty-state__header">
+					<div class="pf-v6-c-empty-state__icon"><i class="fas fa-cube" aria-hidden="true"></i></div>
+					<h3 class="pf-v6-c-empty-state__title"><span class="pf-v6-c-empty-state__title-text">No public sites yet</span></h3>
+				</div>
+				<div class="pf-v6-c-empty-state__body">Sites you upload as public will be listed here.</div>
+			</div>
+		</div>
+		{{end}}
+	</div>
+</section>
 <section class="pf-v6-c-page__main-section">
 	<div class="pf-v6-c-page__main-body">
 		<h2 class="pf-v6-c-title pf-m-lg">Upload a site</h2>
@@ -59,10 +101,26 @@
 			</div>
 			<div class="pf-v6-c-form__group">
 				<div class="pf-v6-c-form__group-label">
-					<label class="pf-v6-c-form__label" for="file"><span class="pf-v6-c-form__label-text">Archive (.zip or .tar.gz)</span></label>
+					<label class="pf-v6-c-form__label" for="file-name"><span class="pf-v6-c-form__label-text">Archive (.zip or .tar.gz)</span></label>
 				</div>
 				<div class="pf-v6-c-form__group-control">
-					<input type="file" id="file" name="file" accept=".zip,.tar.gz" required>
+					<div class="pf-v6-c-file-upload">
+						<div class="pf-v6-c-file-upload__file-select">
+							<div class="pf-v6-c-input-group">
+								<div class="pf-v6-c-input-group__item pf-m-fill">
+									<span class="pf-v6-c-form-control pf-m-readonly"><input type="text" id="file-name" readonly placeholder="No file selected" aria-describedby="file-help"></span>
+								</div>
+								<div class="pf-v6-c-input-group__item">
+									<button class="pf-v6-c-button pf-m-control" type="button" id="file-browse"><span class="pf-v6-c-button__text">Browse...</span></button>
+								</div>
+								<div class="pf-v6-c-input-group__item">
+									<button class="pf-v6-c-button pf-m-control" type="button" id="file-clear" disabled><span class="pf-v6-c-button__text">Clear</span></button>
+								</div>
+							</div>
+							<input class="op-visually-hidden" type="file" id="file" name="file" accept=".zip,.tar.gz" tabindex="-1" aria-label="Archive file">
+						</div>
+					</div>
+					<p class="pf-v6-c-form__helper-text" id="file-help">A .zip or .tar.gz archive containing the site files.</p>
 				</div>
 			</div>
 			<div class="pf-v6-c-form__group pf-m-action">
@@ -70,8 +128,14 @@
 					<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Upload</span></button>
 				</div>
 			</div>
-			<progress id="upload-progress" value="0" max="100" aria-label="Upload progress"></progress>
-			<pre id="upload-result" role="status" aria-live="polite"></pre>
+			<div class="pf-v6-c-progress pf-m-sm pf-m-outside" id="upload-progress" hidden>
+				<div class="pf-v6-c-progress__description" id="upload-progress-desc">Uploading</div>
+				<div class="pf-v6-c-progress__status" aria-hidden="true"><span class="pf-v6-c-progress__measure" id="upload-progress-measure">0%</span></div>
+				<div class="pf-v6-c-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="upload-progress-desc">
+					<div class="pf-v6-c-progress__indicator" id="upload-progress-bar"></div>
+				</div>
+			</div>
+			<div id="upload-result" class="op-result" aria-live="polite"></div>
 		</form>
 	</div>
 </section>

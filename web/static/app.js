@@ -59,25 +59,95 @@
     show();
   }
 
+  // Shows a PatternFly inline alert in container, replacing the previous one. kind is
+  // 'danger' or 'success'. The text is set with textContent, never as HTML.
+  var alertIcons = {danger: 'fa-exclamation-circle', success: 'fa-check-circle'};
+  var alertLabels = {danger: 'Danger alert:', success: 'Success alert:'};
+  function showAlert(container, kind, title, detail) {
+    var alert = document.createElement('div');
+    alert.className = 'pf-v6-c-alert pf-m-inline pf-m-' + kind;
+    alert.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
+    var icon = document.createElement('div');
+    icon.className = 'pf-v6-c-alert__icon';
+    var i = document.createElement('i');
+    i.className = 'fas fa-fw ' + alertIcons[kind];
+    i.setAttribute('aria-hidden', 'true');
+    icon.appendChild(i);
+    var heading = document.createElement('p');
+    heading.className = 'pf-v6-c-alert__title';
+    var sr = document.createElement('span');
+    sr.className = 'pf-v6-screen-reader';
+    sr.textContent = alertLabels[kind];
+    heading.appendChild(sr);
+    heading.appendChild(document.createTextNode(title));
+    alert.appendChild(icon);
+    alert.appendChild(heading);
+    if (detail) {
+      var desc = document.createElement('div');
+      desc.className = 'pf-v6-c-alert__description';
+      desc.textContent = detail;
+      alert.appendChild(desc);
+    }
+    container.replaceChildren(alert);
+  }
+
   // Upload form: creates the site (an existing one is fine), then uploads the archive to it.
   function setupUpload() {
     var form = document.getElementById('upload-form');
     if (!form) { return; }
     var result = document.getElementById('upload-result');
     var progress = document.getElementById('upload-progress');
+    var bar = progress.querySelector('[role=progressbar]');
+    var indicator = document.getElementById('upload-progress-bar');
+    var measure = document.getElementById('upload-progress-measure');
+    var fileInput = document.getElementById('file');
+    var fileName = document.getElementById('file-name');
+    var clearButton = document.getElementById('file-clear');
+
+    function setProgress(pct) {
+      var p = Math.max(0, Math.min(100, Math.round(pct)));
+      indicator.style.width = p + '%';
+      bar.setAttribute('aria-valuenow', String(p));
+      bar.setAttribute('aria-valuetext', p + '%');
+      measure.textContent = p + '%';
+    }
+    function showFile() {
+      var f = fileInput.files[0];
+      fileName.value = f ? f.name : '';
+      clearButton.disabled = !f;
+    }
+    document.getElementById('file-browse').addEventListener('click', function () { fileInput.click(); });
+    fileName.addEventListener('click', function () { fileInput.click(); });
+    clearButton.addEventListener('click', function () { fileInput.value = ''; showFile(); });
+    fileInput.addEventListener('change', showFile);
+    form.addEventListener('reset', function () { setTimeout(showFile, 0); });
+
     form.addEventListener('submit', async function (evt) {
       evt.preventDefault();
       var name = form.elements.name.value;
-      var file = form.elements.file.files[0];
-      progress.value = 0;
-      result.textContent = '';
-      var created = await fetch('/v1/auth/sites', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name})
-      });
+      var file = fileInput.files[0];
+      result.replaceChildren();
+      if (!file) {
+        showAlert(result, 'danger', 'Choose an archive to upload.');
+        return;
+      }
+      setProgress(0);
+      progress.hidden = false;
+      var created;
+      try {
+        created = await fetch('/v1/auth/sites', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name})
+        });
+      } catch (e) {
+        progress.hidden = true;
+        showAlert(result, 'danger', 'Creating the site failed.', 'Network error');
+        return;
+      }
       if (!created.ok && created.status !== 409) {
-        result.textContent = 'create site failed: ' + await created.text();
+        progress.hidden = true;
+        showAlert(result, 'danger', 'Creating the site failed.', await created.text());
         return;
       }
       var data = new FormData();
@@ -85,10 +155,21 @@
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/v1/auth/sites/' + encodeURIComponent(name) + '/formupload');
       xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable) { progress.value = e.loaded / e.total * 100; }
+        if (e.lengthComputable) { setProgress(e.loaded / e.total * 100); }
       };
-      xhr.onload = function () { result.textContent = xhr.status + ' ' + xhr.responseText; };
-      xhr.onerror = function () { result.textContent = 'upload failed'; };
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setProgress(100);
+          showAlert(result, 'success', 'Upload complete.', xhr.responseText);
+        } else {
+          progress.hidden = true;
+          showAlert(result, 'danger', 'Upload failed (' + xhr.status + ').', xhr.responseText);
+        }
+      };
+      xhr.onerror = function () {
+        progress.hidden = true;
+        showAlert(result, 'danger', 'Upload failed.', 'Network error');
+      };
       xhr.send(data);
     });
   }
@@ -126,12 +207,18 @@
     var result = document.getElementById('login-result');
     form.addEventListener('submit', async function (evt) {
       evt.preventDefault();
-      var resp = await fetch(form.action, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: form.elements.email.value, password: form.elements.password.value})
-      });
-      if (resp.ok) { goNext(next); } else { result.textContent = 'sign-in failed: ' + await resp.text(); }
+      var resp;
+      try {
+        resp = await fetch(form.action, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({email: form.elements.email.value, password: form.elements.password.value})
+        });
+      } catch (e) {
+        showAlert(result, 'danger', 'Sign-in failed.', 'Network error');
+        return;
+      }
+      if (resp.ok) { goNext(next); } else { showAlert(result, 'danger', 'Sign-in failed.', await resp.text()); }
     });
   }
 

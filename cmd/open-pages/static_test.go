@@ -216,3 +216,31 @@ func TestStaticHashCoversContent(t *testing.T) {
 		t.Error("tiny file kept a gzip copy larger than itself")
 	}
 }
+
+// The index lists public sites in a table, links them on the content domain and escapes
+// their descriptions; without sites it shows the empty state.
+func TestIndexSitesTable(t *testing.T) {
+	s := newServeTestServer(t, nil)
+	body := do(s, "GET", "", "/index").Body.String()
+	if !strings.Contains(body, `id="sites-empty"`) || strings.Contains(body, `id="sites-table"`) {
+		t.Errorf("no sites: want only the empty state:\n%s", body)
+	}
+	owner := testOwner(t, s)
+	if _, err := s.createSite(t.Context(), "blog", `<script>alert(1)</script> & more`, owner, 0, visPublic); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createSite(t.Context(), "secret", "hidden", owner, 0, visRestricted); err != nil {
+		t.Fatal(err)
+	}
+	body = do(s, "GET", "", "/index").Body.String()
+	for _, want := range []string{`id="sites-table"`, `href="http://blog.` + testContentDomain + `/"`, `&lt;script&gt;alert(1)&lt;/script&gt; &amp; more`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"<script>alert", "secret", `id="sites-empty"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("index contains %q", bad)
+		}
+	}
+}
