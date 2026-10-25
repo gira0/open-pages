@@ -9,16 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gira0/open-pages/internal/cli"
 	"github.com/gira0/open-pages/internal/config"
-	"github.com/gira0/open-pages/internal/metrics"
-	"github.com/gira0/open-pages/internal/store"
-	"github.com/gira0/open-pages/web"
+	"github.com/gira0/open-pages/internal/logging"
+	"github.com/gira0/open-pages/internal/server"
 )
 
 func main() {
@@ -42,19 +40,19 @@ func run(configPath string) error {
 	if err != nil {
 		return err
 	}
-	slog.SetDefault(newLogger(os.Stderr, cfg))
-	srv, err := newServer(cfg)
+	slog.SetDefault(logging.New(os.Stderr, cfg.LogLevel, cfg.LogFormat))
+	srv, err := server.New(cfg)
 	if err != nil {
 		return err
 	}
-	defer srv.db.Close()
+	defer srv.Close()
 	if !cfg.CookieSecure {
 		slog.Warn("cookie_secure is false: the session cookie is sent without the Secure flag and without the __Host- prefix, so pages on sibling hosts can overwrite it; set cookie_secure = true when serving over HTTPS")
 	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           srv.routes(),
+		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -62,7 +60,7 @@ func run(configPath string) error {
 	defer stop()
 
 	serveErr := make(chan error, 2)
-	if ms := srv.metricsServer(); ms != nil {
+	if ms := srv.MetricsServer(); ms != nil {
 		defer ms.Close()
 		go func() {
 			slog.Info("metrics listening", "addr", ms.Addr)
@@ -72,7 +70,7 @@ func run(configPath string) error {
 		}()
 	}
 	go func() {
-		slog.Info("listening", "addr", cfg.Listen, "data", srv.sites)
+		slog.Info("listening", "addr", cfg.Listen, "data", srv.SitesDir())
 		serveErr <- httpSrv.ListenAndServe()
 	}()
 
@@ -94,48 +92,4 @@ func run(configPath string) error {
 		return err
 	}
 	return nil
-}
-
-// newServer prepares the data directories and database described by cfg.
-func newServer(cfg config.Config) (*Server, error) {
-	s := &Server{
-		cfg:   cfg,
-		sites: filepath.Join(cfg.DataPath, "op_data"),
-		tmp:   filepath.Join(cfg.TmpPath, "tmp"),
-
-		deploySem: make(chan struct{}, max(cfg.MaxDeploys, 1)),
-
-		metrics: metrics.New(),
-	}
-	if cfg.OIDC.Enabled {
-		s.oidc = newOIDCClient(cfg.OIDC)
-	}
-	if cfg.SAML.Enabled {
-		var err error
-		if s.saml, err = newSAMLClient(cfg.SAML); err != nil {
-			return nil, err
-		}
-	}
-	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
-	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
-		return nil, fmt.Errorf("create %s: %w", s.sites, err)
-	}
-	if err := os.MkdirAll(s.tmp, 0o700); err != nil {
-		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
-	}
-
-	pages, err := parsePages(web.Templates)
-	if err != nil {
-		return nil, fmt.Errorf("load templates: %w", err)
-	}
-	s.pages = pages
-	if s.static, err = loadStatic(); err != nil {
-		return nil, fmt.Errorf("load static assets: %w", err)
-	}
-
-	s.db, err = store.Open(filepath.Join(cfg.DataPath, "data.db"))
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
 }
