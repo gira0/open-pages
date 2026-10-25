@@ -398,16 +398,17 @@
     }
     async function loadVersions() {
       var r = await callAPI('GET', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/versions');
-      if (!r.ok) { showAlert($('versions-result'), 'danger', 'Could not load the versions.', r.error); return; }
+      if (!r.ok) { showAlert($('versions-result'), 'danger', 'Could not load the versions.', r.error); return false; }
       $('versions-result').replaceChildren();
       renderVersions(r.data);
+      return true;
     }
     async function rollback(id) {
       if (!confirm('Make version ' + id + ' the live version of ' + siteName + '?')) { return; }
       var r = await callAPI('POST', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/rollback', {version: id});
       if (!r.ok) { showAlert($('versions-result'), 'danger', 'Rollback failed.', r.error); return; }
-      await loadVersions();
-      showAlert($('versions-result'), 'success', 'Rolled back.', 'Version ' + id + ' is live.');
+      // A failed refresh keeps its own error, which says the table may be stale.
+      if (await loadVersions()) { showAlert($('versions-result'), 'success', 'Rolled back.', 'Version ' + id + ' is live.'); }
     }
     function setupDeploy() {
       var form = $('deploy-form');
