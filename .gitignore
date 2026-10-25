@@ -18,7 +18,7 @@ html/*
 op_data/*
 coverage.html
 
-# Build output (root binary only; cmd/open-pages/ stays tracked)
+# Build output (root binary only; the cmd/open-pages/ source stays tracked)
 /open-pages
 /bin/
 /dist/

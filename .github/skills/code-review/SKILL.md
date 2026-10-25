@@ -19,20 +19,20 @@ serves them. Review for correctness and security first; style is handled by `gol
 
 ## Security-sensitive areas (look hardest here)
 
-- **Archive extraction and upload** (`internal/extract/extract.go`, `cmd/open-pages/upload.go`): path traversal (`..`, absolute
+- **Archive extraction and upload** (`internal/extract/extract.go`, `internal/server/upload.go`): path traversal (`..`, absolute
   paths), symlinks and hard links, zip bombs (size and entry-count limits), partial extraction
   left behind on failure.
-- **Auth** (`cmd/open-pages/auth.go`, `cmd/open-pages/tokens.go`): token and session handling, constant-time comparison,
+- **Auth** (`internal/server/auth.go`, `internal/server/tokens.go`): token and session handling, constant-time comparison,
   tokens never logged or returned twice, a malformed `Authorization` header must never fall
   back to the session cookie.
-- **Site names** (`internal/names/names.go`, `cmd/open-pages/sites.go`): must be hostname-valid and must not be a reserved name.
-- **Serving and URL resolution** (`cmd/open-pages/serve.go`, `cmd/open-pages/resolve.go`): host routing (the app host never
+- **Site names** (`internal/names/names.go`, `internal/server/sites.go`): must be hostname-valid and must not be a reserved name.
+- **Serving and URL resolution** (`internal/server/serve.go`, `internal/server/resolve.go`): host routing (the app host never
   serves site content, a content host serves nothing but its site, any other host is a 404 apart from `/healthz`);
   Host header port, case and trailing-dot handling; no escaping the site root.
 - **Log injection**: do not log raw unvalidated user input (request paths, hosts, headers,
   client addresses). CodeQL flags this; log IDs, matched route patterns and status instead.
   Values already validated to a bounded form, such as a site name (a DNS label), are fine.
-- **Redirects and outbound HTTP** (`cmd/open-pages/cli.go`): never forward credentials across redirects.
+- **Redirects and outbound HTTP** (`internal/cli/deploy.go`): never forward credentials across redirects.
 
 ## Data and deploys
 

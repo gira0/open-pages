@@ -1,0 +1,196 @@
+package server
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+)
+
+// serveSite serves filePath from the live version of site. Lookup and (later) access
+// control happen here.
+func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePath string) {
+	rec, err := s.getSite(r.Context(), site)
+	missing := errors.Is(err, errSiteNotFound)
+	if err != nil && !missing {
+		slog.Error("look up site", "err", err, "request_id", requestIDOf(w))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	gated := missing || rec.Visibility != visPublic
+	if gated {
+		// Site cookie or API token. A missing site and one the viewer may not see are handled
+		// by the same code, so the response does not reveal that the site exists.
+		ok, signedIn, err := s.viewerMaySee(r, site, rec, missing)
+		if err != nil {
+			slog.Error("check site access", "err", err, "request_id", requestIDOf(w))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			if !signedIn {
+				s.redirectToLogin(w, r, site)
+				return
+			}
+			notFoundNoStore(w, r)
+			return
+		}
+		// Everything below depends on who is asking, including 404s and redirects: shared
+		// caches must not keep it, and it varies with the credentials.
+		h := w.Header()
+		h.Set("Cache-Control", "private, no-cache")
+		h.Add("Vary", "Cookie, Authorization")
+	}
+
+	// CurrentDir is a symlink; os.Root follows it for the root itself but then refuses
+	// any path (including symlinks inside the site) that leads outside it.
+	root, err := os.OpenRoot(s.CurrentDir(site))
+	if err != nil {
+		http.NotFound(w, r) // never deployed
+		return
+	}
+	defer root.Close()
+	version, _ := s.CurrentVersion(site)
+
+	name, ok := rootName(filePath)
+	if !ok {
+		s.serveNotFound(w, r, root)
+		return
+	}
+
+	f, info, err := openFile(root, name)
+	switch {
+	case errors.Is(err, errIsDir):
+		if !strings.HasSuffix(r.URL.Path, "/") {
+			redirectToSlash(w, r)
+			return
+		}
+		f, info, err = openFile(root, path.Join(name, "index.html"))
+		if errors.Is(err, errIsDir) {
+			err = fs.ErrNotExist // no directory listings
+		}
+	case err == nil && strings.HasSuffix(r.URL.Path, "/"):
+		_ = f.Close()
+		err = fs.ErrNotExist // "/file.html/" is not "/file.html"
+	}
+	if err != nil {
+		s.serveNotFound(w, r, root)
+		return
+	}
+	defer f.Close()
+
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	if !gated {
+		h.Set("Cache-Control", "no-cache") // always revalidate: cheap with ETag, and deploys take effect at once
+	}
+	h.Set("ETag", etag(version, info))
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// notFoundNoStore is the plain 404 for a missing site and for one the viewer may not see.
+// Both use this one function so they stay indistinguishable, and neither may be cached.
+func notFoundNoStore(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.NotFound(w, r)
+}
+
+// viewerMaySee resolves who sent the request (API token or the site's cookie, 0 if neither
+// is valid) and whether that user may view site. signedIn reports whether the request
+// carries valid credentials, or an Authorization header at all: only a request that does not is sent
+// to log in. A missing site is never viewable.
+func (s *Server) viewerMaySee(r *http.Request, name string, site Site, missing bool) (ok, signedIn bool, err error) {
+	uid, err := s.siteUser(r, name)
+	if err != nil {
+		return false, false, err
+	}
+	signedIn = uid != 0 || len(r.Header.Values("Authorization")) > 0 // any scheme counts as an attempt
+	if missing {
+		return false, signedIn, nil
+	}
+	ok, err = s.canView(r.Context(), site, uid)
+	return ok, signedIn, err
+}
+
+// serveNotFound sends the site's own 404.html with status 404, or a plain 404.
+func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, root *os.Root) {
+	f, info, err := openFile(root, "404.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	h.Set("X-Content-Type-Options", "nosniff")
+	if h.Get("Cache-Control") == "" { // access-controlled sites already set a private one
+		h.Set("Cache-Control", "no-cache")
+	}
+	w.WriteHeader(http.StatusNotFound)
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, f)
+	}
+}
+
+var errIsDir = errors.New("is a directory")
+
+// openFile opens a regular file in root. It returns errIsDir for a directory.
+func openFile(root *os.Root, name string) (*os.File, fs.FileInfo, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	if info.IsDir() {
+		_ = f.Close()
+		return nil, nil, errIsDir
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, fs.ErrNotExist
+	}
+	return f, info, nil
+}
+
+// rootName turns a URL file path into a name for os.Root: cleaned, relative, "." for the
+// root itself. Anything with a NUL byte is refused.
+func rootName(filePath string) (string, bool) {
+	if strings.ContainsRune(filePath, 0) {
+		return "", false
+	}
+	name := strings.TrimPrefix(path.Clean("/"+filePath), "/")
+	if name == "" {
+		name = "."
+	}
+	return name, true
+}
+
+// redirectToSlash sends the browser to the same directory with a trailing slash. The
+// target is relative and built from the last path segment only, so a request path such
+// as "//evil.example/x" can never turn into a redirect to another host.
+func redirectToSlash(w http.ResponseWriter, r *http.Request) {
+	target := "./" + url.PathEscape(path.Base(r.URL.Path)) + "/"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusMovedPermanently)
+}
+
+// etag is weak: it names the deployed version plus the file's size and mtime, so it
+// changes on every deploy and rollback.
+func etag(version string, info fs.FileInfo) string {
+	return fmt.Sprintf(`W/"%s-%x-%x"`, version, info.Size(), info.ModTime().UnixMicro())
+}
