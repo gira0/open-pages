@@ -1,4 +1,6 @@
-package main
+// Package cli implements the "open-pages deploy" client subcommand: it zips a directory and
+// uploads it to a running server over the HTTP API.
+package cli
 
 import (
 	"archive/zip"
@@ -37,12 +39,12 @@ const (
 	deployUsageMsg = "usage: open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>"
 )
 
-// runDeploy runs the deploy subcommand and returns the process exit code.
-func runDeploy(args []string) int {
+// Deploy runs the deploy subcommand and returns the process exit code.
+func Deploy(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err := deployCommand(ctx, args, os.Getenv, os.Stdout)
+	err := DeployCommand(ctx, args, os.Getenv, os.Stdout)
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
 		return 0
@@ -52,9 +54,9 @@ func runDeploy(args []string) int {
 	}
 }
 
-// deployCommand implements "open-pages deploy". The token is read from the environment only,
+// DeployCommand implements "open-pages deploy". The token is read from the environment only,
 // so it doesn't end up in shell history or process listings.
-func deployCommand(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
+func DeployCommand(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	fl := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	server := fl.String("server", getenv(envServerURL), "server base URL (default $"+envServerURL+")")
 	create := fl.Bool("create", true, "create the site if it does not exist")
@@ -311,7 +313,7 @@ func (c *deployClient) sendJSON(ctx context.Context, method, path string, v any)
 // createSite creates site with the given visibility ("" for the server's default). A 409
 // means someone created it meanwhile, which is fine.
 func (c *deployClient) createSite(ctx context.Context, site, visibility string) error {
-	rep, err := c.sendJSON(ctx, http.MethodPost, "/v1/auth/sites", siteCreate{Name: site, Visibility: visibility})
+	rep, err := c.sendJSON(ctx, http.MethodPost, "/v1/auth/sites", siteCreateBody{Name: site, Visibility: visibility})
 	if err != nil {
 		return err
 	}
@@ -322,7 +324,26 @@ func (c *deployClient) createSite(ctx context.Context, site, visibility string) 
 }
 
 // openness ranks visibilities from the narrowest audience to the widest.
-var openness = map[string]int{visRestricted: 0, visAuthenticated: 1, visPublic: 2}
+var openness = map[string]int{"restricted": 0, "authenticated": 1, "public": 2}
+
+const errBadVisibility = `visibility must be "public", "authenticated" or "restricted"`
+
+// validVisibility reports whether v is a visibility the server knows.
+func validVisibility(v string) bool {
+	_, ok := openness[v]
+	return ok
+}
+
+// siteCreateBody is the body of POST /v1/auth/sites.
+type siteCreateBody struct {
+	Name       string `json:"name"`
+	Visibility string `json:"visibility"`
+}
+
+// siteUpdateBody is the body of PUT /v1/auth/sites/{name}; absent fields are left unchanged.
+type siteUpdateBody struct {
+	Visibility *string `json:"visibility"`
+}
 
 // prepareVisibility gets site ready to be deployed with the given visibility. A missing site
 // is created with it when create is set (created reports that). An existing site's
@@ -355,7 +376,7 @@ func (c *deployClient) prepareVisibility(ctx context.Context, site, visibility s
 
 // setVisibility sets the visibility of an existing site.
 func (c *deployClient) setVisibility(ctx context.Context, site, visibility string) error {
-	rep, err := c.sendJSON(ctx, http.MethodPut, "/v1/auth/sites/"+site, siteUpdate{Visibility: &visibility})
+	rep, err := c.sendJSON(ctx, http.MethodPut, "/v1/auth/sites/"+site, siteUpdateBody{Visibility: &visibility})
 	if err != nil {
 		return err
 	}

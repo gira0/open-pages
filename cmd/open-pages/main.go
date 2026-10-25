@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gira0/open-pages/internal/cli"
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/store"
 	"github.com/gira0/open-pages/web"
@@ -21,7 +22,7 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deploy" {
-		os.Exit(runDeploy(os.Args[2:]))
+		os.Exit(cli.Deploy(os.Args[2:]))
 	}
 	configPath := flag.String("config", "settings.ini", "path to the settings file")
 	flag.Parse()

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"net/http"
@@ -10,105 +9,19 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/cli"
 )
 
-func TestDeployDoesNotFollowRedirects(t *testing.T) {
-	var leaked atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			leaked.Add(1)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(target.Close)
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
-	}))
-	t.Cleanup(origin.Close)
-
-	dir := writeTree(t, map[string]string{"index.html": "hi"})
-	err := deployCommand(context.Background(), []string{"blog", dir}, env("opt_secret", origin.URL), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "redirect") {
-		t.Fatalf("got error %v, want a redirect failure", err)
-	}
-	if n := leaked.Load(); n != 0 {
-		t.Fatalf("the redirect target received %d requests carrying the token", n)
-	}
-}
-
-func writeTree(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return dir
-}
-
-func zipNames(t *testing.T, data []byte) []string {
-	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, f := range zr.File {
-		names = append(names, f.Name)
-	}
-	slices.Sort(names)
-	return names
-}
-
-func TestZipDir(t *testing.T) {
-	dir := writeTree(t, map[string]string{"index.html": "hi", "css/site.css": "body{}", ".well-known/x": "y"})
-	var buf bytes.Buffer
-	if err := zipDir(&buf, dir); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{".well-known/", ".well-known/x", "css/", "css/site.css", "index.html"}
-	if got := zipNames(t, buf.Bytes()); !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-}
-
-func TestZipDirRejects(t *testing.T) {
-	if err := zipDir(&bytes.Buffer{}, t.TempDir()); err == nil {
-		t.Error("empty directory was accepted")
-	}
-	if err := zipDir(&bytes.Buffer{}, filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Error("missing directory was accepted")
-	}
-	if runtime.GOOS == "windows" {
-		return
-	}
-	dir := writeTree(t, map[string]string{"index.html": "hi"})
-	secret := writeTree(t, map[string]string{"secret.txt": "s3cret"})
-	if err := os.Symlink(filepath.Join(secret, "secret.txt"), filepath.Join(dir, "link.txt")); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	if err := zipDir(&buf, dir); err == nil || strings.Contains(buf.String(), "s3cret") {
-		t.Fatalf("symlink was not rejected: %v", err)
-	}
-}
-
-func env(token, server string) func(string) string {
+func cliEnv(token, server string) func(string) string {
 	return func(k string) string {
 		switch k {
-		case envToken:
+		case "OPEN_PAGES_TOKEN":
 			return token
-		case envServerURL:
+		case "OPEN_PAGES_URL":
 			return server
 		}
 		return ""
@@ -124,11 +37,11 @@ func TestDeployCommand(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
 	token := apiToken(t, ts, c)
-	dir := writeTree(t, map[string]string{"index.html": "<h1>v1</h1>", "css/site.css": "body{}"})
+	dir := writeSiteTree(t, map[string]string{"index.html": "<h1>v1</h1>", "css/site.css": "body{}"})
 
 	var out bytes.Buffer
 	// The site doesn't exist yet: deploy creates it.
-	if err := deployCommand(context.Background(), []string{"blog", dir}, env(token, ts.URL), &out); err != nil {
+	if err := cli.DeployCommand(context.Background(), []string{"blog", dir}, cliEnv(token, ts.URL), &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "deployed blog") {
@@ -143,7 +56,7 @@ func TestDeployCommand(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>v2</h1>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := deployCommand(context.Background(), []string{"-server", ts.URL, "blog", dir}, env(token, ""), &out); err != nil {
+	if err := cli.DeployCommand(context.Background(), []string{"-server", ts.URL, "blog", dir}, cliEnv(token, ""), &out); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = os.ReadFile(filepath.Join(s.CurrentDir("blog"), "index.html"))
@@ -159,7 +72,7 @@ func TestDeployVisibility(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
 	token := apiToken(t, ts, c)
-	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	dir := writeSiteTree(t, map[string]string{"index.html": "hi"})
 	visibility := func(name string) string {
 		t.Helper()
 		site, err := s.getSite(context.Background(), name)
@@ -170,7 +83,7 @@ func TestDeployVisibility(t *testing.T) {
 	}
 	deploy := func(args ...string) {
 		t.Helper()
-		if err := deployCommand(context.Background(), args, env(token, ts.URL), &bytes.Buffer{}); err != nil {
+		if err := cli.DeployCommand(context.Background(), args, cliEnv(token, ts.URL), &bytes.Buffer{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -207,7 +120,7 @@ func TestDeployVisibilityOrder(t *testing.T) {
 	ts, s := newTestServer(t)
 	c := loggedInClient(t, ts)
 	token := apiToken(t, ts, c)
-	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	dir := writeSiteTree(t, map[string]string{"index.html": "hi"})
 
 	// A proxy in front of the server records each request and can fail uploads.
 	target, err := url.Parse(ts.URL)
@@ -236,7 +149,7 @@ func TestDeployVisibilityOrder(t *testing.T) {
 
 	deploy := func(vis string) error {
 		log = nil
-		return deployCommand(context.Background(), []string{"-visibility", vis, "blog", dir}, env(token, front.URL), &bytes.Buffer{})
+		return cli.DeployCommand(context.Background(), []string{"-visibility", vis, "blog", dir}, cliEnv(token, front.URL), &bytes.Buffer{})
 	}
 	visibility := func() string {
 		t.Helper()
@@ -288,14 +201,14 @@ func TestDeployCommandFailures(t *testing.T) {
 	token := apiToken(t, ts, c)
 	other := secondUser(t, ts)
 	createSiteVia(t, ts, other, "theirs")
-	dir := writeTree(t, map[string]string{"index.html": "hi"})
+	dir := writeSiteTree(t, map[string]string{"index.html": "hi"})
 
 	cases := map[string]struct {
 		args  []string
 		token string
 		want  string
 	}{
-		"no token":        {[]string{"blog", dir}, "", envToken},
+		"no token":        {[]string{"blog", dir}, "", "OPEN_PAGES_TOKEN"},
 		"bad token":       {[]string{"blog", dir}, tokenPrefix + strings.Repeat("0", 64), "HTTP 401"},
 		"foreign site":    {[]string{"theirs", dir}, token, "HTTP 403"},
 		"bad site name":   {[]string{"Not_A_Label", dir}, token, "invalid site name"},
@@ -311,7 +224,7 @@ func TestDeployCommandFailures(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			err := deployCommand(context.Background(), tc.args, env(tc.token, ts.URL), &bytes.Buffer{})
+			err := cli.DeployCommand(context.Background(), tc.args, cliEnv(tc.token, ts.URL), &bytes.Buffer{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got error %v, want one containing %q", err, tc.want)
 			}
@@ -320,4 +233,19 @@ func TestDeployCommandFailures(t *testing.T) {
 	if _, err := os.Stat(s.SiteDir("blog")); err == nil {
 		t.Fatal("a failed deploy left a site behind")
 	}
+}
+
+func writeSiteTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
