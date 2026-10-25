@@ -56,6 +56,11 @@
 							<span class="pf-v6-c-nav__link-text">Sites</span>
 						</a>
 					</li>
+					<li class="pf-v6-c-nav__item">
+						{{if eq .nav "manage"}}<a href="/manage" class="pf-v6-c-nav__link pf-m-current" aria-current="page">{{else}}<a href="/manage" class="pf-v6-c-nav__link">{{end}}
+							<span class="pf-v6-c-nav__link-text">My sites</span>
+						</a>
+					</li>
 				</ul>
 			</nav>
 		</div>

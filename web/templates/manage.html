@@ -1,0 +1,206 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<section class="pf-v6-c-page__main-section">
+	<div class="pf-v6-c-page__main-body">
+		<h1 class="pf-v6-c-title pf-m-2xl">{{.title}}</h1>
+	</div>
+</section>
+<div id="manage" data-site-origin="{{.siteOrigin}}">
+	<section class="pf-v6-c-page__main-section" id="manage-loading">
+		<div class="pf-v6-c-page__main-body">
+			<span class="pf-v6-c-spinner pf-m-md" role="progressbar" aria-label="Loading"></span>
+		</div>
+	</section>
+
+	<section class="pf-v6-c-page__main-section" id="manage-signin" hidden>
+		<div class="pf-v6-c-page__main-body">
+			<div class="pf-v6-c-empty-state pf-m-sm">
+				<div class="pf-v6-c-empty-state__content">
+					<div class="pf-v6-c-empty-state__header">
+						<div class="pf-v6-c-empty-state__icon"><i class="fas fa-lock" aria-hidden="true"></i></div>
+						<h2 class="pf-v6-c-empty-state__title"><span class="pf-v6-c-empty-state__title-text">Sign in to manage your sites</span></h2>
+					</div>
+					<div class="pf-v6-c-empty-state__body">Your sites are listed once you are signed in.</div>
+					<div class="pf-v6-c-empty-state__footer">
+						<div class="pf-v6-c-empty-state__actions">
+							<a class="pf-v6-c-button pf-m-primary" href="/index#sign-in"><span class="pf-v6-c-button__text">Go to sign-in</span></a>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<div id="manage-alert" class="op-result" aria-live="polite"></div>
+
+	<div id="manage-list" hidden>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h2 class="pf-v6-c-title pf-m-lg">Your sites</h2>
+				<div class="pf-v6-c-scroll-inner-wrapper" id="sites-wrapper">
+					<table class="pf-v6-c-table pf-m-compact pf-m-grid-md" aria-label="Your sites" id="owned-table">
+						<thead class="pf-v6-c-table__thead">
+							<tr class="pf-v6-c-table__tr">
+								<th class="pf-v6-c-table__th" scope="col">Site</th>
+								<th class="pf-v6-c-table__th" scope="col">Visibility</th>
+								<th class="pf-v6-c-table__th" scope="col">Group</th>
+								<th class="pf-v6-c-table__th" scope="col">Description</th>
+								<th class="pf-v6-c-table__th" scope="col"><span class="pf-v6-screen-reader">Actions</span></th>
+							</tr>
+						</thead>
+						<tbody class="pf-v6-c-table__tbody" id="owned-body"></tbody>
+					</table>
+				</div>
+				<div class="pf-v6-c-empty-state pf-m-sm" id="owned-empty" hidden>
+					<div class="pf-v6-c-empty-state__content">
+						<div class="pf-v6-c-empty-state__header">
+							<div class="pf-v6-c-empty-state__icon"><i class="fas fa-cube" aria-hidden="true"></i></div>
+							<h3 class="pf-v6-c-empty-state__title"><span class="pf-v6-c-empty-state__title-text">You have no sites yet</span></h3>
+						</div>
+						<div class="pf-v6-c-empty-state__body">Create one below, then upload an archive to deploy it.</div>
+					</div>
+				</div>
+			</div>
+		</section>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h2 class="pf-v6-c-title pf-m-lg">Create a site</h2>
+				<form class="pf-v6-c-form op-narrow" id="create-form">
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="create-name"><span class="pf-v6-c-form__label-text">Site name</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><input type="text" id="create-name" name="name" required maxlength="63" pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?" autocomplete="off" aria-describedby="create-name-help"></span>
+							<p class="pf-v6-c-form__helper-text" id="create-name-help">Lowercase letters, digits and hyphens. It becomes the host name of the site.</p>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="create-description"><span class="pf-v6-c-form__label-text">Description</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><input type="text" id="create-description" name="description" maxlength="512"></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="create-visibility"><span class="pf-v6-c-form__label-text">Who can view it</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><select id="create-visibility" name="visibility" class="js-visibility"></select></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="create-group"><span class="pf-v6-c-form__label-text">Group</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><select id="create-group" name="group" class="js-groups"></select></span>
+							<p class="pf-v6-c-form__helper-text">Members of the group can view a restricted site.</p>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group pf-m-action">
+						<div class="pf-v6-c-form__actions">
+							<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Create site</span></button>
+						</div>
+					</div>
+				</form>
+			</div>
+		</section>
+	</div>
+
+	<div id="manage-detail" hidden>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<nav class="pf-v6-c-breadcrumb" aria-label="Breadcrumb">
+					<ol class="pf-v6-c-breadcrumb__list">
+						<li class="pf-v6-c-breadcrumb__item"><a class="pf-v6-c-breadcrumb__link" href="/manage">Your sites</a></li>
+						<li class="pf-v6-c-breadcrumb__item"><span class="pf-v6-c-breadcrumb__item-divider"><i class="fas fa-angle-right" aria-hidden="true"></i></span><span class="pf-v6-c-breadcrumb__link pf-m-current" id="detail-crumb"></span></li>
+					</ol>
+				</nav>
+				<h2 class="pf-v6-c-title pf-m-xl" id="detail-title"></h2>
+				<p id="detail-link"></p>
+			</div>
+		</section>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h3 class="pf-v6-c-title pf-m-lg">Settings</h3>
+				<form class="pf-v6-c-form op-narrow" id="settings-form">
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="settings-description"><span class="pf-v6-c-form__label-text">Description</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><input type="text" id="settings-description" name="description" maxlength="512"></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="settings-visibility"><span class="pf-v6-c-form__label-text">Who can view it</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><select id="settings-visibility" name="visibility" class="js-visibility"></select></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="settings-group"><span class="pf-v6-c-form__label-text">Group</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><select id="settings-group" name="group" class="js-groups"></select></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group pf-m-action">
+						<div class="pf-v6-c-form__actions">
+							<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Save settings</span></button>
+						</div>
+					</div>
+					<div id="settings-result" class="op-result" aria-live="polite"></div>
+				</form>
+			</div>
+		</section>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h3 class="pf-v6-c-title pf-m-lg">Deploy a new version</h3>
+				<form class="pf-v6-c-form op-narrow" id="deploy-form">
+					<div class="pf-v6-c-form__group">
+						<div class="pf-v6-c-form__group-label"><label class="pf-v6-c-form__label" for="deploy-file"><span class="pf-v6-c-form__label-text">Archive (.zip or .tar.gz)</span></label></div>
+						<div class="pf-v6-c-form__group-control">
+							<span class="pf-v6-c-form-control"><input type="file" id="deploy-file" name="file" accept=".zip,.tar.gz" required></span>
+						</div>
+					</div>
+					<div class="pf-v6-c-form__group pf-m-action">
+						<div class="pf-v6-c-form__actions">
+							<button class="pf-v6-c-button pf-m-primary" type="submit"><span class="pf-v6-c-button__text">Upload</span></button>
+						</div>
+					</div>
+					<div class="pf-v6-c-progress pf-m-sm pf-m-outside" id="deploy-progress" hidden>
+						<div class="pf-v6-c-progress__description" id="deploy-progress-desc">Uploading</div>
+						<div class="pf-v6-c-progress__status" aria-hidden="true"><span class="pf-v6-c-progress__measure" id="deploy-progress-measure">0%</span></div>
+						<div class="pf-v6-c-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="deploy-progress-desc">
+							<div class="pf-v6-c-progress__indicator" id="deploy-progress-bar"></div>
+						</div>
+					</div>
+					<div id="deploy-result" class="op-result" aria-live="polite"></div>
+				</form>
+			</div>
+		</section>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h3 class="pf-v6-c-title pf-m-lg">Versions</h3>
+				<div id="versions-result" class="op-result" aria-live="polite"></div>
+				<div class="pf-v6-c-scroll-inner-wrapper">
+					<table class="pf-v6-c-table pf-m-compact pf-m-grid-md" aria-label="Versions" id="versions-table" hidden>
+						<thead class="pf-v6-c-table__thead">
+							<tr class="pf-v6-c-table__tr">
+								<th class="pf-v6-c-table__th" scope="col">Version</th>
+								<th class="pf-v6-c-table__th" scope="col">Deployed</th>
+								<th class="pf-v6-c-table__th" scope="col">Status</th>
+								<th class="pf-v6-c-table__th" scope="col"><span class="pf-v6-screen-reader">Actions</span></th>
+							</tr>
+						</thead>
+						<tbody class="pf-v6-c-table__tbody" id="versions-body"></tbody>
+					</table>
+				</div>
+				<p id="versions-empty" hidden>Nothing has been deployed yet.</p>
+			</div>
+		</section>
+		<section class="pf-v6-c-page__main-section">
+			<div class="pf-v6-c-page__main-body">
+				<h3 class="pf-v6-c-title pf-m-lg">Delete this site</h3>
+				<p>This removes the site and all of its versions. It cannot be undone.</p>
+				<p><button class="pf-v6-c-button pf-m-danger" type="button" id="delete-site"><span class="pf-v6-c-button__text">Delete site</span></button></p>
+				<div id="delete-result" class="op-result" aria-live="polite"></div>
+			</div>
+		</section>
+	</div>
+</div>
+{{end}}

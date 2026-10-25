@@ -57,7 +57,9 @@ curl -b cookies -X POST --data-binary @site.zip app.localhost:8080/v1/auth/sites
 curl http://hello.sites.localhost:8080/
 ```
 
-`http://app.localhost:8080/index` serves a small test page with the same actions.
+`http://app.localhost:8080/index` serves a small test page with the same actions, and
+`http://app.localhost:8080/manage` is the site management UI: sign in, then create sites, change
+their visibility and group, deploy new versions, roll back and delete.
 
 ## Command line
 
