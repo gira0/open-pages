@@ -14,6 +14,7 @@ import (
 
 	"github.com/gira0/open-pages/api"
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/metrics"
 )
 
 type Server struct {
@@ -26,7 +27,7 @@ type Server struct {
 
 	deployMu  sync.Mutex    // serializes switching and pruning versions
 	deploySem chan struct{} // one token per running extraction; cap is cfg.MaxDeploys
-	metrics   *metrics
+	metrics   *metrics.Collector
 	health    healthProbe
 	oidc      *oidcClient // nil unless [oidc] is enabled
 	saml      *samlClient // nil unless [saml] is enabled

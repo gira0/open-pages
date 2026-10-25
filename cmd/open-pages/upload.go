@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/gira0/open-pages/internal/metrics"
 	"github.com/gira0/open-pages/internal/names"
 )
 
@@ -168,22 +169,22 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 		return
 	}
 	if errors.Is(err, errSiteNotFound) {
-		s.metrics.recordDeploy(deployFailed)
+		s.metrics.RecordDeploy(metrics.DeployFailed)
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	var bad *badArchiveError
 	if errors.As(err, &bad) {
-		s.metrics.recordDeploy(deployRejected)
+		s.metrics.RecordDeploy(metrics.DeployRejected)
 		ctxLogger(r.Context()).Info("rejected upload", "site", site.Name)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err != nil {
-		s.metrics.recordDeploy(deployFailed)
+		s.metrics.RecordDeploy(metrics.DeployFailed)
 		internalError(w, "deploy site", err)
 		return
 	}
-	s.metrics.recordDeploy(deployOK)
+	s.metrics.RecordDeploy(metrics.DeployOK)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "site": site.Name, "version": version})
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/logging"
+	"github.com/gira0/open-pages/internal/metrics"
 )
 
 const testMetricsToken = "0123456789abcdef-token"
@@ -163,7 +164,7 @@ func TestRequestIDHeaderAndLog(t *testing.T) {
 	slog.SetDefault(newLogger(&logs, cfg))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	s := &Server{cfg: cfg, metrics: newMetrics()}
+	s := &Server{cfg: cfg, metrics: metrics.New()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/ping", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	h := s.observe(mux)
@@ -195,12 +196,6 @@ func TestRequestIDHeaderAndLog(t *testing.T) {
 	}
 	if !strings.Contains(out, `route="GET /v1/ping"`) {
 		t.Errorf("log has no route: %q", out)
-	}
-}
-
-func TestMethodLabelBoundsCardinality(t *testing.T) {
-	if methodLabel("GET") != "GET" || methodLabel("BREW") != "OTHER" {
-		t.Error("methodLabel must keep known methods and fold the rest")
 	}
 }
 
@@ -446,7 +441,7 @@ func TestHandlerLogLinesCarryRequestID(t *testing.T) {
 	slog.SetDefault(newLogger(&logs, config.Default()))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	s := &Server{cfg: config.Default(), metrics: newMetrics()}
+	s := &Server{cfg: config.Default(), metrics: metrics.New()}
 	h := s.observe(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctxLogger(r.Context()).Info("from handler")
 	}))

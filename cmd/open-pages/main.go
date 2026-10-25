@@ -16,6 +16,7 @@ import (
 
 	"github.com/gira0/open-pages/internal/cli"
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/metrics"
 	"github.com/gira0/open-pages/internal/store"
 	"github.com/gira0/open-pages/web"
 )
@@ -104,7 +105,7 @@ func newServer(cfg config.Config) (*Server, error) {
 
 		deploySem: make(chan struct{}, max(cfg.MaxDeploys, 1)),
 
-		metrics: newMetrics(),
+		metrics: metrics.New(),
 	}
 	if cfg.OIDC.Enabled {
 		s.oidc = newOIDCClient(cfg.OIDC)

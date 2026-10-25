@@ -10,6 +10,7 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/logging"
+	"github.com/gira0/open-pages/internal/metrics"
 	"github.com/rs/xid"
 )
 
@@ -70,8 +71,8 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		elapsed := time.Since(start)
-		method := methodLabel(r.Method)
-		s.metrics.observeRequest(method, rec.status, elapsed)
+		method := metrics.MethodLabel(r.Method)
+		s.metrics.ObserveRequest(method, rec.status, elapsed)
 
 		level := slog.LevelInfo
 		switch {
