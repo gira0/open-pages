@@ -1,3 +1,8 @@
+open-pages
+Copyright 2023-2026 the open-pages authors
+
+Licensed under the Apache License, Version 2.0; see LICENSE.
+
 open-pages includes third-party assets in web/static/patternfly/, vendored from the npm
 package @patternfly/patternfly 6.6.1 by scripts/vendor-patternfly.sh and embedded in the
 binary. Their license texts are next to them in the source tree, in licenses/ in the release

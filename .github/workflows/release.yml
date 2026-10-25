@@ -45,8 +45,8 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
               go build -trimpath -ldflags="-s -w" -o "build/$name/open-pages" ./cmd/open-pages
             # The UI templates and assets are embedded in the binary; ship the sample settings
-            # and the notices of the embedded third-party fonts and CSS alongside.
-            cp configs/settings.ini NOTICE "build/$name/"
+            # the license, and the notices of the embedded third-party fonts and CSS alongside.
+            cp configs/settings.ini LICENSE NOTICE "build/$name/"
             mkdir "build/$name/licenses"
             cp web/static/patternfly/*.txt "build/$name/licenses/"
             tar -C build -czf "dist/$name.tar.gz" "$name"
