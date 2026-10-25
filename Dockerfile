@@ -19,8 +19,8 @@ FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build /out/open-pages /app/open-pages
-# Notices for the third-party CSS and fonts embedded in the binary.
-COPY NOTICE web/static/patternfly/*.txt /usr/share/doc/open-pages/
+# The license, and notices for the third-party CSS and fonts embedded in the binary.
+COPY LICENSE NOTICE web/static/patternfly/*.txt /usr/share/doc/open-pages/
 # Container defaults: listen on all interfaces, store everything under /data.
 # Mount your own settings.ini over this file to change them.
 COPY deploy/settings.ini /etc/open-pages/settings.ini

@@ -98,3 +98,8 @@ supported versions and private vulnerability reporting.
 Copilot code review reads [`.github/skills/code-review/SKILL.md`](.github/skills/code-review/SKILL.md)
 for this repo's conventions, security-sensitive areas and accepted patterns. Update it when a
 review finding keeps recurring or a convention changes.
+
+## License
+
+open-pages is licensed under the [Apache License 2.0](LICENSE). The vendored PatternFly CSS,
+icons and fonts keep their own licenses; see [NOTICE](NOTICE).
