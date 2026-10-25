@@ -35,21 +35,22 @@ var durationBounds = [...]float64{0.005, 0.025, 0.1, 0.25, 1, 2.5, 10}
 // DeployResult is the outcome of a deploy, as labelled in openpages_deploys_total.
 type DeployResult int
 
+// The deploy outcomes.
 const (
 	DeployOK       DeployResult = iota // new version is live
 	DeployRejected                     // the archive was refused (bad, too large, unsafe)
 	DeployFailed                       // anything else, including a site deleted mid-deploy
-	DeployResultCount
+	deployResultCount
 )
 
-var DeployResultNames = [DeployResultCount]string{"ok", "rejected", "failed"}
+var deployResultNames = [deployResultCount]string{"ok", "rejected", "failed"}
 
 // Collector counts requests and deploys. The zero value is ready to use.
 type Collector struct {
 	requests    [len(metricMethods)][5]atomic.Uint64 // by method, status class 1xx..5xx
 	durBuckets  [len(durationBounds) + 1]atomic.Uint64
 	durSumNanos atomic.Int64
-	deploys     [DeployResultCount]atomic.Uint64
+	deploys     [deployResultCount]atomic.Uint64
 	errors      atomic.Uint64 // responses with a 5xx status
 }
 
@@ -110,7 +111,7 @@ func (m *Collector) Write(w io.Writer) {
 
 	fmt.Fprint(w, "# HELP openpages_deploys_total Site deploys, by result.\n")
 	fmt.Fprint(w, "# TYPE openpages_deploys_total counter\n")
-	for i, name := range DeployResultNames {
+	for i, name := range deployResultNames {
 		fmt.Fprintf(w, "openpages_deploys_total{result=%q} %d\n", name, m.deploys[i].Load())
 	}
 

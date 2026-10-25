@@ -34,7 +34,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	s.metrics.Write(w)
 }
 
-// metricsServer returns the dedicated metrics listener, or nil when [metrics] listen is
+// MetricsServer returns the dedicated metrics listener, or nil when [metrics] listen is
 // empty. It serves only /metrics and is wrapped in the same request logging.
 func (s *Server) MetricsServer() *http.Server {
 	if s.cfg.MetricsListen == "" {
