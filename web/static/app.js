@@ -466,7 +466,8 @@
         }
         var r = await callAPI('PUT', '/v1/auth/sites/' + encodeURIComponent(siteName), body);
         if (r.ok) {
-          form.setAttribute('data-group', form.elements.group.value);
+          // What the server stored, not the select, which may have changed meanwhile.
+          form.setAttribute('data-group', String(r.data.group));
           showAlert($('settings-result'), 'success', 'Settings saved.');
         } else {
           showAlert($('settings-result'), 'danger', 'Could not save the settings.', r.error);
