@@ -371,6 +371,7 @@
       form.elements.description.value = site.description;
       form.elements.visibility.value = site.visibility;
       selectValue(form.elements.group, String(site.group));
+      form.setAttribute('data-group', String(site.group));
     }
     function renderVersions(v) {
       var body = $('versions-body');
@@ -456,12 +457,19 @@
       var form = $('settings-form');
       form.addEventListener('submit', async function (evt) {
         evt.preventDefault();
-        var r = await callAPI('PUT', '/v1/auth/sites/' + encodeURIComponent(siteName), {
-          description: form.elements.description.value,
-          visibility: form.elements.visibility.value,
-          group: parseInt(form.elements.group.value, 10)
-        });
-        if (r.ok) { showAlert($('settings-result'), 'success', 'Settings saved.'); } else { showAlert($('settings-result'), 'danger', 'Could not save the settings.', r.error); }
+        var body = {description: form.elements.description.value, visibility: form.elements.visibility.value};
+        // Only send the group when it changed: re-sending an unchanged group is refused
+        // if the owner has left it since.
+        if (form.elements.group.value !== form.getAttribute('data-group')) {
+          body.group = parseInt(form.elements.group.value, 10);
+        }
+        var r = await callAPI('PUT', '/v1/auth/sites/' + encodeURIComponent(siteName), body);
+        if (r.ok) {
+          form.setAttribute('data-group', form.elements.group.value);
+          showAlert($('settings-result'), 'success', 'Settings saved.');
+        } else {
+          showAlert($('settings-result'), 'danger', 'Could not save the settings.', r.error);
+        }
       });
     }
     function setupDelete() {
