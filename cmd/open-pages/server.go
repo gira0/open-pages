@@ -119,10 +119,26 @@ func handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// indexSite is one row of the sites table on the index page.
+type indexSite struct {
+	Name, Description, URL string
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "index.html", map[string]any{
+	data := map[string]any{
 		"title": "Sites", "nav": "sites", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil, "saml": s.saml != nil,
-	})
+	}
+	sites, err := s.listPublicSites(r.Context())
+	if err != nil {
+		ctxLogger(r.Context()).Error("list public sites for index", "err", err)
+		data["sitesError"] = true
+	}
+	rows := make([]indexSite, 0, len(sites))
+	for _, p := range sites {
+		rows = append(rows, indexSite{p.Name, p.Description, s.originFor(p.Name+"."+s.cfg.ContentDomain, r) + "/"})
+	}
+	data["sites"] = rows
+	s.render(w, r, "index.html", data)
 }
 
 // uiCSP is the Content-Security-Policy of the UI pages. It is never sent with hosted
