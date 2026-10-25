@@ -253,13 +253,13 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    var resp;
+    var resp, text;
     try {
       resp = await fetch(url, init);
+      text = await resp.text();
     } catch (e) {
       return {ok: false, status: 0, error: 'Network error'};
     }
-    var text = await resp.text();
     var data = null;
     try { data = JSON.parse(text); } catch (e) { /* not JSON */ }
     var error = resp.ok ? '' : (data && data.error) || text || 'HTTP ' + resp.status;
@@ -464,7 +464,11 @@
         if (form.elements.group.value !== form.getAttribute('data-group')) {
           body.group = parseInt(form.elements.group.value, 10);
         }
+        // One save at a time: a second would compare against the group the first has not stored yet.
+        var submit = form.querySelector('button[type=submit]');
+        submit.disabled = true;
         var r = await callAPI('PUT', '/v1/auth/sites/' + encodeURIComponent(siteName), body);
+        submit.disabled = false;
         if (r.ok) {
           // What the server stored, not the select, which may have changed meanwhile.
           form.setAttribute('data-group', String(r.data.group));
