@@ -357,3 +357,21 @@ func TestLoadRejectsMalformedCORSOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAuditRetention(t *testing.T) {
+	cfg, err := Load(writeConfig(t, ""))
+	if err != nil || cfg.AuditRetention != 365 {
+		t.Fatalf("default retention = %d, err %v", cfg.AuditRetention, err)
+	}
+	for body, want := range map[string]int{"[audit]\nretention_days = 30\n": 30, "[audit]\nretention_days = 0\n": 0} {
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil || cfg.AuditRetention != want {
+			t.Errorf("%q: retention = %d, err %v; want %d", body, cfg.AuditRetention, err, want)
+		}
+	}
+	for _, line := range []string{"retention_days = -1", "retention_days = forever", "retention_days = 36501", "retention_days ="} {
+		if _, err := Load(writeConfig(t, "[audit]\n"+line+"\n")); err == nil {
+			t.Errorf("%q: expected an error", line)
+		}
+	}
+}

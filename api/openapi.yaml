@@ -644,6 +644,31 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/auth/user/audit:
+    get:
+      tags: [accounts]
+      operationId: listUserAudit
+      summary: The caller's own audit log entries
+      description: |
+        Everything the caller did to sites, groups and API tokens, newest first, whichever
+        credential was used. Includes actions on targets that no longer exist.
+      parameters:
+        - $ref: "#/components/parameters/AuditLimit"
+        - $ref: "#/components/parameters/AuditBefore"
+      responses:
+        "200":
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadAuditPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/auth/logout:
     post:
       tags: [accounts]
@@ -1220,6 +1245,37 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/auth/sites/{name}/audit:
+    get:
+      tags: [sites]
+      operationId: listSiteAudit
+      summary: Audit log of a site
+      description: |
+        Owner only. What happened to the site since it was last created, newest first. A
+        site deleted and created again under the same name starts with an empty history;
+        the history of a deleted site is not available here.
+      parameters:
+        - $ref: "#/components/parameters/SiteName"
+        - $ref: "#/components/parameters/AuditLimit"
+        - $ref: "#/components/parameters/AuditBefore"
+      responses:
+        "200":
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadAuditPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotSiteOwner"
+        "404":
+          $ref: "#/components/responses/SiteNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/auth/sites/{name}/rollback:
     post:
       tags: [sites]
@@ -1415,6 +1471,22 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/SiteName"
+    AuditLimit:
+      name: limit
+      in: query
+      description: Entries per page. Values above 500 are lowered to 500.
+      schema:
+        type: integer
+        minimum: 1
+        default: 50
+    AuditBefore:
+      name: before
+      in: query
+      description: Cursor, an entry `id`. Only older entries are returned; use `next_before` of the previous page.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
 
   headers:
     SessionCookie:
@@ -1497,6 +1569,12 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: The object does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadAuditPage:
+      description: "`limit` or `before` is not a positive whole number."
       content:
         application/json:
           schema:
@@ -1661,6 +1739,69 @@ components:
           $ref: "#/components/schemas/SiteName"
         version:
           $ref: "#/components/schemas/VersionID"
+    AuditEntry:
+      type: object
+      required: [id, time, actor, actor_email, actor_via, action, target_kind, target, details, client_ip]
+      properties:
+        id:
+          type: integer
+          format: int64
+        time:
+          type: string
+          format: date-time
+        actor:
+          description: User id of the actor; null for a change made without a user.
+          type: [integer, "null"]
+          format: int64
+        actor_email:
+          description: The actor's email address when the change happened.
+          type: string
+        actor_via:
+          description: "`session`, or `token:` plus the API token's display prefix."
+          type: string
+        action:
+          type: string
+          enum:
+            - site.create
+            - site.update
+            - site.deploy
+            - site.rollback
+            - site.delete
+            - group.create
+            - group.delete
+            - group.member_add
+            - group.member_remove
+            - token.create
+            - token.revoke
+        target_kind:
+          type: string
+          enum: [site, group, token]
+        target:
+          description: Name of the site, group or token when the action happened.
+          type: string
+        details:
+          description: |
+            Small object. `version` for deploy and rollback; `changes` (field to
+            `{from, to}`) for update; `description`, `group` and `visibility` for site create;
+            `email` for member add; `user_id` and `email` for member removal; `token_id`,
+            `prefix` and `expires_in_days` for token create; `token_id` and `prefix` for revoke.
+          type: object
+          additionalProperties: true
+        client_ip:
+          description: Address of the connection (a reverse proxy's address if there is one).
+          type: string
+    AuditPage:
+      type: object
+      required: [entries, next_before]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        next_before:
+          description: Value of `before` for the next page; null on the last page.
+          type: [integer, "null"]
+          format: int64
     Group:
       type: object
       required: [id, name, owner_id]

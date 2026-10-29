@@ -111,6 +111,28 @@ CREATE TABLE IF NOT EXISTS docs (
 	FOREIGN KEY (uowner) REFERENCES user(userid),
 	FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 );
+
+-- The audit log outlives what it describes, so nothing here is a foreign key: actor, siteid
+-- and groupid are plain ids, and the email and target name are snapshots. (A site's rowid
+-- can be reused once the site is deleted; queries compare the name and the create entry too.)
+CREATE TABLE IF NOT EXISTS audit_log (
+	auditid     INTEGER PRIMARY KEY,
+	time        BIGINT NOT NULL,
+	actor       INTEGER NULL,
+	actor_email TEXT NOT NULL DEFAULT '',
+	actor_via   TEXT NOT NULL DEFAULT '',
+	action      TEXT NOT NULL,
+	target_kind TEXT NOT NULL CHECK (target_kind IN ('site', 'group', 'token')),
+	target      TEXT NOT NULL,
+	siteid      INTEGER NULL,
+	groupid     INTEGER NULL,
+	details     TEXT NOT NULL DEFAULT '{}',
+	client_ip   TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS audit_log_target ON audit_log (target_kind, target, auditid);
+CREATE INDEX IF NOT EXISTS audit_log_actor ON audit_log (actor, auditid);
+CREATE INDEX IF NOT EXISTS audit_log_time ON audit_log (time);
 `
 
 // Open opens (creating if needed) the SQLite database at path, applies the schema and

@@ -46,7 +46,7 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errBadVisibility)
 		return
 	}
-	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
+	site, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
 	if errors.Is(err, errGroupNotFound) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -63,6 +63,10 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create site", err)
 		return
 	}
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditSiteCreate, targetKind: targetSite, target: site.Name, siteID: site.ID,
+		details: map[string]any{"description": site.Description, "group": site.GroupID, "visibility": site.Visibility},
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name, "visibility": d.Visibility})
 }
 
@@ -186,5 +190,9 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 		return
 	}
 	s.metrics.RecordDeploy(metrics.DeployOK)
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditSiteDeploy, targetKind: targetSite, target: site.Name, siteID: site.ID,
+		details: map[string]any{"version": version},
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "site": site.Name, "version": version})
 }

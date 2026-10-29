@@ -4,6 +4,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -40,6 +41,9 @@ type Server struct {
 	health    healthProbe
 	oidc      *oidcClient // nil unless [oidc] is enabled
 	saml      *samlClient // nil unless [saml] is enabled
+
+	background     sync.WaitGroup     // goroutines stopped by Close
+	stopBackground context.CancelFunc // set once they run
 }
 
 // route is one pattern the API mux registers.
@@ -88,6 +92,7 @@ func (s *Server) routeTable() []route {
 	handle("POST /v1/auth/tokens", s.requireSession(requireJSON(s.handleTokenCreate)))
 	handle("GET /v1/auth/tokens", s.requireSession(s.handleTokenList))
 	handle("DELETE /v1/auth/tokens/{id}", s.requireSession(s.handleTokenRevoke))
+	handle("GET /v1/auth/user/audit", s.requireAuth(s.handleUserAudit))
 	handle("GET /v1/auth/groups", s.requireAuth(s.handleGroupList))
 	handle("POST /v1/auth/groups", s.requireAuth(requireJSON(s.handleGroupCreate)))
 	handle("GET /v1/auth/groups/{id}", s.requireAuth(s.handleGroupGet))
@@ -99,6 +104,7 @@ func (s *Server) routeTable() []route {
 	handle("PUT /v1/auth/sites/{name}", s.requireAuth(requireJSON(s.handleSiteUpdate)))
 	handle("DELETE /v1/auth/sites/{name}", s.requireAuth(s.handleSiteDelete))
 	handle("GET /v1/auth/sites/{name}/versions", s.requireAuth(s.handleVersions))
+	handle("GET /v1/auth/sites/{name}/audit", s.requireAuth(s.handleSiteAudit))
 	handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(requireJSON(s.handleRollback)))
 	handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
@@ -295,11 +301,19 @@ func New(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.startAuditPruner()
 	return s, nil
 }
 
-// Close releases the database. Call it after the HTTP servers have stopped.
-func (s *Server) Close() error { return s.db.Close() }
+// Close stops the background tasks and releases the database. Call it after the HTTP
+// servers have stopped.
+func (s *Server) Close() error {
+	if s.stopBackground != nil {
+		s.stopBackground()
+	}
+	s.background.Wait()
+	return s.db.Close()
+}
 
 // SitesDir returns the directory holding the extracted sites.
 func (s *Server) SitesDir() string { return s.sites }

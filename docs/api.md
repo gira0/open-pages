@@ -83,6 +83,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | POST | `/v1/auth/tokens` | session | Create an API token |
 | GET | `/v1/auth/tokens` | session | List your API tokens |
 | DELETE | `/v1/auth/tokens/{id}` | session | Revoke an API token |
+| GET | `/v1/auth/user/audit` | any | Your own audit log entries |
 | GET | `/v1/auth/groups` | any | List your groups |
 | POST | `/v1/auth/groups` | any | Create a group |
 | GET | `/v1/auth/groups/{id}` | any | Group details and members |
@@ -95,6 +96,7 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | DELETE | `/v1/auth/sites/{name}` | any | Delete a site |
 | GET | `/v1/auth/sites/{name}/versions` | any | List kept versions |
 | POST | `/v1/auth/sites/{name}/rollback` | any | Make a version live |
+| GET | `/v1/auth/sites/{name}/audit` | any | Audit log of a site (owner only) |
 | POST | `/v1/auth/sites/{name}/upload` | any | Deploy an archive (raw body) |
 | POST | `/v1/auth/sites/{name}/formupload` | any | Deploy an archive (multipart) |
 | GET, HEAD | `<site>.<content_domain>/...` | per visibility | Serve a site (content hosts only, never on `app_host`) |
@@ -298,6 +300,13 @@ Auth: any. Returns the caller's account, groups and sites.
 ```sh
 curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" https://pages.corp/v1/auth/user
 ```
+
+### GET /v1/auth/user/audit
+
+Auth: any. The caller's own [audit log](security-model.md#audit-log) entries, newest first:
+everything the user did to sites, groups and API tokens, whatever credential was used and
+including things done to sites or groups that no longer exist. Paginated like
+[the site audit](#get-v1authsitesnameaudit).
 
 ## OIDC sign-in
 
@@ -616,6 +625,46 @@ Owner only. Body `{"version": "db4jkiu64plctc6e912g"}` makes that kept version l
 ```sh
 curl -b cookies -X POST https://pages.corp/v1/auth/sites/blog/rollback \
   -H 'Content-Type: application/json' -d '{"version":"db4jkiu64plctc6e912g"}'
+```
+
+### GET /v1/auth/sites/{name}/audit
+
+Owner only (the same check as the other site routes: `404` unknown or invalid name, `403`
+not the owner). What happened to the site since it was last created: create, update
+(`changes` lists each changed field with its old and new value), deploy, rollback and delete.
+A site deleted and created again under the same name starts with an empty history, and the
+history of a deleted site cannot be read through the API (the entries stay in the database
+until retention removes them, and are in the log). Entries are not tied to a site id, so a
+new site never shows the previous owner's entries.
+
+Query parameters: `limit` (default 50, at most 500; larger values are lowered to 500, below 1
+is `400`) and `before` (an entry `id`; only older entries are returned, `400` if not a
+positive integer). `next_before` is the `before` value for the next page, `null` on the last.
+
+```json
+{"entries": [
+  {"id": 12, "time": "2026-10-29T10:15:00Z", "actor": 1, "actor_email": "ada@corp.example",
+   "actor_via": "token:opt_e0798fff", "action": "site.deploy", "target_kind": "site",
+   "target": "blog", "details": {"version": "db4jkiu64plctc6e9140"}, "client_ip": "10.0.0.7"}
+ ], "next_before": 12}
+```
+
+- `actor` is the user id, `actor_email` the address the user had then. `actor_via` is
+  `session` or `token:<token prefix>` (the prefix shown by `GET /v1/auth/tokens`).
+- `action` is one of `site.create`, `site.update`, `site.deploy`, `site.rollback`,
+  `site.delete`, `group.create`, `group.delete`, `group.member_add`, `group.member_remove`,
+  `token.create` and `token.revoke`; `target_kind` is `site`, `group` or `token` and `target`
+  its name when the action happened.
+- `details` is a small object: `{"version": ...}` for deploy and rollback, `{"changes": {"visibility":
+  {"from": "public", "to": "restricted"}}}` for update (fields `description`, `group`,
+  `visibility`), the initial `description`, `group` and `visibility` for create,
+  `{"email": ...}` for a member add, `{"user_id": ..., "email": ...}` for a member removal,
+  and `{"token_id", "prefix", "expires_in_days"}` for a token create.
+- `client_ip` is the address of the connection. Behind a reverse proxy that is the proxy's
+  address until forwarded-header support arrives.
+
+```sh
+curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" 'https://pages.corp/v1/auth/sites/blog/audit?limit=20'
 ```
 
 ## Serving sites

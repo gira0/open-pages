@@ -55,6 +55,23 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "update site", err)
 		return
 	}
+	// Only real changes are recorded, each with its old and new value.
+	changes := map[string]any{}
+	if updated.Description != site.Description {
+		changes["description"] = map[string]any{"from": site.Description, "to": updated.Description}
+	}
+	if updated.GroupID != site.GroupID {
+		changes["group"] = map[string]any{"from": site.GroupID, "to": updated.GroupID}
+	}
+	if updated.Visibility != site.Visibility {
+		changes["visibility"] = map[string]any{"from": site.Visibility, "to": updated.Visibility}
+	}
+	if len(changes) > 0 {
+		s.audit(r.Context(), s.db, auditEvent{
+			action: auditSiteUpdate, targetKind: targetSite, target: site.Name, siteID: site.ID,
+			details: map[string]any{"changes": changes},
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": site.Name, "description": updated.Description, "group": updated.GroupID, "visibility": updated.Visibility,
 	})
@@ -123,6 +140,7 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "delete site", err)
 		return
 	}
+	s.audit(r.Context(), s.db, auditEvent{action: auditSiteDelete, targetKind: targetSite, target: site.Name, siteID: site.ID})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "site deleted", "name": site.Name})
 }
 
@@ -167,5 +185,9 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "roll back site", err)
 		return
 	}
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditSiteRollback, targetKind: targetSite, target: site.Name, siteID: site.ID,
+		details: map[string]any{"version": d.Version},
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rolled back", "site": site.Name, "version": d.Version})
 }

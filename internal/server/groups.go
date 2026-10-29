@@ -167,6 +167,7 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 	if _, err := tx.ExecContext(ctx, "INSERT INTO user_group (uid, gid) VALUES (?, ?)", owner, id); err != nil {
 		return Group{}, fmt.Errorf("insert owner membership: %w", err)
 	}
+	s.audit(ctx, tx, auditEvent{action: auditGroupCreate, targetKind: targetGroup, target: name, groupID: id})
 	if err := tx.Commit(); err != nil {
 		return Group{}, fmt.Errorf("commit: %w", err)
 	}
@@ -180,6 +181,13 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 	const guard = ` AND EXISTS (SELECT 1 FROM groups WHERE groupid = ? AND owner = ?)
 		AND NOT EXISTS (SELECT 1 FROM docs WHERE ugroup = ?)`
+	// The name is for the audit entry (groups can't be renamed). It is read before the
+	// transaction: a read inside would start it as a reader, and upgrading to a writer
+	// fails at once with SQLITE_BUSY if another writer got in between.
+	var name string
+	if err := s.db.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", id).Scan(&name); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("query group: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -193,6 +201,7 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 		return fmt.Errorf("delete group: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		s.audit(ctx, tx, auditEvent{action: auditGroupDelete, targetKind: targetGroup, target: name, groupID: id})
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
@@ -405,6 +414,11 @@ func (s *Server) handleMemberAdd(w http.ResponseWriter, r *http.Request) {
 	status, msg := http.StatusOK, "already a member"
 	if added {
 		status, msg = http.StatusCreated, "member added"
+		g, _ := s.getGroup(r.Context(), id) // best effort: the name is only a snapshot
+		s.audit(r.Context(), s.db, auditEvent{
+			action: auditMemberAdd, targetKind: targetGroup, target: g.Name, groupID: id,
+			details: map[string]any{"email": d.Email},
+		})
 	}
 	writeJSON(w, status, map[string]any{"status": msg, "group": id})
 }
@@ -423,5 +437,12 @@ func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 	if groupError(w, "remove member", s.removeGroupMember(r.Context(), userID(r), id, target)) {
 		return
 	}
+	g, _ := s.getGroup(r.Context(), id) // best effort: the name and email are only snapshots
+	var email string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT email FROM user WHERE userid = ?", target).Scan(&email)
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditMemberRemove, targetKind: targetGroup, target: g.Name, groupID: id,
+		details: map[string]any{"user_id": target, "email": email},
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "member removed", "group": id, "user": target})
 }

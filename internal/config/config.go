@@ -37,6 +37,7 @@ type Config struct {
 	LogFormat      string        // logging.FormatText or logging.FormatJSON
 	MetricsListen  string        // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
 	MetricsToken   string        // bearer token for /metrics on the main listener; empty disables it there
+	AuditRetention int           // days audit log entries are kept; 0 keeps them for ever
 	LocalLogin     bool          // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
 	OIDC           OIDCConfig    // optional OpenID Connect sign-in; disabled by default
 	SAML           SAMLConfig    // optional SAML 2.0 sign-in; disabled by default
@@ -90,6 +91,7 @@ func Default() Config {
 		KeepVersions:   5,
 		LogLevel:       slog.LevelInfo,
 		LogFormat:      logging.FormatText,
+		AuditRetention: 365,
 		LocalLogin:     true,
 	}
 }
@@ -185,6 +187,10 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("metrics.token: must be at least %d characters", minMetricsTokenLen)
 	}
 
+	if cfg.AuditRetention, err = boundedInt(f.Section("audit"), "retention_days", cfg.AuditRetention, 0, maxAuditRetention); err != nil {
+		return cfg, err
+	}
+
 	if cfg.LocalLogin, err = strictBool(f.Section("auth"), "local_login", cfg.LocalLogin); err != nil {
 		return cfg, err
 	}
@@ -248,6 +254,22 @@ func positiveInt(sec *ini.Section, name string, def int) (int, error) {
 	v, err := sec.Key(name).Int()
 	if err != nil || v < 1 {
 		return def, fmt.Errorf("%s.%s: must be a whole number of at least 1", sec.Name(), name)
+	}
+	return v, nil
+}
+
+// maxAuditRetention is 100 years, far below where a day count would overflow a time.
+const maxAuditRetention = 36500
+
+// boundedInt reads an integer key that must lie in [lo, hi], failing on a malformed or
+// out-of-range value instead of silently using the default.
+func boundedInt(sec *ini.Section, name string, def, lo, hi int) (int, error) {
+	if !sec.HasKey(name) {
+		return def, nil
+	}
+	v, err := sec.Key(name).Int()
+	if err != nil || v < lo || v > hi {
+		return def, fmt.Errorf("%s.%s: must be a whole number from %d to %d", sec.Name(), name, lo, hi)
 	}
 	return v, nil
 }
