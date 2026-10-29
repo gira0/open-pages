@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -399,5 +401,87 @@ func TestAuditWriteFailureDoesNotFailRequest(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM docs").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("sites = %d, err %v", n, err)
+	}
+}
+
+// The delete entry is written in the delete's own transaction, under the deploy lock, so it
+// always has a lower id than the create entry of a site that takes over the name (and,
+// SQLite permitting, the row id). The new owner never sees it.
+func TestAuditDeleteOrderedBeforeRecreate(t *testing.T) {
+	ts, s := newTestServer(t)
+	owner := loggedInClient(t, ts)
+	other := secondUser(t, ts)
+	createSiteVia(t, ts, owner, "blog")
+	site, err := s.getSite(t.Context(), "blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(t.Context(), userIDKey, int64(1))
+	if err := s.deleteSite(ctx, site); err != nil {
+		t.Fatal(err)
+	}
+	createSiteVia(t, ts, other, "blog")
+	again, err := s.getSite(t.Context(), "blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var del, create int64
+	if err := s.db.QueryRow("SELECT MAX(auditid) FROM audit_log WHERE action = 'site.delete' AND siteid = ?", site.ID).Scan(&del); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow("SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ?", again.ID).Scan(&create); err != nil {
+		t.Fatal(err)
+	}
+	if del == 0 || del >= create {
+		t.Fatalf("delete entry %d, re-create entry %d: want delete first", del, create)
+	}
+	_, entries, _ := auditPageVia(t, other, ts.URL+"/v1/auth/sites/blog/audit")
+	if len(entries) != 1 || entries[0]["action"] != "site.create" {
+		t.Fatalf("new owner sees %v", entries)
+	}
+}
+
+// Concurrent updates each record the exact before/after pair they made, so the entries
+// chain: every "from" is the previous entry's "to".
+func TestAuditUpdateDiffsChain(t *testing.T) {
+	ts, _ := newTestServer(t)
+	c := loggedInClient(t, ts)
+	createSiteVia(t, ts, c, "blog")
+	const n = 8
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			doJSON(t, c, http.MethodPut, ts.URL+"/v1/auth/sites/blog", `{"description":"d`+strconv.Itoa(i)+`"}`)
+		})
+	}
+	wg.Wait()
+	_, entries, _ := auditPageVia(t, c, ts.URL+"/v1/auth/sites/blog/audit?limit=100")
+	// Newest first; the oldest entry is the create.
+	prev := ""
+	updates := 0
+	for i := len(entries) - 2; i >= 0; i-- {
+		ch := entries[i]["details"].(map[string]any)["changes"].(map[string]any)["description"].(map[string]any)
+		if ch["from"] != prev {
+			t.Fatalf("entry %d from %q, want %q", i, ch["from"], prev)
+		}
+		prev = ch["to"].(string)
+		updates++
+	}
+	if updates == 0 {
+		t.Fatal("no updates recorded")
+	}
+}
+
+func TestRollbackOfDeletedSite(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	createSiteVia(t, ts, c, "blog")
+	v := uploadVia(t, ts, c, "blog", "one")
+	site, _ := s.getSite(t.Context(), "blog")
+	code, _ := doJSON(t, c, http.MethodDelete, ts.URL+"/v1/auth/sites/blog", "")
+	expectStatus(t, code, http.StatusOK)
+	if err := s.rollbackSite(t.Context(), site, v); !errors.Is(err, errSiteNotFound) {
+		t.Fatalf("rollback of deleted site = %v, want errSiteNotFound", err)
 	}
 }

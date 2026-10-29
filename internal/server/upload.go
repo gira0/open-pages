@@ -190,9 +190,5 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 		return
 	}
 	s.metrics.RecordDeploy(metrics.DeployOK)
-	s.audit(r.Context(), s.db, auditEvent{
-		action: auditSiteDeploy, targetKind: targetSite, target: site.Name, siteID: site.ID,
-		details: map[string]any{"version": version},
-	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "File uploaded", "site": site.Name, "version": version})
 }

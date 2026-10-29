@@ -103,9 +103,17 @@ type execQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// audit records ev, attributed to the user in ctx. q is the database, or the transaction
-// the change ran in.
+// audit records ev, attributed to the user in ctx, and logs it. q is the database. Call it
+// while still holding whatever lock made the change safe (see handleSiteAudit for why the
+// order of entries matters).
 func (s *Server) audit(ctx context.Context, q execQuerier, ev auditEvent) {
+	s.auditRecord(ctx, q, ev)()
+}
+
+// auditRecord inserts the entry through q and returns the function that logs it. For a
+// change made in a transaction, pass the transaction and call the returned function only
+// after Commit succeeds, so a rolled-back change never ships an "audit" line.
+func (s *Server) auditRecord(ctx context.Context, q execQuerier, ev auditEvent) func() {
 	src, _ := ctx.Value(auditSourceKey{}).(auditSource)
 	uid, _ := ctx.Value(userIDKey).(int64)
 	details := []byte("{}")
@@ -130,9 +138,11 @@ func (s *Server) audit(ctx context.Context, q execQuerier, ev auditEvent) {
 	if err != nil {
 		ctxLogger(ctx).Error("write audit log", "action", ev.action, "err", err)
 	}
-	ctxLogger(ctx).Info("audit", "audit_id", id, "actor", uid, "actor_email", oneLine(email), "actor_via", oneLine(src.via),
-		"action", ev.action, "target_kind", ev.targetKind, "target", oneLine(ev.target),
-		"site_id", ev.siteID, "group_id", ev.groupID, "details", oneLine(string(details)), "client_ip", oneLine(src.ip))
+	return func() {
+		ctxLogger(ctx).Info("audit", "audit_id", id, "actor", uid, "actor_email", oneLine(email), "actor_via", oneLine(src.via),
+			"action", ev.action, "target_kind", ev.targetKind, "target", oneLine(ev.target),
+			"site_id", ev.siteID, "group_id", ev.groupID, "details", oneLine(string(details)), "client_ip", oneLine(src.ip))
+	}
 }
 
 // oneLine drops line breaks from a value that came from a request. The slog handlers

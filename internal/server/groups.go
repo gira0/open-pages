@@ -167,10 +167,11 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 	if _, err := tx.ExecContext(ctx, "INSERT INTO user_group (uid, gid) VALUES (?, ?)", owner, id); err != nil {
 		return Group{}, fmt.Errorf("insert owner membership: %w", err)
 	}
-	s.audit(ctx, tx, auditEvent{action: auditGroupCreate, targetKind: targetGroup, target: name, groupID: id})
+	emit := s.auditRecord(ctx, tx, auditEvent{action: auditGroupCreate, targetKind: targetGroup, target: name, groupID: id})
 	if err := tx.Commit(); err != nil {
 		return Group{}, fmt.Errorf("commit: %w", err)
 	}
+	emit()
 	return Group{ID: id, Name: name, OwnerID: owner}, nil
 }
 
@@ -201,10 +202,11 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 		return fmt.Errorf("delete group: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		s.audit(ctx, tx, auditEvent{action: auditGroupDelete, targetKind: targetGroup, target: name, groupID: id})
+		emit := s.auditRecord(ctx, tx, auditEvent{action: auditGroupDelete, targetKind: targetGroup, target: name, groupID: id})
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
+		emit()
 		return nil
 	}
 	if err := tx.Rollback(); err != nil {
