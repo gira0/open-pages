@@ -91,7 +91,7 @@ func (s *Server) requireSession(next http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "a login session is required")
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userIDKey, uid)))
+		next(w, r.WithContext(context.WithValue(withAuditSource(r, viaSession), userIDKey, uid)))
 	})
 }
 
@@ -174,6 +174,10 @@ func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "api token id", err)
 		return
 	}
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditTokenCreate, targetKind: targetToken, target: d.Name,
+		details: map[string]any{"token_id": info.ID, "prefix": prefix, "expires_in_days": d.ExpiresInDays},
+	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, tokenCreated{tokenInfo: info, Token: token})
 }
@@ -217,14 +221,20 @@ func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Scoping the delete to the caller makes other users' tokens indistinguishable from missing ones.
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM api_token WHERE tokenid = ? AND userid = ?", id, userID(r))
+	var name, prefix string
+	err = s.db.QueryRowContext(r.Context(),
+		"DELETE FROM api_token WHERE tokenid = ? AND userid = ? RETURNING name, prefix", id, userID(r)).Scan(&name, &prefix)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "token not found")
+		return
+	}
 	if err != nil {
 		internalError(w, "revoke api token", err)
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		writeError(w, http.StatusNotFound, "token not found")
-		return
-	}
+	s.audit(r.Context(), s.db, auditEvent{
+		action: auditTokenRevoke, targetKind: targetToken, target: name,
+		details: map[string]any{"token_id": id, "prefix": prefix},
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "token revoked"})
 }

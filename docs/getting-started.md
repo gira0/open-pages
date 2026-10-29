@@ -154,6 +154,12 @@ to anyone who can reach it, so bind it to loopback or a monitoring network.
 |---|---|---|
 | `local_login` | `true` | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for single sign-on only setups and requires `[oidc] enabled = true` or `[saml] enabled = true`, otherwise startup fails. Must be `true` or `false` |
 
+### [audit]
+
+| Key | Default | Meaning |
+|---|---|---|
+| `retention_days` | `365` | Days to keep [audit log](security-model.md#audit-log) entries. Older entries are deleted at startup and then once a day. `0` keeps them for ever; a negative or non-numeric value, or one above 36500, fails startup |
+
 ### [oidc]
 
 Off unless `enabled = true`. When `enabled` is false the other keys are not looked at. The

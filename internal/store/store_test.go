@@ -147,3 +147,43 @@ func TestOpenMigratesLegacyDatabase(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAddsAuditLogToExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(legacySchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		db, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := columns(t, db, "audit_log")
+		for _, c := range []string{"auditid", "time", "actor", "actor_email", "actor_via", "action", "target_kind", "target", "siteid", "groupid", "details", "client_ip"} {
+			if !got[c] {
+				t.Errorf("audit_log lacks column %s", c)
+			}
+		}
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_index_list('audit_log')").Scan(&n); err != nil || n != 3 {
+			t.Errorf("audit_log indexes = %d, err %v; want 3", n, err)
+		}
+		// Entries must outlive the user and the site: no foreign keys, and kinds are checked.
+		if _, err := db.Exec(`INSERT INTO audit_log (time, actor, action, target_kind, target, siteid) VALUES (1, 999, 'site.create', 'site', 'gone', 999)`); err != nil {
+			t.Errorf("entry for unknown user and site rejected: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO audit_log (time, action, target_kind, target) VALUES (1, 'x', 'user', 'y')`); err == nil {
+			t.Error("unknown target_kind accepted")
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

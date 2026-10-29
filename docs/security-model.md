@@ -45,6 +45,37 @@ hold, and what is not covered yet.
 - **Files stay inside the site.** Paths are resolved with `os.Root`, so `..` and symlinks
   that point outside the site are refused.
 
+## Audit log
+
+open-pages keeps a record of who changed what. Every successful change to a site (create,
+update, deploy, rollback, delete), a group (create, delete, member added or removed) or an API
+token (create, revoke) is written to the `audit_log` table, in the same transaction as the change where
+there is one, and as a structured `audit` line in the log (so it reaches a log shipper or SIEM
+even if the database is lost). An entry says when, which user (id and the email they had then),
+with which credential (`session` or `token:<prefix>`), what, the name of the target, small
+details such as the version or the old and new value of a changed field, and the client
+address. Entries are snapshots: they stay after the user, site or group is deleted.
+
+- **Not audited:** reads, failed or refused requests, sign-in and sign-out, account creation,
+  group memberships synchronised from OIDC or SAML at sign-in, and housekeeping such as pruning
+  old versions or expired tokens. Secrets (passwords, tokens, session cookies) never appear.
+- **Who can read it:** a site's owner reads that site's history and every user reads their
+  own actions ([API](api.md#get-v1authsitesnameaudit)). There is no administrator role, so
+  nobody reads other people's entries through the API; operators read the database or the log.
+- **Retention:** `[audit] retention_days` (default 365, `0` for ever). Older entries are deleted at
+  startup and daily. Keep the log lines in your log system for longer if you need to.
+- **Client address:** the address of the TCP peer. Behind a reverse proxy it is the proxy's
+  address; forwarded headers are not trusted yet (X-Forwarded-For handling arrives with #72).
+- **Not tamper-proof.** The log is an ordinary table: anyone with write access to `data.db`
+  (or the host) can change or delete entries without a trace, and the application can too.
+  Ship the log lines off the host to keep a copy that the host's administrators cannot rewrite.
+  If an entry cannot be written the change still goes through, with one exception: the
+  `site.create` entry is written in the same transaction as the site row, because it marks where
+  the site's history starts (so a later site that reuses the name and database row never shows
+  its predecessor's entries). If it cannot be written the site is not created and the request
+  fails with 500. For the other actions the failure is logged and the `audit` line is still
+  emitted. An `audit` line is only logged after the change has been committed.
+
 ## What the deployment must provide
 
 - **A separate content domain, ideally a separate registrable domain.** Use something like

@@ -167,9 +167,11 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 	if _, err := tx.ExecContext(ctx, "INSERT INTO user_group (uid, gid) VALUES (?, ?)", owner, id); err != nil {
 		return Group{}, fmt.Errorf("insert owner membership: %w", err)
 	}
+	emit := s.auditRecord(ctx, tx, auditEvent{action: auditGroupCreate, targetKind: targetGroup, target: name, groupID: id})
 	if err := tx.Commit(); err != nil {
 		return Group{}, fmt.Errorf("commit: %w", err)
 	}
+	emit()
 	return Group{ID: id, Name: name, OwnerID: owner}, nil
 }
 
@@ -188,14 +190,20 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_group WHERE gid = ?"+guard, id, id, actor, id); err != nil {
 		return fmt.Errorf("delete memberships: %w", err)
 	}
-	res, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE groupid = ?"+guard, id, id, actor, id)
-	if err != nil {
+	// The audit entry carries the name of the row this statement deleted, not one read
+	// earlier: the id of a deleted group can be reused by a different group. (The
+	// statement above already took the write lock, so nothing can change in between.)
+	var name string
+	err = tx.QueryRowContext(ctx, "DELETE FROM groups WHERE groupid = ?"+guard+" RETURNING name", id, id, actor, id).Scan(&name)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delete group: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
+	if err == nil {
+		emit := s.auditRecord(ctx, tx, auditEvent{action: auditGroupDelete, targetKind: targetGroup, target: name, groupID: id})
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
+		emit()
 		return nil
 	}
 	if err := tx.Rollback(); err != nil {
@@ -216,7 +224,14 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 // single statement. added is false if the user was already a member. It returns
 // errGroupNotFound, errNotGroupOwner or errUserNotFound otherwise.
 func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email string) (added bool, err error) {
-	res, err := s.db.ExecContext(ctx,
+	// The insert comes first, so it takes the write lock; the group name for the audit
+	// entry is then read in the same transaction, and is that of the group inserted into.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO user_group (uid, gid)
 		 SELECT u.userid, g.groupid FROM user u, groups g
 		 WHERE u.email = ? AND g.groupid = ? AND g.owner = ?
@@ -225,7 +240,22 @@ func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email
 		return false, fmt.Errorf("add member: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		var name string
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", groupID).Scan(&name); err != nil {
+			return false, fmt.Errorf("query group: %w", err)
+		}
+		emit := s.auditRecord(ctx, tx, auditEvent{
+			action: auditMemberAdd, targetKind: targetGroup, target: name, groupID: groupID,
+			details: map[string]any{"email": email},
+		})
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit: %w", err)
+		}
+		emit()
 		return true, nil
+	}
+	if err := tx.Rollback(); err != nil {
+		return false, fmt.Errorf("rollback: %w", err)
 	}
 	// Nothing inserted: not allowed, user unknown, or already a member.
 	g, err := s.getGroup(ctx, groupID)
@@ -258,7 +288,14 @@ func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email
 // rules are checked inside the DELETE. It returns errGroupNotFound, errNotGroupOwner
 // (actor may not remove target), errOwnerMember or errNotAMember otherwise.
 func (s *Server) removeGroupMember(ctx context.Context, actor, groupID, target int64) error {
-	res, err := s.db.ExecContext(ctx,
+	// As in addGroupMember: the delete takes the write lock, and the name and email for
+	// the audit entry are read in the same transaction.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		`DELETE FROM user_group WHERE gid = ? AND uid = ?
 		 AND uid IS NOT (SELECT owner FROM groups WHERE groupid = ?)
 		 AND (uid = ? OR ? IS (SELECT owner FROM groups WHERE groupid = ?))`,
@@ -267,7 +304,24 @@ func (s *Server) removeGroupMember(ctx context.Context, actor, groupID, target i
 		return fmt.Errorf("remove member: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		var name, email string
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", groupID).Scan(&name); err != nil {
+			return fmt.Errorf("query group: %w", err)
+		}
+		// Users are never deleted, so the email is there; an empty one only weakens the snapshot.
+		_ = tx.QueryRowContext(ctx, "SELECT email FROM user WHERE userid = ?", target).Scan(&email)
+		emit := s.auditRecord(ctx, tx, auditEvent{
+			action: auditMemberRemove, targetKind: targetGroup, target: name, groupID: groupID,
+			details: map[string]any{"user_id": target, "email": email},
+		})
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		emit()
 		return nil
+	}
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback: %w", err)
 	}
 	g, err := s.getGroup(ctx, groupID)
 	if err != nil {

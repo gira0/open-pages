@@ -28,6 +28,8 @@ erDiagram
     groups |o--o{ docs : "shared with (ugroup)"
 ```
 
+`audit_log` has no relationships on purpose; see its section.
+
 As plain text:
 
 ```text
@@ -192,6 +194,31 @@ Sites. One row per site; files live on disk (see below).
 constraint (`sqlite_autoindex_docs_1`, `sqlite_autoindex_docs_2`). `session.token`,
 `api_token.hash` get one the same way.
 
+### audit_log
+
+The [audit log](security-model.md#audit-log): one row per successful change to a site, group
+or API token. It has no foreign keys, so entries outlive the user, site or group they
+mention; the email and target name are snapshots.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `auditid` | INTEGER | PRIMARY KEY | The `id` in the API, and the pagination cursor. Increases with time |
+| `time` | BIGINT | NOT NULL | Unix time |
+| `actor` | INTEGER | NULL | User id of the actor. Not a foreign key. NULL if the change had no user |
+| `actor_email` | TEXT | NOT NULL, DEFAULT `''` | The actor's email when the change happened |
+| `actor_via` | TEXT | NOT NULL, DEFAULT `''` | `session`, or `token:` plus the API token's display prefix |
+| `action` | TEXT | NOT NULL | `site.create`, `site.update`, `site.deploy`, `site.rollback`, `site.delete`, `group.create`, `group.delete`, `group.member_add`, `group.member_remove`, `token.create`, `token.revoke` |
+| `target_kind` | TEXT | NOT NULL, CHECK in (`site`, `group`, `token`) | |
+| `target` | TEXT | NOT NULL | Name of the site, group or token at that time |
+| `siteid` | INTEGER | NULL | `docs.docid` for site actions. Not a foreign key; SQLite can reuse the id of a deleted site |
+| `groupid` | INTEGER | NULL | `groups.groupid` for group actions. Not a foreign key |
+| `details` | TEXT | NOT NULL, DEFAULT `'{}'` | JSON object, see [api.md](api.md#get-v1authsitesnameaudit) |
+| `client_ip` | TEXT | NOT NULL, DEFAULT `''` | Host part of the connection's remote address |
+
+Indexes `audit_log_target` on `(target_kind, target, auditid)`, `audit_log_actor` on `(actor, auditid)`
+and `audit_log_time` on `(time)` (used when pruning). Rows older than `[audit] retention_days`
+are deleted at startup and daily; `0` keeps everything.
+
 ## Migrations
 
 There is no version table and no migration files. `store.Open` does this on every start, in
@@ -199,7 +226,8 @@ order:
 
 1. Runs the `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` script. On a fresh
    file this creates every table with all current columns; on an existing file it leaves
-   tables as they are.
+   tables as they are but adds tables and indexes it lacks, which is how an upgraded database
+   gets `audit_log`.
 2. Runs `migrate`, which brings a database created by an older release up to date, and on
    a fresh file creates the remaining unique indexes. Each step checks first, so running it
    again changes nothing:
@@ -231,7 +259,7 @@ Operational consequences:
 
 | Where | What | Source of truth for |
 |---|---|---|
-| `<datapath>/data.db` | this schema | accounts, sessions, tokens, groups, site metadata |
+| `<datapath>/data.db` | this schema | accounts, sessions, tokens, groups, site metadata, audit log |
 | `<datapath>/op_data/<site>/versions/<id>/` | one extracted upload per deploy | site content |
 | `<datapath>/op_data/<site>/current` | symlink to the live version | which version is served |
 

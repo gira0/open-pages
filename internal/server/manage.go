@@ -158,8 +158,8 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body must be JSON with a version id")
 		return
 	}
-	err := s.SwitchCurrent(site.Name, d.Version)
-	if errors.Is(err, errVersionAbsent) {
+	err := s.rollbackSite(r.Context(), site, d.Version)
+	if errors.Is(err, errSiteNotFound) || errors.Is(err, errVersionAbsent) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

@@ -202,7 +202,12 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	if err := s.checkGroup(ctx, group, owner); err != nil {
 		return Site{}, err
 	}
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Site{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		"INSERT INTO docs (uowner, ugroup, name, description, visibility) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
 		owner, nullableID(group), name, description, visibility)
 	if groupGone(err, group) {
@@ -215,6 +220,20 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
+	// The create entry marks where this site's history starts (a reused row id must not
+	// expose a predecessor's entries), so it is written in the same transaction as the
+	// row and is the one audit write that fails the request: no marker, no site.
+	emit, err := s.auditInsert(ctx, tx, auditEvent{
+		action: auditSiteCreate, targetKind: targetSite, target: name, siteID: id,
+		details: map[string]any{"description": description, "group": group, "visibility": visibility},
+	})
+	if err != nil {
+		return Site{}, fmt.Errorf("audit site create: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Site{}, fmt.Errorf("commit: %w", err)
+	}
+	emit()
 	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group, Visibility: visibility}, nil
 }
 
@@ -268,14 +287,44 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	if len(sets) == 0 {
 		sets = append(sets, "docid = docid") // no-op write, so RETURNING reads the row
 	}
-	args = append(args, site.ID)
+	// Every statement below matches the site's id, name and owner, not just the id: the
+	// caller authorized this exact site earlier, and if it has been deleted since, its
+	// row id may belong to a new site by now, which must stay untouched and unseen.
+	args = append(args, site.ID, site.Name, nullableID(site.OwnerID))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Site{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	// Take the write lock before reading the old values: a transaction that reads first
+	// and then writes fails with SQLITE_BUSY when another writer got in between. With the
+	// lock held, the old and new values below are an exact pair, whatever else is updating.
+	res, err := tx.ExecContext(ctx, "UPDATE docs SET docid = docid WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID))
+	if err != nil {
+		return Site{}, fmt.Errorf("lock site: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Site{}, errSiteNotFound
+	}
 	var (
-		desc sql.NullString
-		grp  sql.NullInt64
-		out  = site
+		before = site
+		desc   sql.NullString
+		grp    sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx,
-		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? RETURNING description, ugroup, visibility",
+	err = tx.QueryRowContext(ctx, "SELECT description, ugroup, visibility FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID)).
+		Scan(&desc, &grp, &before.Visibility)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Site{}, errSiteNotFound
+	}
+	if err != nil {
+		return Site{}, fmt.Errorf("read site: %w", err)
+	}
+	before.Description, before.GroupID = desc.String, grp.Int64
+	out := site
+	err = tx.QueryRowContext(ctx,
+		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? AND name = ? AND uowner IS ? RETURNING description, ugroup, visibility",
 		args...).Scan(&desc, &grp, &out.Visibility)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
@@ -287,6 +336,29 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 		return Site{}, fmt.Errorf("update site: %w", err)
 	}
 	out.Description, out.GroupID = desc.String, grp.Int64
+
+	// Only real changes are recorded, each with its old and new value.
+	changes := map[string]any{}
+	if out.Description != before.Description {
+		changes["description"] = map[string]any{"from": before.Description, "to": out.Description}
+	}
+	if out.GroupID != before.GroupID {
+		changes["group"] = map[string]any{"from": before.GroupID, "to": out.GroupID}
+	}
+	if out.Visibility != before.Visibility {
+		changes["visibility"] = map[string]any{"from": before.Visibility, "to": out.Visibility}
+	}
+	emit := func() {}
+	if len(changes) > 0 {
+		emit = s.auditRecord(ctx, tx, auditEvent{
+			action: auditSiteUpdate, targetKind: targetSite, target: site.Name, siteID: site.ID,
+			details: map[string]any{"changes": changes},
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return Site{}, fmt.Errorf("commit: %w", err)
+	}
+	emit()
 	return out, nil
 }
 
@@ -324,9 +396,26 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM docs WHERE docid = ?", site.ID); err != nil {
+	// The audit entry goes in the same transaction as the delete (and under deployMu), so
+	// it always precedes the site.create of a site that reuses the name and row id.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID))
+	if err != nil {
 		return fmt.Errorf("delete site: %w", err)
 	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errSiteNotFound
+	}
+	emit := s.auditRecord(ctx, tx, auditEvent{action: auditSiteDelete, targetKind: targetSite, target: site.Name, siteID: site.ID})
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	emit()
 	return nil
 }
 
@@ -389,6 +478,12 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	if err := s.pruneVersions(site.Name); err != nil {
 		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
+	// Recorded while deployMu is held, so a delete and re-create of the site cannot slip
+	// in first, and independent of whether the client is still connected.
+	s.audit(ctx, s.db, auditEvent{
+		action: auditSiteDeploy, targetKind: targetSite, target: site.Name, siteID: site.ID,
+		details: map[string]any{"version": version},
+	})
 	return version, nil
 }
 
@@ -398,6 +493,25 @@ func (s *Server) SwitchCurrent(site, version string) error {
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
 	return s.switchCurrent(site, version)
+}
+
+// rollbackSite makes version the live one of site and records it, all under deployMu so
+// the entry cannot land after a delete and re-create of the site. It returns
+// errSiteNotFound if the site is gone and errVersionAbsent if the version is not on disk.
+func (s *Server) rollbackSite(ctx context.Context, site Site, version string) error {
+	s.deployMu.Lock()
+	defer s.deployMu.Unlock()
+	if err := s.checkSiteLive(ctx, site); err != nil {
+		return err
+	}
+	if err := s.switchCurrent(site.Name, version); err != nil {
+		return err
+	}
+	s.audit(ctx, s.db, auditEvent{
+		action: auditSiteRollback, targetKind: targetSite, target: site.Name, siteID: site.ID,
+		details: map[string]any{"version": version},
+	})
+	return nil
 }
 
 // switchCurrent does the work of SwitchCurrent; the caller holds deployMu.
