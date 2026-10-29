@@ -210,18 +210,24 @@ func auditPage(w http.ResponseWriter, r *http.Request) (limit int, before int64,
 	return limit, before, true
 }
 
-// writeAuditPage answers with the newest entries matching cond (a WHERE fragment over
-// audit_log with its args) that are older than the before cursor. next_before is the
-// cursor for the following page, or null on the last one.
-func (s *Server) writeAuditPage(w http.ResponseWriter, r *http.Request, cond string, args ...any) {
+// An audit page query is auditSelect, a WHERE condition, then auditPageTail, all
+// constants so no SQL is built at run time. The tail takes the before cursor (twice) and
+// the row limit.
+const (
+	auditSelect = `SELECT auditid, time, actor, actor_email, actor_via, action, target_kind, target, details, client_ip
+		 FROM audit_log WHERE `
+	auditPageTail = ` AND (? = 0 OR auditid < ?) ORDER BY auditid DESC LIMIT ?`
+)
+
+// writeAuditPage answers with the newest entries of query (see auditSelect) with its args
+// that are older than the before cursor. next_before is the cursor for the following page,
+// or null on the last one.
+func (s *Server) writeAuditPage(w http.ResponseWriter, r *http.Request, query string, args ...any) {
 	limit, before, ok := auditPage(w, r)
 	if !ok {
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT auditid, time, actor, actor_email, actor_via, action, target_kind, target, details, client_ip
-		 FROM audit_log WHERE `+cond+` AND (? = 0 OR auditid < ?) ORDER BY auditid DESC LIMIT ?`,
-		append(args, before, before, limit+1)...)
+	rows, err := s.db.QueryContext(r.Context(), query, append(args, before, before, limit+1)...)
 	if err != nil {
 		internalError(w, "query audit log", err)
 		return
@@ -271,13 +277,14 @@ func (s *Server) handleSiteAudit(w http.ResponseWriter, r *http.Request) {
 	// A rowid can be reused after its row is deleted, so the site id alone does not tell
 	// two sites apart; entries older than this site's create entry belong to a predecessor.
 	// Sites that predate the audit log have no create entry and keep all their entries.
-	s.writeAuditPage(w, r,
+	s.writeAuditPage(w, r, auditSelect+
 		`target_kind = 'site' AND target = ? AND siteid = ?
-		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ? AND target = ?), 0)`,
+		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ? AND target = ?), 0)`+
+		auditPageTail,
 		site.Name, site.ID, site.ID, site.Name)
 }
 
 // handleUserAudit: GET /v1/auth/user/audit lists what the caller did.
 func (s *Server) handleUserAudit(w http.ResponseWriter, r *http.Request) {
-	s.writeAuditPage(w, r, "actor = ?", userID(r))
+	s.writeAuditPage(w, r, auditSelect+"actor = ?"+auditPageTail, userID(r))
 }
