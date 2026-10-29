@@ -187,8 +187,9 @@ func groupGone(err error, group int64) bool {
 }
 
 // createSite registers a new site owned by owner, optionally in group (0 for none).
-// It returns errSiteExists on a name clash, errGroupNotFound for an unknown group and
-// errNotGroupMember if owner is not in the group.
+// It returns errSiteExists on a name clash, errGroupNotFound for an unknown group,
+// errNotGroupMember if owner is not in the group and errSiteLimit if owner already owns
+// cfg.SitesPerUser sites.
 func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64, visibility string) (Site, error) {
 	if !names.ValidSite(name) {
 		return Site{}, errors.New("invalid site name")
@@ -220,6 +221,16 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
+	// The insert took the write lock, so this count is exact: two creates cannot both pass.
+	if limit := s.cfg.SitesPerUser; limit > 0 {
+		var n int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM docs WHERE uowner = ?", owner).Scan(&n); err != nil {
+			return Site{}, fmt.Errorf("count sites: %w", err)
+		}
+		if n > limit {
+			return Site{}, errSiteLimit
+		}
+	}
 	// The create entry marks where this site's history starts (a reused row id must not
 	// expose a predecessor's entries), so it is written in the same transaction as the
 	// row and is the one audit write that fails the request: no marker, no site.
@@ -416,12 +427,13 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	emit()
+	s.refreshStoredBytes(ctx)
 	return nil
 }
 
 // deploy extracts the archive in src into a new version of site and makes it current.
-// Archive problems come back as *badArchiveError. Old versions beyond cfg.KeepVersions
-// are pruned afterwards. The site must already exist; deploy returns errSiteNotFound if
+// Archive problems come back as *badArchiveError and a deploy that would break a quota as
+// *quotaError. Old versions beyond cfg.KeepVersions are pruned afterwards. The site must already exist; deploy returns errSiteNotFound if
 // it was deleted (or replaced by a different site of the same name) before publishing.
 func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, error) {
 	dir := s.SiteDir(site.Name)
@@ -457,12 +469,21 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		return "", err
 	}
 
+	size, err := dirSize(staging)
+	if err != nil {
+		return "", err
+	}
+
 	// Publishing, switching and pruning happen under one lock, so a concurrent deploy's
 	// prune can never remove a version that this deploy has published but not yet made
-	// current. Extraction above stays outside the lock.
+	// current. Extraction above stays outside the lock. The quota check is inside it, so two
+	// deploys cannot both fit into the same headroom.
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
 	if err := s.checkSiteLive(ctx, site); err != nil {
+		return "", err
+	}
+	if err := s.checkQuota(ctx, site, size); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o755); err != nil { //nolint:gosec // G301: public site content
@@ -472,12 +493,20 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	if err := os.Rename(staging, filepath.Join(dir, versionsDir, version)); err != nil {
 		return "", err
 	}
+	if err := s.recordVersionSize(ctx, site, version, size); err != nil {
+		// Not fatal: the next quota check or restart measures the directory instead.
+		ctxLogger(ctx).Warn("record version size", "site", site.Name, "err", err)
+	}
 	if err := s.switchCurrent(site.Name, version); err != nil {
 		return "", err
 	}
 	if err := s.pruneVersions(site.Name); err != nil {
 		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
+	if _, err := s.syncVersionSizes(ctx, site); err != nil {
+		ctxLogger(ctx).Warn("sync version sizes", "site", site.Name, "err", err)
+	}
+	s.refreshStoredBytes(ctx)
 	// Recorded while deployMu is held, so a delete and re-create of the site cannot slip
 	// in first, and independent of whether the client is still connected.
 	s.audit(ctx, s.db, auditEvent{

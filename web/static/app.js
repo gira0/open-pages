@@ -275,6 +275,19 @@
     return new Date(Math.floor(n / 8) * 1000);
   }
 
+  // formatBytes renders a byte count in the largest unit that keeps it above 1.
+  function formatBytes(n) {
+    var units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB'];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? String(n) : n.toFixed(1)) + ' ' + units[i];
+  }
+
+  // usageText says how much of a limit is used; a limit of 0 means there is none.
+  function usageText(used, limit) {
+    return formatBytes(used) + (limit > 0 ? ' of ' + formatBytes(limit) : '');
+  }
+
   function setupManage() {
     var root = document.getElementById('manage');
     if (!root) { return; }
@@ -325,6 +338,7 @@
     function renderList() {
       var sites = user.docs.owned;
       var body = $('owned-body');
+      $('owned-usage').textContent = 'Storage used by your sites: ' + usageText(user.quota.usage_bytes, user.quota.limit_bytes) + '.';
       body.replaceChildren();
       $('owned-table').hidden = sites.length === 0;
       $('owned-empty').hidden = sites.length !== 0;
@@ -335,6 +349,7 @@
         tr.appendChild(name);
         tr.appendChild(el('td', {'class': 'pf-v6-c-table__td', 'data-label': 'Visibility'}, visibilityLabels[d.visibility] || d.visibility));
         tr.appendChild(el('td', {'class': 'pf-v6-c-table__td', 'data-label': 'Group'}, groupName(d.group_id)));
+        tr.appendChild(el('td', {'class': 'pf-v6-c-table__td', 'data-label': 'Size'}, formatBytes(d.bytes)));
         tr.appendChild(el('td', {'class': 'pf-v6-c-table__td', 'data-label': 'Description'}, d.description));
         var actions = el('td', {'class': 'pf-v6-c-table__td pf-m-actions'});
         actions.appendChild(el('a', {'class': 'pf-v6-c-button pf-m-secondary pf-m-small', href: siteURL(d.name)}, 'Open'));
@@ -442,6 +457,7 @@
             showAlert(result, 'success', 'Upload complete.', xhr.responseText);
             form.reset();
             loadVersions();
+            showUsage();
           } else {
             progress.hidden = true;
             showAlert(result, 'danger', 'Upload failed (' + xhr.status + ').', xhr.responseText);
@@ -485,6 +501,10 @@
         if (r.ok) { location.assign('/manage'); } else { showAlert($('delete-result'), 'danger', 'Could not delete the site.', r.error); }
       });
     }
+    async function showUsage() {
+      var r = await callAPI('GET', '/v1/auth/sites/' + encodeURIComponent(siteName));
+      if (r.ok) { $('detail-usage').textContent = 'Storage used: ' + usageText(r.data.bytes, r.data.quota_bytes) + '.'; }
+    }
     async function showSite() {
       var r = await callAPI('GET', '/v1/auth/sites/' + encodeURIComponent(siteName));
       var own = user.docs.owned.some(function (d) { return d.name === siteName; });
@@ -498,6 +518,7 @@
       $('detail-title').textContent = siteName;
       var link = $('detail-link');
       link.replaceChildren(el('a', {href: siteURL(siteName)}, siteURL(siteName)));
+      $('detail-usage').textContent = 'Storage used: ' + usageText(r.data.bytes, r.data.quota_bytes) + '.';
       renderSettings(r.data);
       show('manage-detail');
       loadVersions();

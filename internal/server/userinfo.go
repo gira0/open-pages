@@ -13,6 +13,16 @@ type userInfo struct {
 	Email  string      `json:"email"`
 	Groups []groupInfo `json:"groups"`
 	Docs   userDocs    `json:"docs"`
+	Quota  userQuota   `json:"quota"`
+}
+
+// userQuota is the user's storage usage and the configured limits; a limit of 0 means none.
+type userQuota struct {
+	UsageBytes     int64 `json:"usage_bytes"`      // bytes held by all sites the user owns
+	LimitBytes     int64 `json:"limit_bytes"`      // user_mb in bytes
+	SiteLimitBytes int64 `json:"site_limit_bytes"` // site_mb in bytes
+	Sites          int   `json:"sites"`            // sites the user owns
+	SiteLimit      int   `json:"site_limit"`       // sites_per_user
 }
 
 type groupInfo struct {
@@ -33,6 +43,7 @@ type docInfo struct {
 	OwnerID     *int64 `json:"owner_id"`
 	GroupID     *int64 `json:"group_id"`
 	Visibility  string `json:"visibility"`
+	Bytes       int64  `json:"bytes"` // bytes held by the kept versions of the site
 }
 
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +69,8 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	// DISTINCT guards against a duplicate user_group row repeating a doc.
 	docRows, err := s.db.QueryContext(r.Context(),
-		`SELECT DISTINCT d.docid, d.name, COALESCE(d.description, ''), d.uowner, d.ugroup, d.visibility FROM docs d
+		`SELECT DISTINCT d.docid, d.name, COALESCE(d.description, ''), d.uowner, d.ugroup, d.visibility,
+		   COALESCE((SELECT SUM(v.bytes) FROM site_version v WHERE v.docid = d.docid), 0) FROM docs d
 		 WHERE d.uowner = ? OR d.visibility = 'authenticated' OR (d.ugroup IN (SELECT gid FROM user_group WHERE uid = ?)
 		   AND EXISTS (SELECT 1 FROM user_group og WHERE og.uid = d.uowner AND og.gid = d.ugroup))
 		 ORDER BY d.name`, uid, uid)
@@ -70,7 +82,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	for docRows.Next() {
 		var d docInfo
 		var owner, group sql.NullInt64
-		if err := docRows.Scan(&d.ID, &d.Name, &d.Description, &owner, &group, &d.Visibility); err != nil {
+		if err := docRows.Scan(&d.ID, &d.Name, &d.Description, &owner, &group, &d.Visibility, &d.Bytes); err != nil {
 			internalError(w, "scan doc", err)
 			return
 		}
@@ -87,6 +99,13 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := docRows.Err(); err != nil {
 		internalError(w, "list docs", err)
+		return
+	}
+
+	q := &info.Quota
+	q.LimitBytes, q.SiteLimitBytes, q.SiteLimit = s.cfg.UserQuota, s.cfg.SiteQuota, s.cfg.SitesPerUser
+	if q.UsageBytes, q.Sites, err = s.userUsage(r.Context(), uid); err != nil {
+		internalError(w, "read usage", err)
 		return
 	}
 

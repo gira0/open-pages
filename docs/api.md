@@ -168,7 +168,7 @@ the CSP, `X-Frame-Options` or `Referrer-Policy` (they keep only their existing `
 ### GET /manage
 
 No authentication for the page itself; it carries no data. Its script reads `GET /v1/auth/user`
-and shows the caller's own sites with their visibility and group. A visitor without a session
+and shows the caller's own sites with their visibility, group and size, and their storage use. A visitor without a session
 sees a prompt to sign in. The page creates sites, changes a site's description, visibility and
 group, uploads a new version, lists the kept versions with rollback, and deletes a site, all
 through the `/v1/auth/sites` endpoints. `/manage?site=<name>` opens one site. It sends the same
@@ -282,7 +282,8 @@ Auth: any. Returns the caller's account, groups and sites.
   "docs": {
     "owned":    [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3, "visibility": "public"}],
     "viewable": [{"id": 7, "name": "blog", "description": "", "owner_id": 1, "group_id": 3, "visibility": "public"}]
-  }
+  },
+  "quota": {"usage_bytes": 52428, "limit_bytes": 0, "site_limit_bytes": 0, "sites": 1, "site_limit": 0}
 }
 ```
 
@@ -293,7 +294,11 @@ Auth: any. Returns the caller's account, groups and sites.
   for its group's members, and so does a `public` one that has a group). A `public` site
   without a group that someone else owns is not in this list: public sites are listed by
   `GET /v1/sites`.
-- `owner_id` and `group_id` are `null` when absent. The list entries carry no visibility.
+- `owner_id` and `group_id` are `null` when absent. Each entry also has `visibility` and
+  `bytes`, the size of the site's kept versions.
+- `quota` is the caller's storage use: `usage_bytes` over all owned sites and `sites` owned,
+  against the `[quotas]` limits `user_mb` (`limit_bytes`), `site_mb` (`site_limit_bytes`) and
+  `sites_per_user` (`site_limit`). A limit of `0` means unlimited.
 
 `401` when unauthenticated.
 
@@ -518,7 +523,7 @@ group id (0 or absent for none). `visibility` is `public` (default), `authentica
 |---|---|
 | 201 | `{"status":"site created","name":"blog","visibility":"restricted"}` |
 | 400 | invalid JSON, invalid or reserved name, description too long, bad visibility, or `{"error":"group not found"}` |
-| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group) |
+| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group), or `{"error":"site quota exceeded: you may own at most 10 sites"}` (`sites_per_user`) |
 | 409 | `{"error":"a site with that name already exists"}` |
 
 Creating a site does not deploy anything; upload an archive next. Until then the site
@@ -540,11 +545,13 @@ Returns the metadata to anyone who may view the site: any logged-in user for `pu
 
   ```json
   {"name": "blog", "description": "", "owner_id": 1, "group": 3,
-   "visibility": "restricted", "current": "db4jkiu64plctc6e9140"}
+   "visibility": "restricted", "current": "db4jkiu64plctc6e9140",
+   "bytes": 52428, "quota_bytes": 0}
   ```
 
   `group` is 0 when the site has none; `owner_id` is `null` for a site without an owner;
-  `current` is `""` before the first deploy.
+  `current` is `""` before the first deploy. `bytes` is the size of the site's kept versions
+  and `quota_bytes` the `site_mb` limit in bytes (`0` for none).
 - `403 {"error":"you may not view this site"}`
 - `404 {"error":"site not found"}`
 
@@ -579,11 +586,12 @@ archive is extracted into a new version which becomes live atomically.
 | 200 | `{"status":"File uploaded","site":"blog","version":"db4jkiu64plctc6e9140"}` |
 | 400 | unsupported format, corrupt archive, an entry outside the site, more than `max_extract_files` entries or more than `max_extract_mb` uncompressed, extraction taking longer than `deploy_timeout_seconds`, or `{"error":"failed to read upload"}` |
 | 403 / 404 | not the owner / site not found (also if the site was deleted during the upload) |
-| 413 | `{"error":"upload exceeds 100 MiB"}` (the `max_upload_mb` value) |
+| 413 | `{"error":"upload exceeds 100 MiB"}` (the `max_upload_mb` value), or `{"error":"site quota exceeded: blog would hold 12.0 MiB after this deploy, over the limit of 10.0 MiB per site"}` / `{"error":"user quota exceeded: ..."}` (`site_mb`, `user_mb`); nothing is published |
 | 503 | `max_concurrent_deploys` extractions are already running; `Retry-After` says when to retry |
 
 Symlinks and other special entries in an archive are skipped. Versions beyond
-`keep_versions` are deleted after a successful deploy.
+`keep_versions` are deleted after a successful deploy. The quotas are checked against the
+size left after that pruning, so a site at its limit can still replace its oldest version.
 
 ```sh
 (cd public && zip -qr ../site.zip .)

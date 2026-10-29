@@ -131,6 +131,26 @@ rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 `url_mode` and `base_domain` no longer exist; a settings file that still sets either fails
 startup with a message pointing here.
 
+### [quotas]
+
+Limits on what a site and its owner keep on disk. All default to `0`, which means unlimited;
+a negative or non-numeric value fails startup.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `site_mb` | `0` | Largest size in MiB of one site: the extracted files of all its kept versions added up |
+| `user_mb` | `0` | Largest total size in MiB of all sites one user owns |
+| `sites_per_user` | `0` | Most sites one user may own. A further `POST /v1/auth/sites` gets 403 |
+
+A deploy is checked after extraction, against the state it would leave once versions beyond
+`keep_versions` are pruned, so a site at its limit can still replace versions. A deploy over
+`site_mb` or `user_mb` is refused with 413 and nothing is published. Sizes count file bytes,
+not directories or filesystem overhead. Lowering a limit or `keep_versions` never removes
+anything: a site already over a new limit keeps serving and only refuses deploys that do not
+shrink it. The size of each version is stored in the database; existing sites are measured
+once, at the first start after upgrading, which walks their `versions/` directories.
+Usage is shown by `GET /v1/auth/user`, `GET /v1/auth/sites/{name}` and the `/manage` page.
+
 ### [log]
 
 | Key | Default | Meaning |
@@ -320,6 +340,7 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://pages.corp/metrics
 | `openpages_http_request_duration_seconds` | `le` | Histogram (bounds 0.005, 0.025, 0.1, 0.25, 1, 2.5, 10 seconds) with `_sum` and `_count` |
 | `openpages_deploys_total` | `result` (`ok`, `rejected`, `failed`) | Archive uploads by outcome; `rejected` means the archive was refused |
 | `openpages_errors_total` | none | Responses with a 5xx status |
+| `openpages_stored_bytes` | none | Gauge: bytes held by the kept versions of all sites, as of start, the last deploy or the last site deletion |
 
 Requests are never labelled by path or site, so the number of series is fixed. Counters
 reset when the process restarts.

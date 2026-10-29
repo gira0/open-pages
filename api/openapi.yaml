@@ -1078,7 +1078,9 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
-          description: "`you are not a member of this group`, or `cross-origin request rejected`."
+          description: |
+            `you are not a member of this group`, `site quota exceeded: ...` when the caller
+            already owns `[quotas] sites_per_user` sites, or `cross-origin request rejected`.
           content:
             application/json:
               schema:
@@ -1357,7 +1359,10 @@ paths:
         "404":
           $ref: "#/components/responses/SiteNotFound"
         "413":
-          description: The upload exceeds `max_upload_mb`.
+          description: |
+            The upload exceeds `max_upload_mb`, or the deploy would take the site over
+            `[quotas] site_mb` or its owner over `user_mb` (counted after versions beyond
+            `keep_versions` are pruned). Nothing is published.
           content:
             application/json:
               schema:
@@ -1414,6 +1419,12 @@ paths:
           $ref: "#/components/responses/NotSiteOwner"
         "404":
           $ref: "#/components/responses/SiteNotFound"
+        "413":
+          description: The deploy would exceed `[quotas] site_mb` or `user_mb`, as for `upload`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
         "503":
@@ -1645,7 +1656,7 @@ components:
           type: string
     UserInfo:
       type: object
-      required: [userid, email, groups, docs]
+      required: [userid, email, groups, docs, quota]
       properties:
         userid:
           type: integer
@@ -1673,9 +1684,32 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/SiteSummary"
+        quota:
+          description: The caller's storage use and the `[quotas]` limits. A limit of 0 means none.
+          type: object
+          required: [usage_bytes, limit_bytes, site_limit_bytes, sites, site_limit]
+          properties:
+            usage_bytes:
+              description: Bytes held by the kept versions of all sites the caller owns.
+              type: integer
+              format: int64
+            limit_bytes:
+              description: "`user_mb` in bytes."
+              type: integer
+              format: int64
+            site_limit_bytes:
+              description: "`site_mb` in bytes."
+              type: integer
+              format: int64
+            sites:
+              description: Sites the caller owns.
+              type: integer
+            site_limit:
+              description: "`sites_per_user`."
+              type: integer
     SiteSummary:
       type: object
-      required: [id, name, description, owner_id, group_id, visibility]
+      required: [id, name, description, owner_id, group_id, visibility, bytes]
       properties:
         id:
           type: integer
@@ -1692,9 +1726,13 @@ components:
           format: int64
         visibility:
           $ref: "#/components/schemas/Visibility"
+        bytes:
+          description: Bytes held by the kept versions of the site.
+          type: integer
+          format: int64
     Site:
       type: object
-      required: [name, description, owner_id, group, visibility, current]
+      required: [name, description, owner_id, group, visibility, current, bytes, quota_bytes]
       properties:
         name:
           $ref: "#/components/schemas/SiteName"
@@ -1712,6 +1750,14 @@ components:
           $ref: "#/components/schemas/Visibility"
         current:
           $ref: "#/components/schemas/CurrentVersion"
+        bytes:
+          description: Bytes held by the kept versions of the site.
+          type: integer
+          format: int64
+        quota_bytes:
+          description: "`[quotas] site_mb` in bytes; 0 means unlimited."
+          type: integer
+          format: int64
     SiteName:
       description: |
         A DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending

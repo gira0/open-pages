@@ -375,3 +375,23 @@ func TestLoadAuditRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadQuotas(t *testing.T) {
+	cfg, err := Load(writeConfig(t, ""))
+	if err != nil || cfg.SiteQuota != 0 || cfg.UserQuota != 0 || cfg.SitesPerUser != 0 {
+		t.Fatalf("defaults = %d, %d, %d, err %v; want no limits", cfg.SiteQuota, cfg.UserQuota, cfg.SitesPerUser, err)
+	}
+	cfg, err = Load(writeConfig(t, "[quotas]\nsite_mb = 50\nuser_mb = 200\nsites_per_user = 10\n"))
+	if err != nil || cfg.SiteQuota != 50<<20 || cfg.UserQuota != 200<<20 || cfg.SitesPerUser != 10 {
+		t.Fatalf("quotas = %d, %d, %d, err %v", cfg.SiteQuota, cfg.UserQuota, cfg.SitesPerUser, err)
+	}
+	for _, line := range []string{
+		"site_mb = -1", "site_mb = lots", "site_mb = 8796093022208", "site_mb =",
+		"user_mb = -5", "user_mb = 1.5",
+		"sites_per_user = -1", "sites_per_user = many", "sites_per_user = 2147483648",
+	} {
+		if _, err := Load(writeConfig(t, "[quotas]\n"+line+"\n")); err == nil {
+			t.Errorf("%q: expected an error", line)
+		}
+	}
+}
