@@ -300,6 +300,14 @@ func (s *Server) handleSiteAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.writeSiteAudit(w, r, site, userID(r))
+}
+
+// writeSiteAudit lists the audit entries of site for its owner. authorizeSite ran in an
+// earlier snapshot, so the owner check is repeated in the same statement that reads the
+// entries: if the site was deleted and its name and row id taken over meanwhile, the
+// result is empty instead of the new owner's history.
+func (s *Server) writeSiteAudit(w http.ResponseWriter, r *http.Request, site Site, owner int64) {
 	// A rowid can be reused after its row is deleted, so the site id alone does not tell
 	// two sites apart; entries older than this site's create entry belong to a predecessor.
 	// createSite writes that entry in the same transaction as the site row, so the boundary
@@ -307,9 +315,10 @@ func (s *Server) handleSiteAudit(w http.ResponseWriter, r *http.Request) {
 	// predate the audit log have no create entry and keep all their entries.
 	s.writeAuditPage(w, r, auditSelect+
 		`target_kind = 'site' AND target = ? AND siteid = ?
+		 AND EXISTS (SELECT 1 FROM docs WHERE docid = ? AND name = ? AND uowner = ?)
 		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ? AND target = ?), 0)`+
 		auditPageTail,
-		site.Name, site.ID, site.ID, site.Name)
+		site.Name, site.ID, site.ID, site.Name, owner, site.ID, site.Name)
 }
 
 // handleUserAudit: GET /v1/auth/user/audit lists what the caller did.

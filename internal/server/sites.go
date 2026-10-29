@@ -287,7 +287,10 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	if len(sets) == 0 {
 		sets = append(sets, "docid = docid") // no-op write, so RETURNING reads the row
 	}
-	args = append(args, site.ID)
+	// Every statement below matches the site's id, name and owner, not just the id: the
+	// caller authorized this exact site earlier, and if it has been deleted since, its
+	// row id may belong to a new site by now, which must stay untouched and unseen.
+	args = append(args, site.ID, site.Name, nullableID(site.OwnerID))
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Site{}, fmt.Errorf("begin: %w", err)
@@ -296,15 +299,21 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	// Take the write lock before reading the old values: a transaction that reads first
 	// and then writes fails with SQLITE_BUSY when another writer got in between. With the
 	// lock held, the old and new values below are an exact pair, whatever else is updating.
-	if _, err := tx.ExecContext(ctx, "UPDATE docs SET docid = docid WHERE docid = ?", site.ID); err != nil {
+	res, err := tx.ExecContext(ctx, "UPDATE docs SET docid = docid WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID))
+	if err != nil {
 		return Site{}, fmt.Errorf("lock site: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Site{}, errSiteNotFound
 	}
 	var (
 		before = site
 		desc   sql.NullString
 		grp    sql.NullInt64
 	)
-	err = tx.QueryRowContext(ctx, "SELECT description, ugroup, visibility FROM docs WHERE docid = ?", site.ID).
+	err = tx.QueryRowContext(ctx, "SELECT description, ugroup, visibility FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID)).
 		Scan(&desc, &grp, &before.Visibility)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
@@ -315,7 +324,7 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	before.Description, before.GroupID = desc.String, grp.Int64
 	out := site
 	err = tx.QueryRowContext(ctx,
-		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? RETURNING description, ugroup, visibility",
+		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? AND name = ? AND uowner IS ? RETURNING description, ugroup, visibility",
 		args...).Scan(&desc, &grp, &out.Visibility)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
@@ -394,8 +403,13 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after Commit
-	if _, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ?", site.ID); err != nil {
+	res, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+		site.ID, site.Name, nullableID(site.OwnerID))
+	if err != nil {
 		return fmt.Errorf("delete site: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errSiteNotFound
 	}
 	emit := s.auditRecord(ctx, tx, auditEvent{action: auditSiteDelete, targetKind: targetSite, target: site.Name, siteID: site.ID})
 	if err := tx.Commit(); err != nil {

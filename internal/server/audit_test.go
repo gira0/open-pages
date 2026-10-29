@@ -534,3 +534,95 @@ func TestRollbackOfDeletedSite(t *testing.T) {
 		t.Fatalf("rollback of deleted site = %v, want errSiteNotFound", err)
 	}
 }
+
+// reusedSite deletes "blog" (owned by user 1) and lets user 2 take the name and row id.
+// It returns the stale view of the old site and the new one.
+func reusedSite(t *testing.T, ts *httptest.Server, s *Server) (stale, fresh Site) {
+	t.Helper()
+	owner := loggedInClient(t, ts)
+	other := secondUser(t, ts)
+	createSiteVia(t, ts, owner, "blog")
+	stale, err := s.getSite(t.Context(), "blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := doJSON(t, owner, http.MethodDelete, ts.URL+"/v1/auth/sites/blog", "")
+	expectStatus(t, code, http.StatusOK)
+	code, _ = doJSON(t, other, http.MethodPost, ts.URL+"/v1/auth/sites", `{"name":"blog","description":"secret"}`)
+	expectStatus(t, code, http.StatusCreated)
+	if fresh, err = s.getSite(t.Context(), "blog"); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID != stale.ID {
+		t.Fatalf("row id not reused (%d, %d)", stale.ID, fresh.ID)
+	}
+	return stale, fresh
+}
+
+// A request authorized for the old site must not read the audit log of its successor.
+func TestSiteAuditStaleAuthorization(t *testing.T) {
+	ts, s := newTestServer(t)
+	stale, _ := reusedSite(t, ts, s)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/sites/blog/audit", nil)
+	s.writeSiteAudit(rec, req, stale, stale.OwnerID)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"entries":[]`) {
+		t.Fatalf("stale owner got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An update authorized for the old site must not land on, or reveal, the successor.
+func TestUpdateSiteStaleAuthorization(t *testing.T) {
+	ts, s := newTestServer(t)
+	stale, fresh := reusedSite(t, ts, s)
+	desc := "defaced"
+	if _, err := s.updateSite(t.Context(), stale, &desc, nil, nil); !errors.Is(err, errSiteNotFound) {
+		t.Fatalf("updateSite = %v, want errSiteNotFound", err)
+	}
+	got, err := s.getSite(t.Context(), "blog")
+	if err != nil || got.Description != fresh.Description {
+		t.Fatalf("successor changed: %+v, %v", got, err)
+	}
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'site.update'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("update entries = %d, err %v", n, err)
+	}
+	if err := s.deleteSite(t.Context(), stale); !errors.Is(err, errSiteNotFound) {
+		t.Fatalf("deleteSite = %v, want errSiteNotFound", err)
+	}
+}
+
+// Member entries carry the name of the group the change was made in, also when the group
+// id was used by another group before.
+func TestAuditMemberEntriesUseCurrentGroupName(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	secondUser(t, ts)
+	old := newGroupVia(t, ts, c, "Old")
+	code, _ := doJSON(t, c, http.MethodDelete, groupURL(ts, old, ""), "")
+	expectStatus(t, code, http.StatusOK)
+	gid := newGroupVia(t, ts, c, "New")
+	if gid != old {
+		t.Fatalf("group id not reused (%d, %d)", old, gid)
+	}
+	code, _ = doJSON(t, c, http.MethodPost, groupURL(ts, gid, "/members"), `{"email":"b@example.com"}`)
+	expectStatus(t, code, http.StatusCreated)
+	code, _ = doJSON(t, c, http.MethodDelete, groupURL(ts, gid, "/members/2"), "")
+	expectStatus(t, code, http.StatusOK)
+	rows, err := s.db.Query("SELECT target FROM audit_log WHERE action LIKE 'group.member_%'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var target string
+		if err := rows.Scan(&target); err != nil || target != "New" {
+			t.Fatalf("target = %q, err %v", target, err)
+		}
+		n++
+	}
+	if n != 2 {
+		t.Fatalf("member entries = %d, want 2", n)
+	}
+}

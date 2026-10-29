@@ -224,7 +224,14 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 // single statement. added is false if the user was already a member. It returns
 // errGroupNotFound, errNotGroupOwner or errUserNotFound otherwise.
 func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email string) (added bool, err error) {
-	res, err := s.db.ExecContext(ctx,
+	// The insert comes first, so it takes the write lock; the group name for the audit
+	// entry is then read in the same transaction, and is that of the group inserted into.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO user_group (uid, gid)
 		 SELECT u.userid, g.groupid FROM user u, groups g
 		 WHERE u.email = ? AND g.groupid = ? AND g.owner = ?
@@ -233,7 +240,22 @@ func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email
 		return false, fmt.Errorf("add member: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		var name string
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", groupID).Scan(&name); err != nil {
+			return false, fmt.Errorf("query group: %w", err)
+		}
+		emit := s.auditRecord(ctx, tx, auditEvent{
+			action: auditMemberAdd, targetKind: targetGroup, target: name, groupID: groupID,
+			details: map[string]any{"email": email},
+		})
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit: %w", err)
+		}
+		emit()
 		return true, nil
+	}
+	if err := tx.Rollback(); err != nil {
+		return false, fmt.Errorf("rollback: %w", err)
 	}
 	// Nothing inserted: not allowed, user unknown, or already a member.
 	g, err := s.getGroup(ctx, groupID)
@@ -266,7 +288,14 @@ func (s *Server) addGroupMember(ctx context.Context, actor, groupID int64, email
 // rules are checked inside the DELETE. It returns errGroupNotFound, errNotGroupOwner
 // (actor may not remove target), errOwnerMember or errNotAMember otherwise.
 func (s *Server) removeGroupMember(ctx context.Context, actor, groupID, target int64) error {
-	res, err := s.db.ExecContext(ctx,
+	// As in addGroupMember: the delete takes the write lock, and the name and email for
+	// the audit entry are read in the same transaction.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		`DELETE FROM user_group WHERE gid = ? AND uid = ?
 		 AND uid IS NOT (SELECT owner FROM groups WHERE groupid = ?)
 		 AND (uid = ? OR ? IS (SELECT owner FROM groups WHERE groupid = ?))`,
@@ -275,7 +304,24 @@ func (s *Server) removeGroupMember(ctx context.Context, actor, groupID, target i
 		return fmt.Errorf("remove member: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		var name, email string
+		if err := tx.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", groupID).Scan(&name); err != nil {
+			return fmt.Errorf("query group: %w", err)
+		}
+		// Users are never deleted, so the email is there; an empty one only weakens the snapshot.
+		_ = tx.QueryRowContext(ctx, "SELECT email FROM user WHERE userid = ?", target).Scan(&email)
+		emit := s.auditRecord(ctx, tx, auditEvent{
+			action: auditMemberRemove, targetKind: targetGroup, target: name, groupID: groupID,
+			details: map[string]any{"user_id": target, "email": email},
+		})
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		emit()
 		return nil
+	}
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback: %w", err)
 	}
 	g, err := s.getGroup(ctx, groupID)
 	if err != nil {
@@ -413,11 +459,6 @@ func (s *Server) handleMemberAdd(w http.ResponseWriter, r *http.Request) {
 	status, msg := http.StatusOK, "already a member"
 	if added {
 		status, msg = http.StatusCreated, "member added"
-		g, _ := s.getGroup(r.Context(), id) // best effort: the name is only a snapshot
-		s.audit(r.Context(), s.db, auditEvent{
-			action: auditMemberAdd, targetKind: targetGroup, target: g.Name, groupID: id,
-			details: map[string]any{"email": d.Email},
-		})
 	}
 	writeJSON(w, status, map[string]any{"status": msg, "group": id})
 }
@@ -436,12 +477,5 @@ func (s *Server) handleMemberRemove(w http.ResponseWriter, r *http.Request) {
 	if groupError(w, "remove member", s.removeGroupMember(r.Context(), userID(r), id, target)) {
 		return
 	}
-	g, _ := s.getGroup(r.Context(), id) // best effort: the name and email are only snapshots
-	var email string
-	_ = s.db.QueryRowContext(r.Context(), "SELECT email FROM user WHERE userid = ?", target).Scan(&email)
-	s.audit(r.Context(), s.db, auditEvent{
-		action: auditMemberRemove, targetKind: targetGroup, target: g.Name, groupID: id,
-		details: map[string]any{"user_id": target, "email": email},
-	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "member removed", "group": id, "user": target})
 }
