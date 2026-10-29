@@ -393,14 +393,60 @@ func TestAuditWriteFailureDoesNotFailRequest(t *testing.T) {
 	if _, err := s.db.Exec("DROP TABLE audit_log"); err != nil {
 		t.Fatal(err)
 	}
-	createSiteVia(t, ts, c, "blog")
 	gid := newGroupVia(t, ts, c, "Eng")
 	if gid == 0 {
 		t.Fatal("no group")
 	}
+	// Other changes go through; the group was created.
 	var n int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM docs").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("sites = %d, err %v", n, err)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM groups").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("groups = %d, err %v", n, err)
+	}
+}
+
+// The site.create entry is the start of a site's history and is written in the same
+// transaction as the site row: if it cannot be written there is no site.
+func TestSiteCreateNeedsAuditMarker(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	if _, err := s.db.Exec(`CREATE TRIGGER no_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'no audit'); END`); err != nil {
+		t.Fatal(err)
+	}
+	code, out := doJSON(t, c, http.MethodPost, ts.URL+"/v1/auth/sites", `{"name":"blog"}`)
+	expectStatus(t, code, http.StatusInternalServerError)
+	if out["error"] != "internal error" {
+		t.Errorf("body = %v", out)
+	}
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM docs").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("site rows after failed create = %d, err %v; want 0", n, err)
+	}
+	if _, err := s.db.Exec("DROP TRIGGER no_audit"); err != nil {
+		t.Fatal(err)
+	}
+	createSiteVia(t, ts, c, "blog")
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'site.create'").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("create markers = %d, err %v", n, err)
+	}
+}
+
+// The group name in the delete entry is that of the row deleted, also when the id was
+// used by another group before.
+func TestAuditGroupDeleteUsesDeletedName(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	first := newGroupVia(t, ts, c, "Old")
+	code, _ := doJSON(t, c, http.MethodDelete, groupURL(ts, first, ""), "")
+	expectStatus(t, code, http.StatusOK)
+	second := newGroupVia(t, ts, c, "New")
+	if second != first {
+		t.Skipf("group id not reused (%d, %d)", first, second)
+	}
+	code, _ = doJSON(t, c, http.MethodDelete, groupURL(ts, second, ""), "")
+	expectStatus(t, code, http.StatusOK)
+	var name string
+	if err := s.db.QueryRow("SELECT target FROM audit_log WHERE action = 'group.delete' ORDER BY auditid DESC LIMIT 1").Scan(&name); err != nil || name != "New" {
+		t.Fatalf("delete entry target = %q, err %v", name, err)
 	}
 }
 
@@ -432,6 +478,9 @@ func TestAuditDeleteOrderedBeforeRecreate(t *testing.T) {
 	}
 	if err := s.db.QueryRow("SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ?", again.ID).Scan(&create); err != nil {
 		t.Fatal(err)
+	}
+	if again.ID != site.ID {
+		t.Fatalf("row id not reused (%d, %d); the test needs the reuse case", site.ID, again.ID)
 	}
 	if del == 0 || del >= create {
 		t.Fatalf("delete entry %d, re-create entry %d: want delete first", del, create)

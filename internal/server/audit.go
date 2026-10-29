@@ -114,6 +114,17 @@ func (s *Server) audit(ctx context.Context, q execQuerier, ev auditEvent) {
 // change made in a transaction, pass the transaction and call the returned function only
 // after Commit succeeds, so a rolled-back change never ships an "audit" line.
 func (s *Server) auditRecord(ctx context.Context, q execQuerier, ev auditEvent) func() {
+	emit, err := s.auditInsert(ctx, q, ev)
+	if err != nil {
+		ctxLogger(ctx).Error("write audit log", "action", ev.action, "err", err)
+	}
+	return emit
+}
+
+// auditInsert is auditRecord for the one entry that must not be lost, site.create: it
+// returns the insert error to the caller, who rolls the change back. The returned
+// function is always usable and logs the entry.
+func (s *Server) auditInsert(ctx context.Context, q execQuerier, ev auditEvent) (func(), error) {
 	src, _ := ctx.Value(auditSourceKey{}).(auditSource)
 	uid, _ := ctx.Value(userIDKey).(int64)
 	details := []byte("{}")
@@ -135,14 +146,11 @@ func (s *Server) auditRecord(ctx context.Context, q execQuerier, ev auditEvent) 
 		 RETURNING auditid, actor_email`,
 		time.Now().Unix(), nullableID(uid), uid, src.via, ev.action, ev.targetKind, ev.target,
 		nullableID(ev.siteID), nullableID(ev.groupID), string(details), src.ip).Scan(&id, &email)
-	if err != nil {
-		ctxLogger(ctx).Error("write audit log", "action", ev.action, "err", err)
-	}
 	return func() {
 		ctxLogger(ctx).Info("audit", "audit_id", id, "actor", uid, "actor_email", oneLine(email), "actor_via", oneLine(src.via),
 			"action", ev.action, "target_kind", ev.targetKind, "target", oneLine(ev.target),
 			"site_id", ev.siteID, "group_id", ev.groupID, "details", oneLine(string(details)), "client_ip", oneLine(src.ip))
-	}
+	}, err
 }
 
 // oneLine drops line breaks from a value that came from a request. The slog handlers
@@ -294,7 +302,9 @@ func (s *Server) handleSiteAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	// A rowid can be reused after its row is deleted, so the site id alone does not tell
 	// two sites apart; entries older than this site's create entry belong to a predecessor.
-	// Sites that predate the audit log have no create entry and keep all their entries.
+	// createSite writes that entry in the same transaction as the site row, so the boundary
+	// exists from the moment the site does and a failed insert means no site. Sites that
+	// predate the audit log have no create entry and keep all their entries.
 	s.writeAuditPage(w, r, auditSelect+
 		`target_kind = 'site' AND target = ? AND siteid = ?
 		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ? AND target = ?), 0)`+

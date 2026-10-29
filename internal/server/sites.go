@@ -202,7 +202,12 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	if err := s.checkGroup(ctx, group, owner); err != nil {
 		return Site{}, err
 	}
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Site{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	res, err := tx.ExecContext(ctx,
 		"INSERT INTO docs (uowner, ugroup, name, description, visibility) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
 		owner, nullableID(group), name, description, visibility)
 	if groupGone(err, group) {
@@ -215,6 +220,20 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
+	// The create entry marks where this site's history starts (a reused row id must not
+	// expose a predecessor's entries), so it is written in the same transaction as the
+	// row and is the one audit write that fails the request: no marker, no site.
+	emit, err := s.auditInsert(ctx, tx, auditEvent{
+		action: auditSiteCreate, targetKind: targetSite, target: name, siteID: id,
+		details: map[string]any{"description": description, "group": group, "visibility": visibility},
+	})
+	if err != nil {
+		return Site{}, fmt.Errorf("audit site create: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Site{}, fmt.Errorf("commit: %w", err)
+	}
+	emit()
 	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group, Visibility: visibility}, nil
 }
 

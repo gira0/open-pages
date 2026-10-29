@@ -182,13 +182,6 @@ func (s *Server) createGroup(ctx context.Context, name string, owner int64) (Gro
 func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 	const guard = ` AND EXISTS (SELECT 1 FROM groups WHERE groupid = ? AND owner = ?)
 		AND NOT EXISTS (SELECT 1 FROM docs WHERE ugroup = ?)`
-	// The name is for the audit entry (groups can't be renamed). It is read before the
-	// transaction: a read inside would start it as a reader, and upgrading to a writer
-	// fails at once with SQLITE_BUSY if another writer got in between.
-	var name string
-	if err := s.db.QueryRowContext(ctx, "SELECT name FROM groups WHERE groupid = ?", id).Scan(&name); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("query group: %w", err)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -197,11 +190,15 @@ func (s *Server) deleteGroup(ctx context.Context, actor, id int64) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_group WHERE gid = ?"+guard, id, id, actor, id); err != nil {
 		return fmt.Errorf("delete memberships: %w", err)
 	}
-	res, err := tx.ExecContext(ctx, "DELETE FROM groups WHERE groupid = ?"+guard, id, id, actor, id)
-	if err != nil {
+	// The audit entry carries the name of the row this statement deleted, not one read
+	// earlier: the id of a deleted group can be reused by a different group. (The
+	// statement above already took the write lock, so nothing can change in between.)
+	var name string
+	err = tx.QueryRowContext(ctx, "DELETE FROM groups WHERE groupid = ?"+guard+" RETURNING name", id, id, actor, id).Scan(&name)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delete group: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
+	if err == nil {
 		emit := s.auditRecord(ctx, tx, auditEvent{action: auditGroupDelete, targetKind: targetGroup, target: name, groupID: id})
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)

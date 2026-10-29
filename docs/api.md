@@ -634,8 +634,9 @@ not the owner). What happened to the site since it was last created: create, upd
 (`changes` lists each changed field with its old and new value), deploy, rollback and delete.
 A site deleted and created again under the same name starts with an empty history, and the
 history of a deleted site cannot be read through the API (the entries stay in the database
-until retention removes them, and are in the log). Entries are not tied to a site id, so a
-new site never shows the previous owner's entries.
+until retention removes them, and are in the log). The `site.create` entry is written atomically with the
+site itself (if it cannot be written, creating the site fails with `500`), so a new site never
+shows the previous owner's entries.
 
 Query parameters: `limit` (default 50, at most 500; larger values are lowered to 500, below 1
 is `400`) and `before` (an entry `id`; only older entries are returned, `400` if not a

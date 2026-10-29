@@ -69,8 +69,12 @@ address. Entries are snapshots: they stay after the user, site or group is delet
 - **Not tamper-proof.** The log is an ordinary table: anyone with write access to `data.db`
   (or the host) can change or delete entries without a trace, and the application can too.
   Ship the log lines off the host to keep a copy that the host's administrators cannot rewrite.
-  If an entry cannot be written the change still goes through; the failure is logged and the
-  `audit` line is still emitted.
+  If an entry cannot be written the change still goes through, with one exception: the
+  `site.create` entry is written in the same transaction as the site row, because it marks where
+  the site's history starts (so a later site that reuses the name and database row never shows
+  its predecessor's entries). If it cannot be written the site is not created and the request
+  fails with 500. For the other actions the failure is logged and the `audit` line is still
+  emitted. An `audit` line is only logged after the change has been committed.
 
 ## What the deployment must provide
 
