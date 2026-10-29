@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -129,9 +130,16 @@ func (s *Server) audit(ctx context.Context, q execQuerier, ev auditEvent) {
 	if err != nil {
 		ctxLogger(ctx).Error("write audit log", "action", ev.action, "err", err)
 	}
-	ctxLogger(ctx).Info("audit", "audit_id", id, "actor", uid, "actor_email", email, "actor_via", src.via,
-		"action", ev.action, "target_kind", ev.targetKind, "target", ev.target,
-		"site_id", ev.siteID, "group_id", ev.groupID, "details", string(details), "client_ip", src.ip)
+	ctxLogger(ctx).Info("audit", "audit_id", id, "actor", uid, "actor_email", oneLine(email), "actor_via", oneLine(src.via),
+		"action", ev.action, "target_kind", ev.targetKind, "target", oneLine(ev.target),
+		"site_id", ev.siteID, "group_id", ev.groupID, "details", oneLine(string(details)), "client_ip", oneLine(src.ip))
+}
+
+// oneLine drops line breaks from a value that came from a request. The slog handlers
+// already quote such values, so this is belt and braces for log shippers that split on
+// raw newlines.
+func oneLine(v string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(v, "\n", ""), "\r", "")
 }
 
 // pruneAudit deletes entries older than the retention period; 0 keeps them for ever.
