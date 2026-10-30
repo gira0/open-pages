@@ -316,9 +316,9 @@ func (s *Server) writeSiteAudit(w http.ResponseWriter, r *http.Request, site Sit
 	s.writeAuditPage(w, r, auditSelect+
 		`target_kind = 'site' AND target = ? AND siteid = ?
 		 AND EXISTS (SELECT 1 FROM docs WHERE docid = ? AND name = ? AND uowner = ?)
-		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE action = 'site.create' AND siteid = ? AND target = ?), 0)`+
+		 AND auditid >= COALESCE((SELECT MAX(auditid) FROM audit_log WHERE target_kind = 'site' AND target = ? AND action = 'site.create' AND siteid = ?), 0)`+
 		auditPageTail,
-		site.Name, site.ID, site.ID, site.Name, owner, site.ID, site.Name)
+		site.Name, site.ID, site.ID, site.Name, owner, site.Name, site.ID)
 }
 
 // handleUserAudit: GET /v1/auth/user/audit lists what the caller did.
