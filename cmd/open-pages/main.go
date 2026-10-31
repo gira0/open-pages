@@ -31,6 +31,11 @@ func main() {
 	// path given with -config must exist.
 	explicit := false
 	flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "config" })
+	if explicit && *configPath == "" {
+		// An empty -config (say from an unset variable) must not turn into the env-only mode.
+		slog.Error("fatal", "err", "-config was given an empty path")
+		os.Exit(1)
+	}
 	noFile := false
 	if _, err := os.Stat(*configPath); errors.Is(err, fs.ErrNotExist) && !explicit {
 		noFile = true
