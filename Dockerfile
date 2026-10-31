@@ -12,13 +12,15 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/open-pages ./cmd/open-pages
 # The final image has no shell, so prepare the data directory here and copy it with
-# its ownership; a fresh named volume inherits that ownership. Group 0 owns /data with
+# its ownership and mode; a fresh named volume inherits both. The directories are copied
+# as children of /out/fs, because COPY of a directory copies its contents, and BuildKit
+# versions differ on whether --chmod also applies to the destination directory itself. Group 0 owns /data with
 # group permissions equal to the owner's (g=u) and setgid, so any UID that runs with
 # GID 0 can write it: OpenShift's restricted-v2 SCC assigns a random UID and GID 0.
 # /tmp (sticky, world-writable) is a mount point for an optional tmpfs/emptyDir.
-RUN mkdir -p /out/data /out/tmp \
- && chown 65532:0 /out/data && chmod 2775 /out/data \
- && chmod 1777 /out/tmp
+RUN mkdir -p /out/fs/data /out/fs/tmp \
+ && chown 65532:0 /out/fs/data && chmod 2775 /out/fs/data \
+ && chmod 1777 /out/fs/tmp
 
 FROM scratch
 ARG VERSION=dev
@@ -30,8 +32,7 @@ LABEL org.opencontainers.image.title="open-pages" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build --chown=65532:0 --chmod=2775 /out/data /data
-COPY --from=build --chown=65532:0 --chmod=1777 /out/tmp /tmp
+COPY --from=build /out/fs/ /
 COPY --from=build /out/open-pages /app/open-pages
 # The license, and notices for the third-party CSS and fonts embedded in the binary.
 COPY LICENSE NOTICE web/static/patternfly/*.txt /usr/share/doc/open-pages/

@@ -128,13 +128,11 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      # Two runs, both with a read-only root, all capabilities dropped and only /data and a
-      # tmpfs /tmp writable; the defaults baked into the image supply app_host/content_domain.
-      # 1. The image's own user (65532:0) on a fresh named volume: the Docker/compose path.
-      # 2. An arbitrary UID with GID 0, what OpenShift's restricted-v2 SCC assigns. Docker's
-      #    classic storage driver copies the owner of /data into a new volume but not its
-      #    2775 mode, so the volume is made group-writable first, as a Kubernetes fsGroup or
-      #    an OpenShift PVC would be.
+      # Two runs on fresh named volumes, both with a read-only root, all capabilities dropped
+      # and only /data and a tmpfs /tmp writable; the defaults baked into the image supply
+      # app_host/content_domain. First as the image's own user (65532:0), the Docker/compose
+      # path, then as an arbitrary UID with GID 0, what OpenShift's restricted-v2 SCC
+      # assigns, which needs the image's /data to be group-writable.
       - name: Smoke test with a read-only root, as the image user and as an arbitrary UID
         run: |
           smoke() {
@@ -156,5 +154,4 @@ jobs:
           docker volume create smoke-default
           smoke smoke-default 18080 -v smoke-default:/data
           docker volume create smoke-arbitrary
-          docker run --rm -v smoke-arbitrary:/d busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec sh -c 'chown 65532:0 /d && chmod 2775 /d'
           smoke smoke-arbitrary 18081 --user 1000780000:0 -v smoke-arbitrary:/data

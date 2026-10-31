@@ -329,8 +329,7 @@ docker run -p 8080:8080 -v open-pages-data:/data \
   -v "$PWD/my-settings.ini":/etc/open-pages/settings.ini:ro open-pages
 ```
 
-A named volume is writable out of the box by the image's user (see
-[Container image](#container-image) for other UIDs). A bind-mounted data directory must be owned by
+A named volume is writable out of the box. A bind-mounted data directory must be owned by
 group 0 and group-writable (`chgrp 0 dir && chmod 2775 dir`) or be `chown`ed to `65532`.
 Settings can also be given as `OPEN_PAGES_*` environment variables (see
 [Environment variables](#environment-variables)), for example `-e OPEN_PAGES_LOG_LEVEL=debug`.
@@ -361,16 +360,10 @@ load balancer instead.
 Kubernetes' `runAsNonRoot` check passes; the image has no `/etc/passwd`). `/data` is owned by
 group 0 with mode `2775` (group permissions equal to the owner's, setgid). Platforms such as
 OpenShift (`restricted-v2` SCC) ignore the user and run the container with a random UID and
-GID 0 (supplementary group 0), which can write `/data`. Do not set `runAsUser` there.
-
-With plain Docker, a new named volume takes the owner of `/data` from the image, but
-Docker's classic storage driver (`overlay2`) does not copy its mode, so the volume is `0755`
-and only UID 65532 can write it. To run under another UID in group 0, make the volume
-group-writable once:
+GID 0 (supplementary group 0), which can write `/data`. Do not set `runAsUser` there. The
+same works with plain Docker:
 
 ```sh
-docker volume create open-pages-data
-docker run --rm -v open-pages-data:/d busybox sh -c 'chown 65532:0 /d && chmod 2775 /d'
 docker run --user 1000780000:0 -p 8080:8080 -v open-pages-data:/data ghcr.io/gira0/open-pages:<version>
 ```
 
@@ -420,8 +413,8 @@ docker buildx imagetools inspect ghcr.io/gira0/open-pages:<version> \
 ```
 
 CI builds the image on every change, scans it with Trivy (fails on fixable HIGH or CRITICAL
-findings) and starts it with `--read-only`, once as the image's user on a fresh volume and
-once under `--user 1000780000:0` on a group-writable volume, to check `/readyz`.
+findings) and starts it with `--read-only` on a fresh volume, once as the image's user and
+once under `--user 1000780000:0`, to check `/readyz`.
 
 ## Health and metrics
 
