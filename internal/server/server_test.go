@@ -308,3 +308,37 @@ func TestDeployTimeBudget(t *testing.T) {
 		t.Fatalf("err = %v, want time budget error", err)
 	}
 }
+
+func TestGroupWritableDirs(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "site", "1")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(old, "index.html")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, "tmp")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "site"), 0o755|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	groupWritableDirs(root)
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(root, "site"): 0o775 | os.ModeSetgid,
+		old:                         0o775,
+		staging:                     0o770,
+		file:                        0o644,
+	} {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode() & (os.ModePerm | os.ModeSetgid); got != want {
+			t.Errorf("%s: mode %v, want %v", path, got, want)
+		}
+	}
+}

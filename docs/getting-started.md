@@ -378,7 +378,14 @@ A UID with some other primary group cannot write `/data` unless the volume says 
 (Kubernetes: `fsGroup`). Directories and files the app creates are group-writable (`0775`,
 `0664`, the database `0664`, staging `0770`), so a later run under a different UID in group 0,
 for example after moving to another OpenShift namespace or restoring a volume, can still
-write them.
+write them. At startup the server also adds group write to directories under `op_data/`
+and the staging directory that an older version created without it, which works while it
+runs as their owner. To move a volume written under one UID to another, for example an
+existing Docker volume to OpenShift, run once as root (or as the old owner):
+
+```sh
+chgrp -R 0 /data && chmod -R g=u /data
+```
 
 **Read-only root.** Run with `--read-only` (Kubernetes `readOnlyRootFilesystem: true`);
 the only writable path needed is `/data`. Upload spooling uses `TMPDIR`, which defaults to
@@ -402,17 +409,19 @@ cosign verify ghcr.io/gira0/open-pages:<version> \
 ```
 
 **SBOM and provenance.** The build attaches an SPDX SBOM and SLSA provenance (`mode=max`)
-as attestations in the registry. Fetch them with:
+as attestations in the registry, one per platform (`linux/amd64`, `linux/arm64`). Fetch
+them for a platform with:
 
 ```sh
 docker buildx imagetools inspect ghcr.io/gira0/open-pages:<version> \
-  --format '{{ json .SBOM.SPDX }}' > sbom.spdx.json
+  --format '{{ json (index .SBOM "linux/amd64").SPDX }}' > sbom.spdx.json
 docker buildx imagetools inspect ghcr.io/gira0/open-pages:<version> \
-  --format '{{ json .Provenance }}'
+  --format '{{ json (index .Provenance "linux/amd64").SLSA }}'
 ```
 
 CI builds the image on every change, scans it with Trivy (fails on fixable HIGH or CRITICAL
-findings) and starts it under `--read-only --user 1000780000:0` to check `/readyz`.
+findings) and starts it with `--read-only`, once as the image's user on a fresh volume and
+once under `--user 1000780000:0` on a group-writable volume, to check `/readyz`.
 
 ## Health and metrics
 
