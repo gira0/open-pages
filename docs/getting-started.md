@@ -69,13 +69,16 @@ open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>   d
 ```
 
 `-config` defaults to `settings.ini` in the working directory. The server stops gracefully
-on `SIGINT` or `SIGTERM`, giving in-flight requests up to 30 seconds. There are no
-environment variables for the server; configuration is the settings file only. (The
-`deploy` subcommand reads `OPEN_PAGES_TOKEN` and `OPEN_PAGES_URL`.)
+on `SIGINT` or `SIGTERM`: it fails `/readyz`, waits `[server] drain_delay` (default 0), then
+gives in-flight requests up to `[server] shutdown_timeout` (default 30 seconds). Any setting
+can also come from an environment variable (see [Environment variables](#environment-variables)).
+(The `deploy` subcommand reads `OPEN_PAGES_TOKEN` and `OPEN_PAGES_URL`.)
 
 ## Configuration reference
 
-The settings file is INI. A missing file is a fatal error; a missing key uses the default.
+The settings file is INI. A missing file named with `-config` is a fatal error; a missing
+key uses the default. If `-config` is not given and `settings.ini` does not exist, the server
+logs that and starts from the environment variables and defaults alone.
 The repository's [`configs/settings.ini`](../configs/settings.ini) documents the same keys and
 [`deploy/settings.ini`](../deploy/settings.ini) holds the defaults baked into the container
 image. Booleans written as anything other than a boolean silently fall back to the default,
@@ -89,6 +92,9 @@ value fails startup. Integers that do not parse also fall back to the default.
 | `host` | empty (all interfaces) | Interface to bind |
 | `http_port` | `8080` | Port to listen on |
 | `cookie_secure` | `false` | Set the `Secure` flag on the session cookie and name it `__Host-auth_cookie`, which sibling hosts cannot overwrite. Set to `true` whenever users reach the service over HTTPS, which production requires (see [security model](security-model.md)); with `false` the server logs a startup warning |
+| `trusted_proxies` | empty | Comma-separated CIDRs (or single addresses) of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed, for example `10.0.0.0/8`. Empty trusts nobody and ignores both headers. Only when the direct peer is in the list: the audit log and request log get the rightmost `X-Forwarded-For` address that is not itself a trusted proxy, and `https` in `X-Forwarded-Proto` makes the redirects between app and site hosts use `https`. Set `cookie_secure` as well; the cookie attributes follow that setting, not the header. A malformed entry fails startup |
+| `shutdown_timeout` | `30` | Seconds in-flight requests get to finish after `SIGTERM` before the server gives up. At least 1. Keep `drain_delay` + `shutdown_timeout` below the orchestrator's kill timeout (Kubernetes `terminationGracePeriodSeconds`). There is deliberately no write timeout, which would cut off large uploads and downloads |
+| `drain_delay` | `0` | Seconds to wait after `SIGTERM`, with `/readyz` already answering `503`, before the listener closes. Gives a load balancer time to stop sending traffic (the equivalent of a Kubernetes `preStop` sleep). `0` closes at once |
 | `cors_origins` | empty | Comma-separated origins (`scheme://host[:port]`) allowed to call the API cross-origin with credentials; empty means same-origin only. Browser POST/PUT/DELETE from any other origin gets 403 |
 
 ### [paths]
@@ -190,7 +196,7 @@ sign-in flow, provider setup and identity rules are in [auth.md](auth.md#oidc-si
 | `enabled` | `false` | Turn OIDC sign-in on. Must be `true` or `false` |
 | `issuer` | none, required | Issuer URL exactly as the provider reports it; discovery is read from `<issuer>/.well-known/openid-configuration` on first use. `https` only (`http` for localhost) |
 | `client_id` | none, required | Client id registered at the provider |
-| `client_secret` | none, required | Client secret. Read from this file only, never logged; make the file readable only by the service user |
+| `client_secret` | none, required | Client secret. Never logged; make the file readable only by the service user, or supply it as `OPEN_PAGES_OIDC_CLIENT_SECRET_FILE` (see [Environment variables](#environment-variables)) |
 | `redirect_url` | none, required | Absolute URL of `/v1/auth/oidc/callback` on this server, as registered at the provider. `https` only (`http` for localhost) |
 | `scopes` | `openid email profile` | Space- or comma-separated; `openid` is always added |
 | `email_claim` | `email` | ID token claim holding the email address |
@@ -215,6 +221,31 @@ flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
 | `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
 | `key_file`, `cert_file` | empty | PEM RSA private key (ECDSA is not supported) and certificate used to sign AuthnRequests. Set both or neither; without them requests are unsigned. The certificate is published in the SP metadata |
 
+### Environment variables
+
+Every setting above can be overridden by an environment variable named
+`OPEN_PAGES_<SECTION>_<KEY>`, in upper case: `[server] http_port` is `OPEN_PAGES_SERVER_HTTP_PORT`,
+`[log] level` is `OPEN_PAGES_LOG_LEVEL` and `[oidc] client_secret` is
+`OPEN_PAGES_OIDC_CLIENT_SECRET`. The environment wins over the file, and the file may be
+left out altogether when the environment (plus defaults) supplies everything. A variable that
+is set but empty sets the key to empty.
+
+Add `_FILE` to read the value from a file instead, with the trailing newline removed:
+`OPEN_PAGES_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc/client_secret`. That is how a Kubernetes
+Secret mounted as files reaches the server without being written into a ConfigMap. Setting
+both `OPEN_PAGES_X` and `OPEN_PAGES_X_FILE` fails startup, as does a `_FILE` path that cannot
+be read. For the three settings that are file paths themselves (`idp_metadata_file`,
+`key_file`, `cert_file`), `OPEN_PAGES_SAML_KEY_FILE` sets the path and
+`OPEN_PAGES_SAML_KEY_FILE_FILE` reads the path from a file.
+
+Only the sections in this reference are read, so other `OPEN_PAGES_*` variables are ignored.
+That matters on Kubernetes, which injects `OPEN_PAGES_SERVICE_HOST` and similar for a Service
+named `open-pages`.
+
+To change the log level at deploy time without touching the settings, set
+`OPEN_PAGES_LOG_LEVEL=debug` (and `OPEN_PAGES_LOG_FORMAT=json` for log shippers); logs go to
+standard error.
+
 ### Startup checks
 
 The server refuses to start, with the reason on stderr, when: the file cannot be read;
@@ -237,7 +268,7 @@ Two kinds of host, never mixed:
 
 | Host | Serves | Example |
 |---|---|---|
-| `app_host` | The API, the test page and its static assets, `/healthz`, and `/metrics` when enabled. Never site content, whatever the path | `https://pages.corp/` |
+| `app_host` | The API, the test page and its static assets, the probes, and `/metrics` when enabled. Never site content, whatever the path | `https://pages.corp/` |
 | `<site>.<content_domain>` | One site, read-only (`GET` and `HEAD`; any other method is `405` with `Allow: GET, HEAD`). Nothing of the API or UI. A label that is not a valid site name is a 404 | `https://blog.pages-content.corp/` |
 | anything else | `404` for every request except `GET /healthz` (see below) | |
 
@@ -260,9 +291,9 @@ site host. The reverse proxy must pass the original `Host` header through to ope
 (nginx: `proxy_set_header Host $host;`), because the server decides what to serve from it.
 Host matching ignores case, a port and a trailing dot.
 
-**Health probes.** `GET /healthz` (and `HEAD`) answers on any host that is not a site host, so
+**Health probes.** `GET /livez`, `/readyz` and `/healthz` (and `HEAD`) answer on any host that is not a site host, so
 probes by IP address, `localhost` or an internal name keep working. On a site host the same
-path is just a file of that site. `/metrics` is served on `app_host` only (with its token),
+paths are just files of that site. `/metrics` is served on `app_host` only (with its token),
 or on the dedicated metrics listener, which has no host rule.
 
 **Sessions on the content domain.** The session cookie is host-only, so the browser never
@@ -299,7 +330,16 @@ docker run -p 8080:8080 -v open-pages-data:/data \
 ```
 
 A named volume is writable by uid 65532 out of the box. A bind-mounted data directory must
-be `chown`ed to `65532` first. There are no environment variables for configuration.
+be `chown`ed to `65532` first. Settings can also be given as `OPEN_PAGES_*` environment
+variables (see [Environment variables](#environment-variables)), for example
+`-e OPEN_PAGES_LOG_LEVEL=debug`.
+
+**Read-only root filesystem.** The server writes only under `datapath` (the database and
+`op_data/`) and `<tmppath>/tmp` (upload staging), so it runs with `readOnlyRootFilesystem`
+as long as those are volumes. The one exception is Go's own multipart handling: a form
+upload (`/formupload`) with a file over 32 MiB is spooled to `$TMPDIR`, so keep `TMPDIR` on a
+writable volume (the image sets `/data/tmp`; on Kubernetes mount an `emptyDir` or the data
+volume and set `TMPDIR` to it). Raw uploads (`/upload`) never use `TMPDIR`.
 
 `deploy/docker-compose.yml` is an example: it builds the image locally (use
 `image: ghcr.io/gira0/open-pages:<version>` for a release), publishes port 8080, mounts the
@@ -311,19 +351,30 @@ docker compose -f deploy/docker-compose.yml up --build
 ```
 
 Because the image has no shell or `curl`, a container health check cannot run inside it;
-probe `GET /healthz` from the orchestrator or load balancer instead.
+probe `GET /readyz` (readiness) and `GET /livez` (liveness) from the orchestrator or load
+balancer instead.
 
 ## Health and metrics
 
 ### Health
 
-`GET /healthz` needs no login. It returns `200` with `{"status":"ok", ...}` when the
-database answers and both `op_data/` and the staging `tmp/` directory accept new files, and
-`503` with `"status":"fail"` otherwise, with a per-check `ok` or `fail` for `database` and
-`data_dir`. The reason for a failure is written to the log, not the response. The check gives
-up after 2 seconds, and concurrent requests share one in-flight filesystem check, so a hung
-mount cannot pile up goroutines. `GET /v1/ping` is a cheaper liveness probe that touches
-nothing.
+Three probe routes, all without login and all answering on any host that is not a site host:
+
+- `GET /livez`: `200 {"status":"ok"}` while the process is serving. It does no I/O, not even
+  a database ping. This matters: a liveness probe that touched a stalled volume would fail,
+  the pod would be killed and restarted in a loop, and the volume would still be stalled. Use
+  `/livez` for liveness probes and never `/readyz`.
+- `GET /readyz`: `200` with `{"status":"ok", ...}` when the database answers and both
+  `op_data/` and the staging `tmp/` directory accept new files, and `503` with
+  `"status":"fail"` otherwise, with a per-check `ok` or `fail` for `database` and `data_dir`.
+  The reason for a failure is written to the log, not the response. The check gives up after
+  2 seconds, and concurrent requests share one in-flight filesystem check, so a hung mount
+  cannot pile up goroutines. After `SIGTERM` it answers `503` with `"status":"draining"`, so
+  traffic moves away before the listener closes (see `drain_delay`). Use it for readiness
+  and startup probes.
+- `GET /healthz`: the former name of `/readyz`, kept as an alias.
+
+`GET /v1/ping` also touches nothing, but it is served on `app_host` only.
 
 ### Metrics
 
@@ -350,8 +401,9 @@ reset when the process restarts.
 Logs go to standard error in the `[log]` format. Every response carries an `X-Request-Id`
 header, generated by the server (an incoming one is ignored). The request log line has
 `request_id`, `method`, `route` (the matched pattern, not the raw URL), `status` and
-`duration`; raw URLs and client addresses are deliberately not logged. Handler errors log
-with the same `request_id`, so a client report can be matched to the log. `/healthz` and
+`duration`; raw URLs are deliberately not logged, and neither are client addresses unless
+`trusted_proxies` is set, which adds `client_ip`. Handler errors log
+with the same `request_id`, so a client report can be matched to the log. Probe and
 `/metrics` requests are logged at `debug`; 5xx responses at `error`.
 
 ## Deploying with the CLI and CI

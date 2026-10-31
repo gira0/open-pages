@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,10 +24,25 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deploy" {
 		os.Exit(cli.Deploy(os.Args[2:]))
 	}
-	configPath := flag.String("config", "settings.ini", "path to the settings file")
+	configPath := flag.String("config", defaultConfig, "path to the settings file")
 	flag.Parse()
 
-	if err := run(*configPath); err != nil {
+	// The default path may be absent when OPEN_PAGES_* variables supply every setting; a
+	// path given with -config must exist.
+	explicit := false
+	flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "config" })
+	if explicit && *configPath == "" {
+		// An empty -config (say from an unset variable) must not turn into the env-only mode.
+		slog.Error("fatal", "err", "-config was given an empty path")
+		os.Exit(1)
+	}
+	noFile := false
+	if _, err := os.Stat(*configPath); errors.Is(err, fs.ErrNotExist) && !explicit {
+		noFile = true
+		*configPath = ""
+	}
+
+	if err := run(*configPath, noFile); err != nil {
 		// Startup errors can carry text from files or the network (for example SAML metadata);
 		// keep them on one log line.
 		msg := strings.ReplaceAll(strings.ReplaceAll(err.Error(), "\r", " "), "\n", " ")
@@ -35,12 +51,20 @@ func main() {
 	}
 }
 
-func run(configPath string) error {
+// defaultConfig is the settings file read when -config is not given.
+const defaultConfig = "settings.ini"
+
+// run serves until a signal arrives. An empty configPath means there is no settings file
+// and the environment supplies the settings; noFile only adds a log line saying so.
+func run(configPath string, noFile bool) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
 	slog.SetDefault(logging.New(os.Stderr, cfg.LogLevel, cfg.LogFormat))
+	if noFile {
+		slog.Info("no settings file found, using OPEN_PAGES_* environment variables and defaults", "path", defaultConfig)
+	}
 	srv, err := server.New(cfg)
 	if err != nil {
 		return err
@@ -54,6 +78,10 @@ func run(configPath string) error {
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// There is no WriteTimeout on purpose: it bounds the whole response, so it would cut
+		// off large uploads' replies and slow downloads of big sites. Slow clients are
+		// limited by the read header timeout, the idle timeout and the upload and deploy limits.
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -80,10 +108,19 @@ func run(configPath string) error {
 	case <-ctx.Done():
 	}
 
-	// Stop accepting connections and wait for in-flight requests before the
+	// Fail /readyz first and give the load balancer drain_delay to stop sending requests,
+	// then stop accepting connections and wait for in-flight requests before the
 	// deferred database close runs.
-	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	slog.Info("shutting down", "drain_delay", cfg.DrainDelay, "shutdown_timeout", cfg.ShutdownTimeout)
+	srv.Drain()
+	if cfg.DrainDelay > 0 {
+		select {
+		case <-time.After(cfg.DrainDelay):
+		case err := <-serveErr:
+			return err
+		}
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)

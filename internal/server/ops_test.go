@@ -245,6 +245,61 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestLivezReadyzAndDrain(t *testing.T) {
+	ts, s := newTestServer(t)
+	for _, path := range []string{"/livez", "/readyz", "/healthz"} {
+		if resp, body := fetch(t, ts.URL+path, nil); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"status":"ok"`) {
+			t.Errorf("%s: status %d body %s", path, resp.StatusCode, body)
+		}
+		expectStatus(t, do(s, "GET", "10.0.0.7", path).Code, http.StatusOK)
+		expectStatus(t, do(s, "HEAD", "10.0.0.7", path).Code, http.StatusOK)
+		expectStatus(t, do(s, "POST", "10.0.0.7", path).Code, http.StatusNotFound)
+	}
+
+	// Draining fails readiness (and its old name) but not liveness.
+	s.Drain()
+	for _, path := range []string{"/readyz", "/healthz"} {
+		resp, body := fetch(t, ts.URL+path, nil)
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, `"status":"draining"`) {
+			t.Errorf("%s while draining: status %d body %s", path, resp.StatusCode, body)
+		}
+		expectStatus(t, do(s, "GET", "10.0.0.7", path).Code, http.StatusServiceUnavailable)
+	}
+	if resp, _ := fetch(t, ts.URL+"/livez", nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("/livez while draining: status %d", resp.StatusCode)
+	}
+}
+
+// A probe whose checks were already running when Drain was called still answers draining.
+func TestReadyzDrainDuringChecks(t *testing.T) {
+	ts, s := newTestServer(t)
+	orig := afterReadyChecks
+	t.Cleanup(func() { afterReadyChecks = orig })
+	afterReadyChecks = s.Drain
+	resp, body := fetch(t, ts.URL+"/readyz", nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, `"status":"draining"`) {
+		t.Errorf("drained during checks: status %d body %s", resp.StatusCode, body)
+	}
+}
+
+// Liveness does no I/O: it stays up when the database and the data directories are gone,
+// which is what a stalled volume looks like to the process.
+func TestLivezDoesNoIO(t *testing.T) {
+	ts, s := newTestServer(t)
+	if err := s.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(s.tmp); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := fetch(t, ts.URL+"/livez", nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("/livez: status %d, want 200", resp.StatusCode)
+	}
+	if resp, _ := fetch(t, ts.URL+"/readyz", nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("/readyz: status %d, want 503", resp.StatusCode)
+	}
+}
+
 func TestMetricsDisabledByDefault(t *testing.T) {
 	ts, _ := newTestServer(t)
 	resp, _ := fetch(t, ts.URL+"/metrics", nil)

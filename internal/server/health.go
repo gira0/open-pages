@@ -63,11 +63,38 @@ func (p *healthProbe) run(ctx context.Context, fn func() error) error {
 	}
 }
 
-// handleHealth reports whether the instance can do its job: the database answers and the
-// site and staging directories are writable. It needs no login so load balancers and
-// orchestrators can probe it, and it only says ok or fail per check, never why; the
-// reason goes to the log.
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+// Drain marks the server as shutting down: /readyz answers 503 from now on, so a load
+// balancer or Kubernetes stops sending new requests before the listener closes.
+func (s *Server) Drain() { s.draining.Store(true) }
+
+// handleLive reports that the process is up and serving. It deliberately does no I/O, not
+// even a database ping: a liveness probe that touched a stalled volume would fail, get the
+// pod killed and restarted in a loop while the volume is still stalled. Use /readyz for
+// anything that depends on storage.
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// afterReadyChecks runs between the readiness checks and the answer; tests use it to
+// start draining while a probe is in flight.
+var afterReadyChecks = func() {}
+
+// writeDraining is the /readyz answer once Drain has been called.
+func writeDraining(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "checks": map[string]string{}})
+}
+
+// handleReady reports whether the instance can do its job: the database answers and the
+// site and staging directories are writable. It answers 503 while draining. It needs no
+// login so load balancers and orchestrators can probe it, and it only says ok or fail per
+// check, never why; the reason goes to the log. /healthz is an older name for it.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if s.draining.Load() {
+		writeDraining(w)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), healthTimeout)
 	defer cancel()
 
@@ -81,6 +108,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		slog.Warn("health: data directory", "err", err, "request_id", requestIDOf(w))
 		checks["data_dir"] = "fail"
+	}
+	afterReadyChecks()
+	// Drain may have started while the checks ran; answering ok now would put a
+	// terminating instance back into rotation.
+	if s.draining.Load() {
+		writeDraining(w)
+		return
 	}
 
 	status, code := "ok", http.StatusOK

@@ -153,7 +153,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		next(w, r.WithContext(context.WithValue(withAuditSource(r, viaOf(r)), userIDKey, uid)))
+		next(w, r.WithContext(context.WithValue(s.withAuditSource(r, viaOf(r)), userIDKey, uid)))
 	})
 }
 

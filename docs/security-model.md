@@ -37,8 +37,8 @@ hold, and what is not covered yet.
 - **Requests are routed by host, and unknown hosts reach nothing.** The `Host` header
   (case-insensitive, port and one trailing dot ignored) decides what a request is. A host
   that is neither `app_host` nor `<valid site name>.<content_domain>` gets a `404`, so a
-  forged `Host` header never reaches the API. The only route that answers on an arbitrary
-  host is `GET /healthz`, for probes by IP address.
+  forged `Host` header never reaches the API. The only routes that answer on an arbitrary
+  host are `GET /livez`, `/readyz` and `/healthz`, for probes by IP address.
 - **Content hosts are read-only.** Only `GET` and `HEAD` are accepted there; everything else
   is `405`. CORS headers are never added to site responses, and the UI's
   `Content-Security-Policy` is not applied to them (their authors decide what they load).

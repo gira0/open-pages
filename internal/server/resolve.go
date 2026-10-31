@@ -31,7 +31,7 @@ func (s *Server) siteFromHost(host string) (site string, ok bool) {
 // dispatch sends a request to the part of the server its host belongs to:
 //   - app_host: the API, the UI and static assets, never site content;
 //   - <site>.<content_domain>: that site, read-only, and nothing else;
-//   - any other host: only GET /healthz, so probes by IP or localhost keep working;
+//   - any other host: only GET /livez, /readyz and /healthz, so probes by IP or localhost keep working;
 //     everything else is a 404 and a stray Host header never reaches the API.
 func (s *Server) dispatch(app, probes http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

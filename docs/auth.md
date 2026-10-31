@@ -101,8 +101,10 @@ Every key is described in [getting-started.md](getting-started.md#oidc). The ess
   attempt, so the server starts even if the provider is down; sign-in then answers 502.
 - `redirect_url` must be the absolute URL of `/v1/auth/oidc/callback` on this server, and
   must be registered at the provider exactly like that.
-- The client secret is read from the settings file only (there is no environment
-  override) and is never logged. Make the file readable only by the service user.
+- The client secret is never logged. Keep it out of the settings file if you like: set
+  `OPEN_PAGES_OIDC_CLIENT_SECRET`, or `OPEN_PAGES_OIDC_CLIENT_SECRET_FILE` to a file holding
+  it (for example a mounted Kubernetes Secret). Otherwise make the file readable only by the
+  service user.
 
 ### Provider setup
 

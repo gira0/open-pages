@@ -13,7 +13,7 @@ server does not register. Nothing checks this page automatically, so a route cha
 update it by hand alongside the spec.
 
 All routes below are served on `app_host` only (see [Serving sites](#serving-sites)); a
-request for any other host is a `404`, except `GET /healthz`. The `curl` examples assume
+request for any other host is a `404`, except the probes `GET /livez`, `/readyz` and `/healthz`. The `curl` examples assume
 `app_host = pages.corp`. `cookies` is a cookie jar
 file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 
@@ -66,7 +66,9 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | GET | `/manage` | none | HTML site management page (needs a session to show data) |
 | GET | `/static/{hash}/{path}` | none | UI stylesheets, scripts and fonts |
 | GET | `/v1/ping` | none | Liveness |
-| GET | `/healthz` | none | Health check |
+| GET | `/livez` | none | Liveness probe |
+| GET | `/readyz` | none | Readiness probe |
+| GET | `/healthz` | none | Alias of `/readyz` |
 | GET | `/v1/openapi.yaml` | none | OpenAPI 3.1 description of this API |
 | GET | `/metrics` | metrics token | Prometheus metrics (optional) |
 | GET | `/v1/sites` | none | List public sites |
@@ -113,7 +115,13 @@ No authentication. Always `200 {"message":"pong"}`; it touches nothing.
 curl https://pages.corp/v1/ping
 ```
 
-### GET /healthz
+### GET /livez
+
+No authentication. `200 {"status":"ok"}` while the process is serving. It does no I/O at all,
+by design: a liveness probe that touched the database or a volume would get the pod killed in
+a loop when the volume stalls. Use it for liveness, and `/readyz` for readiness.
+
+### GET /readyz
 
 No authentication, so load balancers and orchestrators can probe it. It pings the database
 and checks that the site directory (`<datapath>/op_data`) and the staging directory
@@ -122,10 +130,15 @@ a check failed; the reason is logged at `warn`.
 
 - `200 {"status":"ok","checks":{"database":"ok","data_dir":"ok"}}`
 - `503 {"status":"fail","checks":{"database":"fail","data_dir":"ok"}}` (any check failed)
+- `503 {"status":"draining","checks":{}}` (the server received `SIGTERM` and is shutting down)
 
-Responses carry `Cache-Control: no-store`. It is the one route that answers on any host
-that is not a site host (probes by IP address or `localhost` have no meaningful `Host`);
+Responses carry `Cache-Control: no-store`. The probes are the only routes that answer on any
+host that is not a site host (probes by IP address or `localhost` have no meaningful `Host`);
 every other route needs `Host: <app_host>`.
+
+### GET /healthz
+
+The former name of `/readyz`, kept for compatibility. Same behaviour and responses.
 
 ### GET /v1/openapi.yaml
 
@@ -686,7 +699,7 @@ means (see [URLs and hosts](getting-started.md#urls-and-hosts)):
 |---|---|
 | `<site>.<content_domain>` | Serves that site only. Other methods: `405` with `Allow: GET, HEAD`. A host whose label is not a valid site name (`a.b.<content_domain>`, `Bad_Name`) is a `404` |
 | `app_host` | API, UI and static assets only. A path that looks like a site (`/blog/`) is a plain `404` |
-| any other host | `404`, except `GET /healthz` |
+| any other host | `404`, except `GET /livez`, `/readyz` and `/healthz` |
 
 Behaviour for every site:
 
