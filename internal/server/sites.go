@@ -493,7 +493,9 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	if err := os.Rename(staging, filepath.Join(dir, versionsDir, version)); err != nil {
 		return "", err
 	}
-	if err := s.recordVersionSize(ctx, site, version, size); err != nil {
+	// The accounting below must not stop half-way because the client went away.
+	acct := context.WithoutCancel(ctx)
+	if err := s.recordVersionSize(acct, site, version, size); err != nil {
 		// Not fatal: the next quota check or restart measures the directory instead.
 		ctxLogger(ctx).Warn("record version size", "site", site.Name, "err", err)
 	}
@@ -503,10 +505,10 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	if err := s.pruneVersions(site.Name); err != nil {
 		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
-	if _, err := s.syncVersionSizes(ctx, site); err != nil {
+	if _, err := s.syncVersionSizes(acct, site); err != nil {
 		ctxLogger(ctx).Warn("sync version sizes", "site", site.Name, "err", err)
 	}
-	s.refreshStoredBytes(ctx)
+	s.refreshStoredBytes(acct)
 	// Recorded while deployMu is held, so a delete and re-create of the site cannot slip
 	// in first, and independent of whether the client is still connected.
 	s.audit(ctx, s.db, auditEvent{
@@ -620,6 +622,9 @@ func (s *Server) CurrentVersion(site string) (string, error) {
 	return filepath.Base(target), nil
 }
 
+// removeAll deletes a version directory; tests replace it to simulate a failing delete.
+var removeAll = os.RemoveAll
+
 // pruneVersions removes the oldest versions beyond cfg.KeepVersions, never the current
 // one. The caller holds deployMu.
 func (s *Server) pruneVersions(site string) error {
@@ -640,7 +645,7 @@ func (s *Server) pruneVersions(site string) error {
 		if v == current {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(s.SiteDir(site), versionsDir, v)); err != nil {
+		if err := removeAll(filepath.Join(s.SiteDir(site), versionsDir, v)); err != nil {
 			errs = append(errs, err)
 			continue
 		}

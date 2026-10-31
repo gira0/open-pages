@@ -355,3 +355,63 @@ func TestConcurrentDeploysRespectQuota(t *testing.T) {
 	}
 	noStaging(t, s)
 }
+
+// Rows missing for another site are measured again, not trusted as zero.
+func TestUserQuotaMeasuresOtherSitesMissingRows(t *testing.T) {
+	_, s := newTestServer(t)
+	s.cfg.UserQuota = 1000
+	owner := testOwner(t, s)
+	for _, name := range []string{"blog", "notes"} {
+		if _, err := s.createSite(t.Context(), name, "", owner, 0, visPublic); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.deploy(t.Context(), mustSite(t, s, "blog"), writeZip(t, payload(600))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(t.Context(), "DELETE FROM site_version"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.deploy(t.Context(), mustSite(t, s, "notes"), writeZip(t, payload(500)))
+	var qe *quotaError
+	if !errors.As(err, &qe) || !strings.Contains(qe.Error(), "user quota") {
+		t.Fatalf("deploy with unrecorded bytes elsewhere = %v, want a user quota error", err)
+	}
+	// The rejection also repaired the rows.
+	if got := dbBytes(t, s); got != 600 {
+		t.Fatalf("usage after sync = %d, want 600", got)
+	}
+}
+
+// A version that cannot be deleted stays counted: it earns no credit for later deploys.
+func TestQuotaDoesNotCreditUndeletableVersion(t *testing.T) {
+	_, s := newTestServer(t)
+	s.cfg.SiteQuota = 1000
+	s.cfg.KeepVersions = 1
+	v1 := deployFiles(t, s, payload(600))
+	stuck := filepath.Join(s.SiteDir("blog"), versionsDir, v1)
+	orig := removeAll
+	removeAll = func(p string) error {
+		if p == stuck {
+			return errors.New("device busy")
+		}
+		return orig(p)
+	}
+	t.Cleanup(func() { removeAll = orig })
+
+	// 600 + 400 fits only by crediting v1, whose removal then fails.
+	deployFiles(t, s, payload(400))
+	if vs, _ := s.Versions("blog"); len(vs) != 2 {
+		t.Fatalf("versions = %v, want the stuck one kept", vs)
+	}
+	if _, err := s.deploy(t.Context(), mustSite(t, s, "blog"), writeZip(t, payload(400))); err == nil {
+		t.Fatal("deploy passed by crediting an undeletable version")
+	}
+	noStaging(t, s)
+
+	removeAll = orig
+	deployFiles(t, s, payload(400))
+	if vs, _ := s.Versions("blog"); len(vs) != 1 {
+		t.Fatalf("versions after the delete works again = %v", vs)
+	}
+}

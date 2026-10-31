@@ -135,31 +135,79 @@ func (s *Server) otherSitesBytes(ctx context.Context, owner, except int64) (int6
 	return n, err
 }
 
+// syncOtherSites reconciles the version sizes of the other sites site's owner has. The
+// caller holds deployMu.
+func (s *Server) syncOtherSites(ctx context.Context, site Site) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT docid, name FROM docs WHERE uowner = ? AND docid != ?", site.OwnerID, site.ID)
+	if err != nil {
+		return fmt.Errorf("list sites: %w", err)
+	}
+	defer rows.Close()
+	var others []Site
+	for rows.Next() {
+		o := Site{OwnerID: site.OwnerID}
+		if err := rows.Scan(&o.ID, &o.Name); err != nil {
+			return fmt.Errorf("scan site: %w", err)
+		}
+		others = append(others, o)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list sites: %w", err)
+	}
+	_ = rows.Close()
+	for _, o := range others {
+		if _, err := s.syncVersionSizes(ctx, o); err != nil {
+			return fmt.Errorf("measure site %s: %w", o.Name, err)
+		}
+	}
+	return nil
+}
+
 // checkQuota decides whether deploying a version of size bytes to site fits the site and
-// owner quotas. It counts the state after the deploy and the prune that follows it: the
-// new version plus the newest keep_versions-1 old ones, so a site at its limit can still
-// replace its oldest version. It returns a *quotaError if not. The caller holds deployMu.
+// owner quotas. It counts the state after the deploy and the prune that follows it, so a
+// site at its limit can still replace its oldest version: the one version that prune will
+// remove is not counted. If the site holds more than keep_versions versions, because an
+// earlier prune failed, it first tries to prune; whatever is left over is counted in full,
+// with no credit. A failure to measure anything is an error, never a pass. It returns a
+// *quotaError if the deploy does not fit. The caller holds deployMu.
 func (s *Server) checkQuota(ctx context.Context, site Site, size int64) error {
 	if s.cfg.SiteQuota == 0 && s.cfg.UserQuota == 0 {
 		return nil
+	}
+	keep := max(s.cfg.KeepVersions, 1)
+	versions, err := s.Versions(site.Name)
+	if err != nil {
+		return err
+	}
+	if len(versions) > keep {
+		if err := s.pruneVersions(site.Name); err != nil {
+			ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
+		}
 	}
 	sizes, err := s.syncVersionSizes(ctx, site)
 	if err != nil {
 		return err
 	}
-	versions, err := s.Versions(site.Name)
-	if err != nil {
+	if versions, err = s.Versions(site.Name); err != nil {
 		return err
 	}
 	after := size
-	for i := len(versions) - 1; i >= 0 && len(versions)-i < max(s.cfg.KeepVersions, 1); i-- {
-		after += sizes[versions[i]]
+	for _, v := range versions {
+		after += sizes[v]
+	}
+	if len(versions) == keep { // the deploy's prune removes the oldest
+		after -= sizes[versions[0]]
 	}
 	if q := s.cfg.SiteQuota; q > 0 && after > q {
 		return &quotaError{fmt.Sprintf("site quota exceeded: %s would hold %s after this deploy, over the limit of %s per site",
 			site.Name, humanSize(after), humanSize(q))}
 	}
 	if q := s.cfg.UserQuota; q > 0 && site.OwnerID != 0 {
+		// The other sites' rows may be missing (a failed backfill or interrupted accounting),
+		// so measure them again before trusting the sum.
+		if err := s.syncOtherSites(ctx, site); err != nil {
+			return err
+		}
 		others, err := s.otherSitesBytes(ctx, site.OwnerID, site.ID)
 		if err != nil {
 			return fmt.Errorf("query user usage: %w", err)
