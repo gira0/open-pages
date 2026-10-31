@@ -136,7 +136,7 @@ func (e *extractor) dir(name string) error {
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(path, 0o755)
+	return os.MkdirAll(path, 0o775) //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 }
 
 func (e *extractor) file(name string, r io.Reader) error {
@@ -144,10 +144,10 @@ func (e *extractor) file(name string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o775); err != nil { //nolint:gosec // G301: as above
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // G304: path checked by target()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o664) //nolint:gosec // G302, G304: group-writable for arbitrary UIDs in group 0; path checked by target()
 	if err != nil {
 		return err
 	}

@@ -441,7 +441,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 	if dir == "" {
 		return "", errors.New("invalid site name")
 	}
-	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
+	if err := os.MkdirAll(s.sites, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 		return "", err
 	}
 
@@ -466,7 +466,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		}
 		return "", &badArchiveError{err}
 	}
-	if err := os.Chmod(staging, 0o755); err != nil { //nolint:gosec // G302: public site content
+	if err := os.Chmod(staging, 0o775); err != nil { //nolint:gosec // G302: public site content, group-writable for arbitrary UIDs in group 0
 		return "", err
 	}
 
@@ -489,7 +489,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		s.refreshStoredBytes(context.WithoutCancel(ctx))
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o755); err != nil { //nolint:gosec // G301: public site content
+	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 		return "", err
 	}
 	version := xid.New().String() // time-sortable, so lexical order is deploy order

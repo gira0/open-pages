@@ -286,12 +286,14 @@ func New(cfg config.Config) (*Server, error) {
 		}
 	}
 	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
-	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
+	if err := os.MkdirAll(s.sites, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 		return nil, fmt.Errorf("create %s: %w", s.sites, err)
 	}
-	if err := os.MkdirAll(s.tmp, 0o700); err != nil {
+	if err := os.MkdirAll(s.tmp, 0o770); err != nil { //nolint:gosec // G301: group 0 shares the volume under OpenShift arbitrary UIDs
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
+	groupWritableDirs(s.sites)
+	groupWritableDirs(s.tmp)
 
 	pages, err := parsePages(web.Templates)
 	if err != nil {
@@ -326,3 +328,23 @@ func (s *Server) Close() error {
 
 // SitesDir returns the directory holding the extracted sites.
 func (s *Server) SitesDir() string { return s.sites }
+
+// groupWritableDirs gives group the owner's permissions on every directory under root that
+// lacks group write, so a volume written by an older version (directories 0755, staging
+// 0700) can still be changed after the container moves to another UID in group 0, as
+// OpenShift's arbitrary UIDs do. Files need no change: they are only read in place, and
+// replacing or removing them needs write on the directory. It is best effort, since only
+// the owner may chmod, and it skips files, so the cost is one lstat per directory.
+func groupWritableDirs(root string) {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil //nolint:nilerr // best effort: skip what can't be read
+		}
+		if fi, err := d.Info(); err == nil && fi.Mode().Perm()&0o020 == 0 {
+			perm := fi.Mode().Perm()
+			keep := fi.Mode() & (os.ModeSetgid | os.ModeSticky)
+			_ = os.Chmod(path, keep|perm|(perm&0o700)>>3) //nolint:gosec // G302: group 0 shares the volume under OpenShift arbitrary UIDs
+		}
+		return nil
+	})
+}
