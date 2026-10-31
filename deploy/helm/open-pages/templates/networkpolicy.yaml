@@ -1,0 +1,61 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "open-pages.fullname" . }}
+  labels:
+    {{- include "open-pages.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "open-pages.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- with .Values.networkPolicy.appIngressFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.config.httpPort }}
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.config.metrics.listen }}
+    {{- with .Values.networkPolicy.metricsIngressFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ include "open-pages.metricsPort" $ }}
+          protocol: TCP
+    {{- end }}
+    {{- end }}
+  egress:
+    {{- with .Values.networkPolicy.egress.dnsTo }}
+    - to:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.allowedCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.allowedPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

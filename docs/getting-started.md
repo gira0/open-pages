@@ -341,6 +341,8 @@ upload (`/formupload`) with a file over 32 MiB is spooled to `$TMPDIR`, so keep 
 writable volume (the image sets `/data/tmp`; on Kubernetes mount an `emptyDir` or the data
 volume and set `TMPDIR` to it). Raw uploads (`/upload`) never use `TMPDIR`.
 
+For Kubernetes and OpenShift use the Helm chart; see [kubernetes.md](kubernetes.md).
+
 `deploy/docker-compose.yml` is an example: it builds the image locally (use
 `image: ghcr.io/gira0/open-pages:<version>` for a release), publishes port 8080, mounts the
 `open-pages-data` volume at `/data`, and runs with `read_only: true`, `cap_drop: [ALL]` and

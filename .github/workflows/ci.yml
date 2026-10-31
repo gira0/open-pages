@@ -155,3 +155,58 @@ jobs:
           smoke smoke-default 18080 -v smoke-default:/data
           docker volume create smoke-arbitrary
           smoke smoke-arbitrary 18081 --user 1000780000:0 -v smoke-arbitrary:/data
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CHART: deploy/helm/open-pages
+      # Rendering offline has no cluster to ask, so state the Kubernetes version to render for.
+      KUBE_VERSION: 1.31.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      # Both tools are built from pinned module versions; the Go module proxy and checksum
+      # database verify the source, so there is no tarball to hash by hand.
+      - name: Install Helm and kubeconform
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install helm.sh/helm/v3/cmd/helm@v3.19.4
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Lint the chart with each CI values file
+        run: |
+          for f in "$CHART"/ci/*.yaml; do
+            echo "::group::helm lint $f"
+            helm lint --strict "$CHART" -f "$f"
+            echo "::endgroup::"
+          done
+      # Route, ServiceMonitor and HTTPRoute are CRDs: their schemas come from the datree
+      # catalog, and a kind without a schema anywhere is skipped rather than failed.
+      - name: Render and validate the manifests
+        run: |
+          for f in "$CHART"/ci/*.yaml; do
+            echo "::group::$f"
+            helm template ci "$CHART" --kube-version "$KUBE_VERSION" -f "$f" > rendered.yaml
+            kubeconform -strict -summary -ignore-missing-schemas \
+              -kubernetes-version "$KUBE_VERSION" \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+              rendered.yaml
+            echo "::endgroup::"
+          done
+      - name: Check that unsupported settings are refused
+        run: |
+          set -u
+          base=(--kube-version "$KUBE_VERSION" -f "$CHART/ci/default-values.yaml")
+          if helm template ci "$CHART" "${base[@]}" --set replicaCount=2; then
+            echo "::error::replicaCount=2 should be rejected"; exit 1
+          fi
+          if helm template ci "$CHART" --kube-version "$KUBE_VERSION" 2>err.txt; then
+            echo "::error::rendering without config.appHost should fail"; exit 1
+          fi
+          grep -q 'config.appHost is required' err.txt

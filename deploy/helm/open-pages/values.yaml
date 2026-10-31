@@ -1,0 +1,357 @@
+# Default values for the open-pages chart. See docs/kubernetes.md.
+#
+# Required: config.appHost and config.contentDomain. Everything else has a working default.
+
+# Names. By default resources are called <release>-open-pages.
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  # Registry that replaces image.registry everywhere, for an air-gapped mirror of
+  # ghcr.io/gira0/open-pages. Empty keeps image.registry.
+  imageRegistry: ""
+
+image:
+  # Registry host. global.imageRegistry overrides it.
+  registry: ghcr.io
+  # Repository path inside the registry.
+  repository: gira0/open-pages
+  # Image tag. Empty uses the chart's appVersion.
+  tag: ""
+  # Optional image digest (sha256:...). When set it takes precedence over tag and the
+  # image is referenced as <registry>/<repository>@<digest>.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Names of existing image pull Secrets, for a private registry or mirror.
+imagePullSecrets: []
+
+# open-pages keeps its state in SQLite on a ReadWriteOnce volume, so exactly one replica
+# can run; a second writer would corrupt or lock the database. The schema and the templates
+# both reject any other value. There is no HPA and no PodDisruptionBudget (a budget over one
+# replica either blocks every node drain or protects nothing). The Deployment uses the
+# Recreate strategy so the old pod releases the volume before the new one starts.
+replicaCount: 1
+
+serviceAccount:
+  # Create a ServiceAccount for the pod. The token is never mounted
+  # (automountServiceAccountToken: false); the app does not talk to the Kubernetes API.
+  create: true
+  # Name to use; empty generates one from the release name.
+  name: ""
+  annotations: {}
+
+# Settings rendered into settings.ini (ConfigMap, mounted read-only at
+# /etc/open-pages/settings.ini). The whole file is generated from these values, so the
+# image's baked-in defaults do not apply. Key meanings: docs/getting-started.md.
+config:
+  # Host name of the API and UI, without scheme or port, for example pages.corp. REQUIRED.
+  appHost: ""
+  # Sites are served at https://<site>.<contentDomain>/. REQUIRED. Wildcard DNS and a wildcard
+  # certificate for *.<contentDomain> are needed. Use a separate registrable domain from
+  # appHost; neither host may equal or be a subdomain of the other.
+  contentDomain: ""
+  # Container port the app listens on.
+  httpPort: 8080
+  # Mark session cookies Secure. Leave true: the edge terminates HTTPS. Only false for
+  # plain-HTTP trials.
+  cookieSecure: true
+  # CIDRs of the proxies (ingress controller, OpenShift router) whose X-Forwarded-For and
+  # X-Forwarded-Proto are believed, for example ["10.128.0.0/14"]. Empty trusts nobody, which
+  # logs the proxy's address as the client.
+  trustedProxies: []
+  # Origins allowed to call the API cross-origin. Empty means same-origin only.
+  corsOrigins: []
+  # Seconds to keep serving after SIGTERM with /readyz answering 503, so the Service,
+  # ingress and router stop sending traffic first.
+  drainDelay: 5
+  # Seconds in-flight requests get to finish after the drain. At least 1.
+  shutdownTimeout: 30
+  limits:
+    # Largest upload in MiB.
+    maxUploadMb: 100
+    # Largest total extracted size of one deploy, in MiB.
+    maxExtractMb: 500
+    # Most files in one deploy.
+    maxExtractFiles: 10000
+    # Deploys processed at the same time.
+    maxConcurrentDeploys: 2
+    # Seconds one deploy may take.
+    deployTimeoutSeconds: 600
+  sites:
+    # Versions kept per site (they all count against the volume).
+    keepVersions: 5
+  quotas:
+    # MiB of extracted files per site, over all kept versions. 0 is unlimited.
+    siteMb: 0
+    # MiB per user over all their sites. 0 is unlimited.
+    userMb: 0
+    # Sites one user may own. 0 is unlimited.
+    sitesPerUser: 0
+  audit:
+    # Days to keep audit log entries. 0 keeps them for ever.
+    retentionDays: 365
+  auth:
+    # Serve local registration and login. Set false for SSO-only (needs oidc or saml enabled).
+    localLogin: true
+  log:
+    # debug, info, warn or error.
+    level: info
+    # text or json.
+    format: json
+  metrics:
+    # Address of a dedicated /metrics listener, for example ":9100". Empty turns the
+    # dedicated listener (and the metrics Service and ServiceMonitor) off. Bind all
+    # interfaces (":9100", not "127.0.0.1:9100") or the Service cannot reach it.
+    listen: ""
+    # Also require a bearer token (secrets.metricsToken or the existing Secret) on the metrics
+    # listener, and let ServiceMonitor send it. The token is read from a file, never put in
+    # the ConfigMap.
+    tokenFromSecret: false
+  oidc:
+    # OpenID Connect sign-in. The client secret comes from secrets.oidcClientSecret or the
+    # existing Secret, never from here.
+    enabled: false
+    # Issuer URL (https), for example https://sso.example.com/realms/corp.
+    issuer: ""
+    clientId: ""
+    # Callback as registered at the provider: https://<appHost>/v1/auth/oidc/callback.
+    redirectUrl: ""
+    # Scopes besides "openid". Empty keeps the app default.
+    scopes: ""
+    emailClaim: ""
+    groupsClaim: ""
+    # Only let people with an email in this domain sign in; empty allows any.
+    allowedEmailDomain: ""
+  saml:
+    # SAML 2.0 sign-in (SP-initiated).
+    enabled: false
+    # The IdP metadata URL (https). Metadata from a file is not supported by this chart.
+    idpMetadataUrl: ""
+    # Entity ID, as registered at the IdP, for example https://<appHost>/v1/auth/saml/metadata.
+    entityId: ""
+    # Assertion consumer service URL: https://<appHost>/v1/auth/saml/acs.
+    acsUrl: ""
+    emailAttribute: ""
+    groupsAttribute: ""
+    nameidAttribute: ""
+    allowedEmailDomain: ""
+    # Sign AuthnRequests. Needs secrets.samlKey and secrets.samlCert (or the same keys in the
+    # existing Secret); delivered as files via OPEN_PAGES_SAML_KEY_FILE and
+    # OPEN_PAGES_SAML_CERT_FILE.
+    signRequests: false
+
+# Sensitive values. Either let the chart create a Secret from the values below (fine for a
+# quick start; the values then sit in Helm's release storage), or point existingSecret at a
+# Secret you manage (External Secrets, Sealed Secrets, Vault agent, ...). With existingSecret
+# the chart creates no Secret and the values below are ignored.
+# Each value is mounted as a file under /etc/open-pages/secrets and passed to the app with
+# the matching OPEN_PAGES_<SECTION>_<KEY>_FILE variable.
+secrets:
+  # Name of an existing Secret in the release namespace. Empty creates one.
+  existingSecret: ""
+  # Mode of the mounted files as a decimal number (292 is 0444). The files must be readable
+  # by the container's arbitrary UID without an fsGroup, so they are world-readable inside the
+  # pod; only the pod can see the mount.
+  defaultMode: 292
+  # Key names inside the Secret (existing or created).
+  keys:
+    oidcClientSecret: oidc-client-secret
+    metricsToken: metrics-token
+    samlKey: saml.key
+    samlCert: saml.crt
+  # Values for the chart-created Secret. Only non-empty ones are written.
+  oidcClientSecret: ""
+  # At least 16 characters.
+  metricsToken: ""
+  # PEM RSA private key and certificate for signing SAML requests.
+  samlKey: ""
+  samlCert: ""
+
+persistence:
+  # Mount a PersistentVolumeClaim at /data (database, site files). false uses an emptyDir
+  # and loses everything when the pod goes away: for trials only.
+  enabled: true
+  # Use this existing claim instead of creating one.
+  existingClaim: ""
+  # Must be ReadWriteOnce for the single replica. SQLite must NOT live on ReadWriteMany or
+  # NFS-style storage: POSIX locking and mmap are unreliable there and the database can
+  # corrupt. Use a block-storage class.
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  # Storage class name. Empty uses the cluster default; "-" sets storageClassName: "".
+  storageClass: ""
+  annotations: {}
+
+# Upload staging on an emptyDir instead of the data volume. When enabled it is mounted at
+# /staging, [paths] tmppath points there and TMPDIR is /staging/tmp, so uploads do not fill
+# the PVC. It is lost on restart, which is fine for staging.
+stagingVolume:
+  enabled: true
+  # Cap for the emptyDir; the pod is evicted if it is exceeded. Size it above
+  # config.limits.maxUploadMb times config.limits.maxConcurrentDeploys.
+  sizeLimit: 1Gi
+  # Use memory (tmpfs) instead of node disk. Counts against the memory limit.
+  medium: ""
+
+service:
+  type: ClusterIP
+  # Service port for the app. Targets the container port config.httpPort.
+  port: 80
+  annotations: {}
+
+# Used with config.metrics.listen: a separate ClusterIP Service so the metrics port is not on
+# the app Service the ingress exposes.
+metricsService:
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+    ephemeral-storage: 100Mi
+  limits:
+    # Zip extraction peaked near 330 MB resident in review; keep headroom.
+    memory: 768Mi
+    # No CPU limit by default (throttling hurts latency); set one if your cluster needs it.
+    ephemeral-storage: 1Gi
+
+# Seconds Kubernetes waits before killing the pod. Must be greater than
+# config.drainDelay + config.shutdownTimeout (checked at render time).
+terminationGracePeriodSeconds: 60
+
+# Pod security context. The defaults meet the Kubernetes "restricted" Pod Security Standard
+# and OpenShift restricted-v2. runAsUser and runAsGroup are deliberately not set: OpenShift
+# assigns a UID from the namespace range (GID 0) and rejects a fixed one.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+  # Set for clusters without an SCC that adjusts volume ownership (plain Kubernetes with
+  # most CSI drivers), where a fresh PVC is owned by root and not writable. 65532 is the
+  # image's own group; any value works because the image keeps /data group-writable for
+  # GID 0 and the pod keeps GID 0. Leave empty on OpenShift: restricted-v2 assigns it.
+  fsGroup: null
+  # OnRootMismatch skips the recursive chown when ownership already matches.
+  fsGroupChangePolicy: OnRootMismatch
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+probes:
+  liveness:
+    # /livez does no I/O, so a stalled volume cannot make it kill the pod.
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    # /readyz checks the database and that the data directories accept new files.
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    # Probe /readyz until the first success before liveness starts; useful with a slow
+    # volume or a large database. Off by default.
+    enabled: false
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 60
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables for the container, for example
+# [{name: GOMEMLIMIT, value: 600MiB}] or OPEN_PAGES_* settings not covered above.
+extraEnv: []
+
+ingress:
+  # Kubernetes Ingress for appHost and *.<contentDomain>, both to the app Service.
+  enabled: false
+  # Empty uses the cluster default class.
+  className: ""
+  # For example nginx.ingress.kubernetes.io/proxy-body-size: 100m (match
+  # config.limits.maxUploadMb) and proxy-read-timeout / proxy-send-timeout "600".
+  annotations: {}
+  tls:
+    # Secret with the certificate for appHost. Empty adds no TLS entry for it (the controller
+    # default certificate or an annotation-driven issuer applies).
+    appSecretName: ""
+    # Secret with the WILDCARD certificate for *.<contentDomain>. cert-manager needs a DNS-01
+    # issuer for it; HTTP-01 cannot issue wildcards.
+    wildcardSecretName: ""
+
+route:
+  # OpenShift Routes: one for appHost and one wildcard Route (wildcardPolicy: Subdomain) for
+  # *.<contentDomain>. The router must allow wildcard routes
+  # (ROUTER_ALLOW_WILDCARD_ROUTES=true on the IngressController).
+  enabled: false
+  # Value of haproxy.router.openshift.io/timeout. Keep it above the longest upload.
+  timeout: 10m
+  annotations: {}
+  # Edge TLS terminates at the router. Empty certificate fields use the router's default
+  # certificate (for hosts under the cluster apps domain, the default *.apps certificate).
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+
+httpRoute:
+  # Gateway API HTTPRoute for appHost and *.<contentDomain>. Needs the Gateway API CRDs.
+  enabled: false
+  annotations: {}
+  # parentRefs of the Gateway, for example [{name: shared-gateway, namespace: gateways}].
+  parentRefs: []
+
+serviceMonitor:
+  # Prometheus Operator / OpenShift user-workload monitoring ServiceMonitor. Needs
+  # config.metrics.listen. Needs the monitoring.coreos.com CRDs.
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  # Extra labels, for example the release label a Prometheus selects on.
+  labels: {}
+
+networkPolicy:
+  # Restrict the pod's traffic. Needs a CNI that enforces NetworkPolicy. When enabled, all
+  # other ingress and egress is denied.
+  enabled: false
+  # Who may reach the app port. Entries are NetworkPolicy "from" peers. The default allows the
+  # OpenShift router namespaces. For ingress-nginx use
+  # [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}].
+  # An empty list allows nobody. Kubelet probes are not affected by NetworkPolicy.
+  appIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: ingress
+  # Who may reach the metrics port (only when config.metrics.listen is set). The default is
+  # OpenShift user-workload monitoring. An empty list allows nobody.
+  metricsIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-user-workload-monitoring
+  egress:
+    # Allow DNS (ports 53 and 5353, as OpenShift's DNS pods listen on 5353) to these peers.
+    # The default allows any namespace.
+    dnsTo:
+      - namespaceSelector: {}
+    # Destinations for identity providers (OIDC discovery and token endpoints, SAML metadata),
+    # as CIDRs. Plain NetworkPolicy has no FQDN rules, so an IdP behind a changing address
+    # needs a wide CIDR, or an EgressFirewall (OpenShift OVN) / CiliumNetworkPolicy instead.
+    allowedCIDRs: []
+    # Ports used with allowedCIDRs.
+    allowedPorts:
+      - 443
+    # Further complete egress rules, added as written.
+    extraRules: []
