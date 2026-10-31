@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -213,5 +214,21 @@ func TestSiteVersionFollowsSite(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM site_version`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("rows left after deleting the site = %d, err %v", n, err)
+	}
+}
+
+func TestOpenMakesDatabaseGroupWritable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o060 != 0o060 {
+		t.Errorf("data.db mode = %v, want group read and write", fi.Mode().Perm())
 	}
 }

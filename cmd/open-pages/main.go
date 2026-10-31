@@ -24,6 +24,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deploy" {
 		os.Exit(cli.Deploy(os.Args[2:]))
 	}
+	setUmask()
 	configPath := flag.String("config", defaultConfig, "path to the settings file")
 	flag.Parse()
 

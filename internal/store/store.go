@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 
 	"github.com/gira0/open-pages/internal/names"
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" database/sql driver
@@ -160,7 +161,19 @@ func Open(path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
+	groupWritable(path)
 	return db, nil
+}
+
+// groupWritable adds group write to the database file, which SQLite creates as 0644
+// whatever the umask, so another UID in the same group (OpenShift's arbitrary UIDs in group
+// 0) can open it later; SQLite gives its journal files the database's mode. It is best
+// effort: only the owner may chmod, and a file someone else owns already has whatever mode
+// it was given.
+func groupWritable(path string) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o020 == 0 {
+		_ = os.Chmod(path, fi.Mode().Perm()|0o060) //nolint:gosec // G302: group 0 shares the volume under OpenShift arbitrary UIDs
+	}
 }
 
 // migrate brings databases created by older versions up to date. Every step is

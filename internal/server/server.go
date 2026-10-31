@@ -286,10 +286,10 @@ func New(cfg config.Config) (*Server, error) {
 		}
 	}
 	// Sites are world-readable so a reverse proxy can serve them; spooled uploads are private.
-	if err := os.MkdirAll(s.sites, 0o755); err != nil { //nolint:gosec // G301: public site content
+	if err := os.MkdirAll(s.sites, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 		return nil, fmt.Errorf("create %s: %w", s.sites, err)
 	}
-	if err := os.MkdirAll(s.tmp, 0o700); err != nil {
+	if err := os.MkdirAll(s.tmp, 0o770); err != nil { //nolint:gosec // G301: group 0 shares the volume under OpenShift arbitrary UIDs
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
 	}
 
