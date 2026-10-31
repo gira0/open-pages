@@ -307,10 +307,10 @@ sends it to a site host. A browser opening an `authenticated` or `restricted` si
 ## Containers
 
 The `Dockerfile` builds a static binary into a `scratch` image that runs as the non-root
-user `65532:65532`. It listens on all interfaces, port 8080, and keeps everything in the
+user `65532:0`. It listens on all interfaces, port 8080, and keeps everything in the
 `/data` volume. Defaults come from `deploy/settings.ini` at
-`/etc/open-pages/settings.ini` (`datapath = tmppath = /data`). The image has no `/tmp`, so
-it sets `TMPDIR=/data/tmp`.
+`/etc/open-pages/settings.ini` (`datapath = tmppath = /data`). See
+[Container image](#container-image) for the user model, read-only root and verification.
 
 ```sh
 docker build -t open-pages .
@@ -329,10 +329,10 @@ docker run -p 8080:8080 -v open-pages-data:/data \
   -v "$PWD/my-settings.ini":/etc/open-pages/settings.ini:ro open-pages
 ```
 
-A named volume is writable by uid 65532 out of the box. A bind-mounted data directory must
-be `chown`ed to `65532` first. Settings can also be given as `OPEN_PAGES_*` environment
-variables (see [Environment variables](#environment-variables)), for example
-`-e OPEN_PAGES_LOG_LEVEL=debug`.
+A named volume is writable out of the box. A bind-mounted data directory must be owned by
+group 0 and group-writable (`chgrp 0 dir && chmod 2775 dir`) or be `chown`ed to `65532`.
+Settings can also be given as `OPEN_PAGES_*` environment variables (see
+[Environment variables](#environment-variables)), for example `-e OPEN_PAGES_LOG_LEVEL=debug`.
 
 **Read-only root filesystem.** The server writes only under `datapath` (the database and
 `op_data/`) and `<tmppath>/tmp` (upload staging), so it runs with `readOnlyRootFilesystem`
@@ -350,9 +350,62 @@ volume and set `TMPDIR` to it). Raw uploads (`/upload`) never use `TMPDIR`.
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Because the image has no shell or `curl`, a container health check cannot run inside it;
-probe `GET /readyz` (readiness) and `GET /livez` (liveness) from the orchestrator or load
-balancer instead.
+Because the image has no shell or `curl`, a container health check cannot run inside it
+(so the image declares no `HEALTHCHECK`); probe `GET /readyz` (readiness) and `GET /livez` (liveness) from the orchestrator or
+load balancer instead.
+
+### Container image
+
+**Arbitrary UID, GID 0.** The image declares the numeric user `65532:0` (numeric, so
+Kubernetes' `runAsNonRoot` check passes; the image has no `/etc/passwd`). `/data` is owned by
+group 0 with mode `2775` (group permissions equal to the owner's, setgid). Platforms such as
+OpenShift (`restricted-v2` SCC) ignore the user and run the container with a random UID and
+GID 0 (supplementary group 0), which can write `/data`. Do not set `runAsUser` there. The
+same works with plain Docker:
+
+```sh
+docker run --user 1000780000:0 -p 8080:8080 -v open-pages-data:/data ghcr.io/gira0/open-pages:<version>
+```
+
+A UID with some other primary group cannot write `/data` unless the volume says otherwise
+(Kubernetes: `fsGroup`). Directories and files the app creates are group-writable (`0775`,
+`0664`, the database `0664`, staging `0770`), so a later run under a different UID in group 0,
+for example after moving to another OpenShift namespace or restoring a volume, can still
+write them.
+
+**Read-only root.** Run with `--read-only` (Kubernetes `readOnlyRootFilesystem: true`);
+the only writable path needed is `/data`. Upload spooling uses `TMPDIR`, which defaults to
+`/data/tmp`, so no other mount is required. To keep spooled uploads off the data volume,
+mount a tmpfs or `emptyDir` (with a `sizeLimit`) at `/tmp` and set `TMPDIR=/tmp`:
+
+```sh
+docker run --read-only --tmpfs /tmp -e TMPDIR=/tmp -v open-pages-data:/data ghcr.io/gira0/open-pages:<version>
+```
+
+Both setups work; `/tmp` is optional. The image sets the OCI labels `source`, `version`,
+`revision`, `licenses`, `title` and `description`.
+
+**Verify the signature.** Release images are signed keyless with cosign by the release
+workflow, and the signature is recorded in the Rekor transparency log:
+
+```sh
+cosign verify ghcr.io/gira0/open-pages:<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/gira0/open-pages/\.github/workflows/release\.yml@refs/tags/v'
+```
+
+**SBOM and provenance.** The build attaches an SPDX SBOM and SLSA provenance (`mode=max`)
+as attestations in the registry. Fetch them with:
+
+```sh
+docker buildx imagetools inspect ghcr.io/gira0/open-pages:<version> \
+  --format '{{ json .SBOM.SPDX }}' > sbom.spdx.json
+docker buildx imagetools inspect ghcr.io/gira0/open-pages:<version> \
+  --format '{{ json .Provenance }}'
+```
+
+CI builds the image on every change, scans it with Trivy (fails on fixable HIGH or CRITICAL
+findings) and starts it under `--read-only --user 1000780000:0` to check `/readyz`.
 
 ## Health and metrics
 

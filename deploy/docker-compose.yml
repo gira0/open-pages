@@ -11,13 +11,20 @@ services:
       - "8080:8080"
     volumes:
       # Database and deployed sites. A named volume is writable by the image's
-      # non-root user (uid 65532); a bind mount must be chowned to that uid first.
+      # non-root user (65532:0) and by any other uid with gid 0; a bind mount must be
+      # group 0 and group-writable (chgrp 0 dir && chmod 2775 dir) or owned by 65532.
       - open-pages-data:/data
       # Override the defaults baked into the image (see deploy/settings.ini). A real
       # deployment must set app_host and content_domain (and cookie_secure behind HTTPS).
       # - ./my-settings.ini:/etc/open-pages/settings.ini:ro
     restart: unless-stopped
+    # The image has no HEALTHCHECK: it is FROM scratch, with no shell or curl, and the
+    # binary has no probe subcommand. Probe GET /readyz and /livez from outside instead.
     read_only: true
+    # Uploads are spooled to TMPDIR=/data/tmp (on the volume) by default. To keep them
+    # off the volume, uncomment both lines:
+    # tmpfs: ["/tmp"]
+    # environment: { TMPDIR: /tmp }
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
