@@ -38,7 +38,7 @@ info:
       (`__Host-site_session` with `cookie_secure`), `HttpOnly`, `SameSite=Lax`, valid 1 hour.
       It is not part of the API and is described in `docs/auth.md`. Every route
       in this document is served on `app_host` only; a request for any other host is a
-      404, except `GET /healthz`, which answers on any host that is not a site host.
+      404, except `GET /livez`, `/readyz` and `/healthz`, which answer on any host that is not a site host.
 servers:
   - url: /
 security:
@@ -151,16 +151,43 @@ paths:
                   message:
                     const: pong
 
-  /healthz:
+  /livez:
     get:
       tags: [service]
-      operationId: health
-      summary: Health check
+      operationId: live
+      summary: Liveness probe
+      description: |
+        Answers `200` while the process is serving requests, and does no I/O at all: no
+        database query, no file access. That is deliberate. A liveness probe that touched
+        storage would fail on a stalled volume, and the orchestrator would then kill the
+        pod in a loop without fixing the volume. Use `/readyz` for readiness. Like the other
+        probes it answers on any host that is not a site host.
+      security: []
+      responses:
+        "200":
+          description: The process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: ok
+
+  /readyz:
+    get:
+      tags: [service]
+      operationId: ready
+      summary: Readiness probe
       description: |
         Pings the database and checks that the site and staging directories accept new
         files, giving up after 2 seconds. The response never says why a check failed; the
-        reason is logged. Responses carry `Cache-Control: no-store`. Unlike the other routes
-        it answers on any host that is not a site host, so probes by IP address work.
+        reason is logged. Responses carry `Cache-Control: no-store`. Answers `503` with
+        status `draining` once the server has received SIGTERM, so traffic moves away
+        before it stops listening (see `[server] drain_delay`). Unlike most routes it
+        answers on any host that is not a site host, so probes by IP address work. The
+        write check can hang on a stalled volume, which is why liveness uses `/livez`.
       security: []
       responses:
         "200":
@@ -170,7 +197,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
         "503":
-          description: At least one check failed.
+          description: At least one check failed, or the server is draining.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /healthz:
+    get:
+      tags: [service]
+      operationId: health
+      summary: Health check (alias of /readyz)
+      description: The former name of `/readyz`, kept for compatibility; identical behaviour.
+      security: []
+      responses:
+        "200":
+          description: Every check passed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: At least one check failed, or the server is draining.
           content:
             application/json:
               schema:
@@ -1636,10 +1684,10 @@ components:
       required: [status, checks]
       properties:
         status:
-          enum: [ok, fail]
+          enum: [ok, fail, draining]
         checks:
+          description: Empty while draining, when no check is run.
           type: object
-          required: [database, data_dir]
           properties:
             database:
               enum: [ok, fail]

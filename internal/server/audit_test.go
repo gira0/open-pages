@@ -377,11 +377,11 @@ func TestAuditRetention(t *testing.T) {
 func TestAuditClientIPAndBadRemoteAddr(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[2001:db8::1]:5555"
-	if got := clientIP(r); got != "2001:db8::1" {
+	if got := (&Server{}).clientIP(r); got != "2001:db8::1" {
 		t.Errorf("clientIP = %q", got)
 	}
 	r.RemoteAddr = "pipe"
-	if got := clientIP(r); got != "pipe" {
+	if got := (&Server{}).clientIP(r); got != "pipe" {
 		t.Errorf("clientIP = %q", got)
 	}
 }

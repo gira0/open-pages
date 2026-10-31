@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gira0/open-pages/api"
 	"github.com/gira0/open-pages/internal/config"
@@ -39,6 +40,7 @@ type Server struct {
 	deploySem chan struct{} // one token per running extraction; cap is cfg.MaxDeploys
 	metrics   *metrics.Collector
 	health    healthProbe
+	draining  atomic.Bool // set by Drain: /readyz fails while the server shuts down
 	oidc      *oidcClient // nil unless [oidc] is enabled
 	saml      *samlClient // nil unless [saml] is enabled
 
@@ -67,7 +69,9 @@ func (s *Server) routeTable() []route {
 	})
 	handleFunc("GET /v1/openapi.yaml", handleOpenAPI)
 	handleFunc("GET /v1/sites", s.handlePublicSites)
-	handleFunc("GET /healthz", s.handleHealth)
+	handleFunc("GET /livez", s.handleLive)
+	handleFunc("GET /readyz", s.handleReady)
+	handleFunc("GET /healthz", s.handleReady) // the former name of /readyz
 	if s.cfg.MetricsToken != "" {
 		handleFunc("GET /metrics", s.handleMetrics)
 	}
@@ -118,10 +122,11 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(r.pattern, r.handler)
 	}
 	// Hosts that aren't the app host answer only health probes (see dispatch).
+	probeHandlers := map[string]http.HandlerFunc{"/livez": s.handleLive, "/readyz": s.handleReady, "/healthz": s.handleReady}
 	probes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			r.Pattern = "GET /healthz" // what ServeMux records; observe keeps probes out of the info log
-			s.handleHealth(w, r)
+		if h, ok := probeHandlers[r.URL.Path]; ok && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			r.Pattern = "GET " + r.URL.Path // what ServeMux records; observe keeps probes out of the info log
+			h(w, r)
 			return
 		}
 		http.NotFound(w, r)

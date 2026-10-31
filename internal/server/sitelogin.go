@@ -87,7 +87,7 @@ func siteReturnPath(p string) string {
 // served by the same listener, so the port the browser used for this request is reused.
 func (s *Server) originFor(host string, r *http.Request) string {
 	scheme := "http"
-	if s.cfg.CookieSecure {
+	if s.cfg.CookieSecure || s.isHTTPS(r) {
 		scheme = "https"
 	}
 	if _, port, err := net.SplitHostPort(r.Host); err == nil {

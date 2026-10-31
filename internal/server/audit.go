@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,18 +72,8 @@ func viaOf(r *http.Request) string {
 
 // withAuditSource records the credential and client address of r in its context, for
 // audit entries written further down. Call it once the request is authenticated.
-func withAuditSource(r *http.Request, via string) context.Context {
-	return context.WithValue(r.Context(), auditSourceKey{}, auditSource{via: via, ip: clientIP(r)})
-}
-
-// clientIP is the host part of the peer address. There is no trusted-proxy support yet, so
-// behind a reverse proxy this is the proxy's address; X-Forwarded-For handling arrives with #72.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+func (s *Server) withAuditSource(r *http.Request, via string) context.Context {
+	return context.WithValue(r.Context(), auditSourceKey{}, auditSource{via: via, ip: s.clientIP(r)})
 }
 
 // auditEvent is one thing that happened. The actor, credential and address come from the

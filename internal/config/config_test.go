@@ -127,8 +127,8 @@ allowed_email_domain = @Corp.Example
 		t.Fatalf("unexpected OIDC config: %+v", o)
 	}
 	t.Setenv("OPEN_PAGES_OIDC_CLIENT_SECRET", "from-env")
-	if cfg, err = Load(path); err != nil || cfg.OIDC.ClientSecret != "from-file" {
-		t.Fatalf("the environment must not override the file: %q, %v", cfg.OIDC.ClientSecret, err)
+	if cfg, err = Load(path); err != nil || cfg.OIDC.ClientSecret != "from-env" {
+		t.Fatalf("the environment must override the file: %q, %v", cfg.OIDC.ClientSecret, err)
 	}
 }
 

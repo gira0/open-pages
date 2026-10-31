@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,30 +22,33 @@ import (
 
 // Config holds all runtime settings, read from settings.ini.
 type Config struct {
-	Listen         string        // address to bind, e.g. ":8080"
-	DataPath       string        // absolute base dir; sites live in <DataPath>/op_data
-	TmpPath        string        // absolute base dir; uploads are staged in <TmpPath>/tmp
-	CookieSecure   bool          // set the Secure flag on the session cookie (enable behind HTTPS)
-	MaxUploadBytes int64         // max size of an uploaded archive
-	MaxExtractSize int64         // max total uncompressed size of an archive
-	MaxExtractFile int           // max number of entries in an archive
-	MaxDeploys     int           // uploads extracted at once; more get 503 with Retry-After
-	DeployTimeout  time.Duration // time budget for extracting one upload
-	KeepVersions   int           // versions kept on disk per site, including the current one
-	SiteQuota      int64         // max bytes on disk of one site, over all kept versions; 0 means unlimited
-	UserQuota      int64         // max bytes on disk over all sites of one user; 0 means unlimited
-	SitesPerUser   int           // max sites one user may own; 0 means unlimited
-	CORSOrigins    []string      // allowed cross-origin callers; empty means same-origin only
-	AppHost        string        // bare host (no port) of the API and UI
-	ContentDomain  string        // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
-	LogLevel       slog.Level    // minimum level written to the log
-	LogFormat      string        // logging.FormatText or logging.FormatJSON
-	MetricsListen  string        // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
-	MetricsToken   string        // bearer token for /metrics on the main listener; empty disables it there
-	AuditRetention int           // days audit log entries are kept; 0 keeps them for ever
-	LocalLogin     bool          // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
-	OIDC           OIDCConfig    // optional OpenID Connect sign-in; disabled by default
-	SAML           SAMLConfig    // optional SAML 2.0 sign-in; disabled by default
+	Listen          string         // address to bind, e.g. ":8080"
+	DataPath        string         // absolute base dir; sites live in <DataPath>/op_data
+	TmpPath         string         // absolute base dir; uploads are staged in <TmpPath>/tmp
+	CookieSecure    bool           // set the Secure flag on the session cookie (enable behind HTTPS)
+	MaxUploadBytes  int64          // max size of an uploaded archive
+	MaxExtractSize  int64          // max total uncompressed size of an archive
+	MaxExtractFile  int            // max number of entries in an archive
+	MaxDeploys      int            // uploads extracted at once; more get 503 with Retry-After
+	DeployTimeout   time.Duration  // time budget for extracting one upload
+	KeepVersions    int            // versions kept on disk per site, including the current one
+	SiteQuota       int64          // max bytes on disk of one site, over all kept versions; 0 means unlimited
+	UserQuota       int64          // max bytes on disk over all sites of one user; 0 means unlimited
+	SitesPerUser    int            // max sites one user may own; 0 means unlimited
+	CORSOrigins     []string       // allowed cross-origin callers; empty means same-origin only
+	TrustedProxies  []netip.Prefix // peers whose X-Forwarded-For/-Proto are believed; empty trusts nobody
+	ShutdownTimeout time.Duration  // how long in-flight requests get to finish after SIGTERM
+	DrainDelay      time.Duration  // pause between failing /readyz and closing the listener on SIGTERM
+	AppHost         string         // bare host (no port) of the API and UI
+	ContentDomain   string         // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
+	LogLevel        slog.Level     // minimum level written to the log
+	LogFormat       string         // logging.FormatText or logging.FormatJSON
+	MetricsListen   string         // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
+	MetricsToken    string         // bearer token for /metrics on the main listener; empty disables it there
+	AuditRetention  int            // days audit log entries are kept; 0 keeps them for ever
+	LocalLogin      bool           // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
+	OIDC            OIDCConfig     // optional OpenID Connect sign-in; disabled by default
+	SAML            SAMLConfig     // optional SAML 2.0 sign-in; disabled by default
 }
 
 // SAMLConfig is the [saml] section.
@@ -66,7 +71,7 @@ type OIDCConfig struct {
 	Enabled            bool
 	Issuer             string // issuer URL, exactly as the provider reports it
 	ClientID           string
-	ClientSecret       string   // from the settings file only; never logged
+	ClientSecret       string   // never logged; may come from OPEN_PAGES_OIDC_CLIENT_SECRET[_FILE]
 	RedirectURL        string   // absolute URL of /v1/auth/oidc/callback as registered at the provider
 	Scopes             []string // always includes "openid"
 	EmailClaim         string   // ID token claim holding the email address
@@ -83,30 +88,40 @@ const minMetricsTokenLen = 16
 // Default returns the settings used when settings.ini leaves a key out.
 func Default() Config {
 	return Config{
-		Listen:         ":8080",
-		DataPath:       ".",
-		TmpPath:        ".",
-		MaxUploadBytes: 100 << 20,
-		MaxExtractSize: 500 << 20,
-		MaxExtractFile: 10000,
-		MaxDeploys:     2,
-		DeployTimeout:  10 * time.Minute,
-		KeepVersions:   5,
-		LogLevel:       slog.LevelInfo,
-		LogFormat:      logging.FormatText,
-		AuditRetention: 365,
-		LocalLogin:     true,
+		Listen:          ":8080",
+		DataPath:        ".",
+		TmpPath:         ".",
+		MaxUploadBytes:  100 << 20,
+		MaxExtractSize:  500 << 20,
+		MaxExtractFile:  10000,
+		MaxDeploys:      2,
+		DeployTimeout:   10 * time.Minute,
+		KeepVersions:    5,
+		ShutdownTimeout: 30 * time.Second,
+		LogLevel:        slog.LevelInfo,
+		LogFormat:       logging.FormatText,
+		AuditRetention:  365,
+		LocalLogin:      true,
 	}
 }
 
-// Load reads the settings file at path, applies defaults for missing keys and validates the
-// result. Unparseable or inconsistent settings are an error rather than silently defaulted.
+// Load reads the settings file at path, applies OPEN_PAGES_* environment overrides (see
+// applyEnv), applies defaults for missing keys and validates the result. Unparseable or
+// inconsistent settings are an error rather than silently defaulted. An empty path means
+// no file: the environment and the defaults supply everything.
 func Load(path string) (Config, error) {
 	cfg := Default()
-	f, err := ini.Load(path)
-	if err != nil {
-		return cfg, fmt.Errorf("read %s: %w", path, err)
+	f := ini.Empty()
+	if path != "" {
+		var err error
+		if f, err = ini.Load(path); err != nil {
+			return cfg, fmt.Errorf("read %s: %w", path, err)
+		}
 	}
+	if err := applyEnv(f, os.Environ()); err != nil {
+		return cfg, err
+	}
+	var err error
 
 	server := f.Section("server")
 	host := server.Key("host").MustString("")
@@ -127,6 +142,23 @@ func Load(path string) (Config, error) {
 			}
 		}
 	}
+
+	if cfg.TrustedProxies, err = parseProxies(server.Key("trusted_proxies").String()); err != nil {
+		return cfg, err
+	}
+	shutdownSecs, err := positiveInt(server, "shutdown_timeout", int(cfg.ShutdownTimeout/time.Second))
+	if err != nil {
+		return cfg, err
+	}
+	drainSecs, err := boundedInt(server, "drain_delay", int(cfg.DrainDelay/time.Second), 0, maxTimeoutSecs)
+	if err != nil {
+		return cfg, err
+	}
+	if shutdownSecs > maxTimeoutSecs {
+		return cfg, fmt.Errorf("server.shutdown_timeout: must be at most %d", maxTimeoutSecs)
+	}
+	cfg.ShutdownTimeout = time.Duration(shutdownSecs) * time.Second
+	cfg.DrainDelay = time.Duration(drainSecs) * time.Second
 
 	paths := f.Section("paths")
 	cfg.DataPath = paths.Key("datapath").MustString(cfg.DataPath)
@@ -225,6 +257,36 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("tmppath: %w", err)
 	}
 	return cfg, nil
+}
+
+// parseProxies reads server.trusted_proxies: comma-separated CIDRs (a bare address counts
+// as a single-host network). Empty means no proxy is trusted.
+func parseProxies(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, e := range strings.Split(raw, ",") {
+		if e = strings.TrimSpace(e); e == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(e)
+		if err != nil {
+			a, aerr := netip.ParseAddr(e)
+			if aerr != nil {
+				return nil, fmt.Errorf("server.trusted_proxies entry %q: must be a CIDR such as 10.0.0.0/8", e)
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		out = append(out, netip.PrefixFrom(p.Addr().Unmap(), unmapBits(p)).Masked())
+	}
+	return out, nil
+}
+
+// unmapBits is the prefix length of p after its address loses an IPv4-in-IPv6 wrapper
+// (::ffff:10.0.0.0/104 is 10.0.0.0/8).
+func unmapBits(p netip.Prefix) int {
+	if p.Addr().Is4In6() && p.Bits() >= 96 {
+		return p.Bits() - 96
+	}
+	return p.Bits()
 }
 
 // hostSetting reads a required bare host name: lowercased, one trailing dot trimmed, no

@@ -50,7 +50,9 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter 
 //
 // Log lines carry only values the server produced itself: the request ID, the route
 // pattern the mux matched, a method from a fixed list, status and duration. The raw URL
-// path and the client address are deliberately left out.
+// path is deliberately left out, and so is the client address, unless [server]
+// trusted_proxies is set: then the address (parsed, never the raw header) is logged,
+// because behind a proxy the peer is the proxy and says nothing about the client.
 func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -70,11 +72,15 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		switch {
 		case rec.status >= http.StatusInternalServerError:
 			level = slog.LevelError
-		case strings.HasSuffix(r.Pattern, " /healthz") || strings.HasSuffix(r.Pattern, " /metrics"),
+		case strings.HasSuffix(r.Pattern, " /healthz") || strings.HasSuffix(r.Pattern, " /livez") ||
+			strings.HasSuffix(r.Pattern, " /readyz") || strings.HasSuffix(r.Pattern, " /metrics"),
 			strings.HasPrefix(r.Pattern, "GET /static/"):
 			level = slog.LevelDebug // probes, scrapes and UI assets would drown the log
 		}
-		slog.Log(r.Context(), level, "request", "request_id", id, "method", method,
-			"route", r.Pattern, "status", rec.status, "duration", elapsed)
+		attrs := []any{"request_id", id, "method", method, "route", r.Pattern, "status", rec.status, "duration", elapsed}
+		if len(s.cfg.TrustedProxies) > 0 {
+			attrs = append(attrs, "client_ip", oneLine(s.clientIP(r)))
+		}
+		slog.Log(r.Context(), level, "request", attrs...)
 	})
 }
