@@ -461,6 +461,8 @@
           } else {
             progress.hidden = true;
             showAlert(result, 'danger', 'Upload failed (' + xhr.status + ').', xhr.responseText);
+            // A rejected deploy can still have pruned old versions (quota check).
+            if (xhr.status === 413) { loadVersions(); showUsage(); }
           }
         };
         xhr.onerror = function () {
