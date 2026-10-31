@@ -301,6 +301,10 @@ func New(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.backfillVersionSizes(context.Background()); err != nil {
+		_ = s.db.Close()
+		return nil, fmt.Errorf("measure existing sites: %w", err)
+	}
 	s.startAuditPruner()
 	return s, nil
 }

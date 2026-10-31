@@ -22,6 +22,7 @@ erDiagram
     docs ||--o{ site_login_code : "issued for"
     user ||--o{ api_token : "has"
     user ||--o{ groups : "owns (owner)"
+    docs ||--o{ site_version : "has"
     user ||--o{ docs : "owns (uowner)"
     user ||--o{ user_group : "member (uid)"
     groups ||--o{ user_group : "has (gid)"
@@ -40,6 +41,7 @@ session 1---* site_session     (site_session.sessionid, ON DELETE CASCADE)
 session 1---* site_login_code  (site_login_code.sessionid, ON DELETE CASCADE)
 docs 1---* site_session        (site_session.siteid, ON DELETE CASCADE)
 docs 1---* site_login_code     (site_login_code.siteid, ON DELETE CASCADE)
+docs 1---* site_version        (site_version.docid, ON DELETE CASCADE)
 user 1---* api_token      (api_token.userid)
 user 1---* groups         (groups.owner, nullable)
 user 1---* docs           (docs.uowner, nullable)
@@ -48,8 +50,8 @@ groups 1---* docs         (docs.ugroup, nullable)
 ```
 
 "docs" is the table of sites: one row per site. `user_group` is the many-to-many link
-between users and groups. Apart from the four cascading keys above (`site_session` and `site_login_code`, to
-`session` and to `docs`), no foreign key has an `ON DELETE` action, so SQLite refuses to
+between users and groups. Apart from the five cascading keys above (`site_session` and `site_login_code`, to
+`session` and to `docs`, and `site_version` to `docs`), no foreign key has an `ON DELETE` action, so SQLite refuses to
 delete a referenced row (the default `NO ACTION`); the application deletes memberships
 before groups and never deletes users.
 
@@ -194,6 +196,22 @@ Sites. One row per site; files live on disk (see below).
 constraint (`sqlite_autoindex_docs_1`, `sqlite_autoindex_docs_2`). `session.token`,
 `api_token.hash` get one the same way.
 
+### site_version
+
+The size of each version kept on disk, for the [quotas](getting-started.md#quotas). A row is
+written when a version is deployed and removed when the version is pruned or the site is deleted.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `docid` | INTEGER | NOT NULL, FK `docs(docid)` ON DELETE CASCADE | The site |
+| `version` | CHAR(20) | NOT NULL | The version id, as in the directory name under `versions/` |
+| `bytes` | BIGINT | NOT NULL | Total size of the version's regular files |
+
+Primary key `(docid, version)`. A site's usage is the sum of its rows. The rows follow the
+directories on disk: the server (at start, and before checking a quota) measures any version
+directory without a row by walking it, and deletes rows whose directory is gone, so a
+database that predates the table is filled in by its first start.
+
 ### audit_log
 
 The [audit log](security-model.md#audit-log): one row per successful change to a site, group
@@ -227,7 +245,8 @@ order:
 1. Runs the `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` script. On a fresh
    file this creates every table with all current columns; on an existing file it leaves
    tables as they are but adds tables and indexes it lacks, which is how an upgraded database
-   gets `audit_log`.
+   gets `audit_log` and `site_version`. The sizes in `site_version` are not filled by SQL:
+   the server measures existing version directories after opening the database.
 2. Runs `migrate`, which brings a database created by an older release up to date, and on
    a fresh file creates the remaining unique indexes. Each step checks first, so running it
    again changes nothing:
@@ -263,7 +282,7 @@ Operational consequences:
 | `<datapath>/op_data/<site>/versions/<id>/` | one extracted upload per deploy | site content |
 | `<datapath>/op_data/<site>/current` | symlink to the live version | which version is served |
 
-A site exists when it has a `docs` row; its files exist once it has been deployed. Deleting
+The sizes in `site_version` mirror the version directories (the files stay the source of truth). A site exists when it has a `docs` row; its files exist once it has been deployed. Deleting
 a site removes the files first and then the row. Version ids are 20-character xids, newest
 sorts last. In memory only, and lost on restart: pending OIDC and SAML sign-in attempts, the
 IDs of recently accepted SAML assertions, the cached SAML IdP metadata and the request metrics.

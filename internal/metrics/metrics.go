@@ -52,6 +52,7 @@ type Collector struct {
 	durSumNanos atomic.Int64
 	deploys     [deployResultCount]atomic.Uint64
 	errors      atomic.Uint64 // responses with a 5xx status
+	storedBytes atomic.Int64  // bytes of all kept site versions, as last counted
 }
 
 // New returns a Collector with every counter at zero.
@@ -86,6 +87,9 @@ func (m *Collector) ObserveRequest(method string, status int, d time.Duration) {
 // RecordDeploy counts one deploy with outcome r.
 func (m *Collector) RecordDeploy(r DeployResult) { m.deploys[r].Add(1) }
 
+// SetStoredBytes sets the gauge of bytes held by all kept site versions.
+func (m *Collector) SetStoredBytes(n int64) { m.storedBytes.Store(n) }
+
 // Write renders the metrics in the Prometheus text format (version 0.0.4).
 func (m *Collector) Write(w io.Writer) {
 	fmt.Fprint(w, "# HELP openpages_http_requests_total HTTP requests served, by method and status class.\n")
@@ -118,4 +122,8 @@ func (m *Collector) Write(w io.Writer) {
 	fmt.Fprint(w, "# HELP openpages_errors_total Responses with a 5xx status.\n")
 	fmt.Fprint(w, "# TYPE openpages_errors_total counter\n")
 	fmt.Fprintf(w, "openpages_errors_total %d\n", m.errors.Load())
+
+	fmt.Fprint(w, "# HELP openpages_stored_bytes Bytes on disk held by the kept versions of all sites.\n")
+	fmt.Fprint(w, "# TYPE openpages_stored_bytes gauge\n")
+	fmt.Fprintf(w, "openpages_stored_bytes %d\n", m.storedBytes.Load())
 }

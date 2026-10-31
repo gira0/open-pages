@@ -92,9 +92,15 @@ func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "read current version", err)
 		return
 	}
+	used, err := s.siteBytes(r.Context(), site.ID)
+	if err != nil {
+		internalError(w, "read site usage", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": site.Name, "description": site.Description, "owner_id": nullableID(site.OwnerID),
 		"group": site.GroupID, "visibility": site.Visibility, "current": current,
+		"bytes": used, "quota_bytes": s.cfg.SiteQuota,
 	})
 }
 

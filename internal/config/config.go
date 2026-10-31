@@ -30,6 +30,9 @@ type Config struct {
 	MaxDeploys     int           // uploads extracted at once; more get 503 with Retry-After
 	DeployTimeout  time.Duration // time budget for extracting one upload
 	KeepVersions   int           // versions kept on disk per site, including the current one
+	SiteQuota      int64         // max bytes on disk of one site, over all kept versions; 0 means unlimited
+	UserQuota      int64         // max bytes on disk over all sites of one user; 0 means unlimited
+	SitesPerUser   int           // max sites one user may own; 0 means unlimited
 	CORSOrigins    []string      // allowed cross-origin callers; empty means same-origin only
 	AppHost        string        // bare host (no port) of the API and UI
 	ContentDomain  string        // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
@@ -146,6 +149,17 @@ func Load(path string) (Config, error) {
 	cfg.DeployTimeout = time.Duration(timeoutSecs) * time.Second
 
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
+
+	quotas := f.Section("quotas")
+	if cfg.SiteQuota, err = megabytes(quotas, "site_mb", cfg.SiteQuota); err != nil {
+		return cfg, err
+	}
+	if cfg.UserQuota, err = megabytes(quotas, "user_mb", cfg.UserQuota); err != nil {
+		return cfg, err
+	}
+	if cfg.SitesPerUser, err = boundedInt(quotas, "sites_per_user", cfg.SitesPerUser, 0, math.MaxInt32); err != nil {
+		return cfg, err
+	}
 
 	sites := f.Section("sites")
 	for _, old := range []string{"url_mode", "base_domain"} {
@@ -272,6 +286,19 @@ func boundedInt(sec *ini.Section, name string, def, lo, hi int) (int, error) {
 		return def, fmt.Errorf("%s.%s: must be a whole number from %d to %d", sec.Name(), name, lo, hi)
 	}
 	return v, nil
+}
+
+// megabytes reads a size in MiB that may be 0 (no limit) and returns it in bytes, failing on
+// a malformed, negative or overflowing value instead of silently using the default.
+func megabytes(sec *ini.Section, name string, def int64) (int64, error) {
+	if !sec.HasKey(name) {
+		return def, nil
+	}
+	v, err := sec.Key(name).Int64()
+	if err != nil || v < 0 || v > math.MaxInt64>>20 {
+		return def, fmt.Errorf("%s.%s: must be a whole number of megabytes, 0 or more", sec.Name(), name)
+	}
+	return v << 20, nil
 }
 
 // optionalString reads a key that defaults to def when absent, but stays empty when it is

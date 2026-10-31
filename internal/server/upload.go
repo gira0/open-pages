@@ -47,6 +47,11 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
+	if errors.Is(err, errSiteLimit) {
+		writeError(w, http.StatusForbidden,
+			fmt.Sprintf("site quota exceeded: you may own at most %d sites", s.cfg.SitesPerUser))
+		return
+	}
 	if errors.Is(err, errGroupNotFound) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -171,6 +176,13 @@ func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, site Site, 
 	if errors.Is(err, errSiteNotFound) {
 		s.metrics.RecordDeploy(metrics.DeployFailed)
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var over *quotaError
+	if errors.As(err, &over) {
+		s.metrics.RecordDeploy(metrics.DeployRejected)
+		ctxLogger(r.Context()).Info("upload over quota", "site", site.Name)
+		writeError(w, http.StatusRequestEntityTooLarge, over.Error())
 		return
 	}
 	var bad *badArchiveError

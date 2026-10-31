@@ -112,6 +112,16 @@ CREATE TABLE IF NOT EXISTS docs (
 	FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 );
 
+-- The size in bytes of each version kept on disk, for the quotas. Rows follow the
+-- directories under op_data and are filled in lazily for versions that predate the table.
+CREATE TABLE IF NOT EXISTS site_version (
+	docid   INTEGER NOT NULL,
+	version CHAR(20) NOT NULL,
+	bytes   BIGINT NOT NULL,
+	PRIMARY KEY (docid, version),
+	FOREIGN KEY (docid) REFERENCES docs(docid) ON DELETE CASCADE
+);
+
 -- The audit log outlives what it describes, so nothing here is a foreign key: actor, siteid
 -- and groupid are plain ids, and the email and target name are snapshots. (A site's rowid
 -- can be reused once the site is deleted; queries compare the name and the create entry too.)

@@ -38,12 +38,13 @@ func TestOpenCreatesSchemaAndIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 		for table, want := range map[string][]string{
-			"user":       {"userid", "email", "password", "oidc_issuer", "oidc_subject"},
-			"session":    {"sessionid", "userid", "token", "expires"},
-			"api_token":  {"tokenid", "userid", "name", "prefix", "hash", "created", "expires"},
-			"groups":     {"groupid", "name", "owner", "name_key"},
-			"user_group": {"ugid", "uid", "gid", "oidc"},
-			"docs":       {"docid", "uowner", "ugroup", "name", "description", "path", "visibility"},
+			"user":         {"userid", "email", "password", "oidc_issuer", "oidc_subject"},
+			"session":      {"sessionid", "userid", "token", "expires"},
+			"api_token":    {"tokenid", "userid", "name", "prefix", "hash", "created", "expires"},
+			"groups":       {"groupid", "name", "owner", "name_key"},
+			"user_group":   {"ugid", "uid", "gid", "oidc"},
+			"docs":         {"docid", "uowner", "ugroup", "name", "description", "path", "visibility"},
+			"site_version": {"docid", "version", "bytes"},
 		} {
 			got := columns(t, db, table)
 			for _, c := range want {
@@ -185,5 +186,32 @@ func TestOpenAddsAuditLogToExistingDatabase(t *testing.T) {
 		if err := db.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSiteVersionFollowsSite(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO docs (docid, name) VALUES (1, 'blog')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_version (docid, version, bytes) VALUES (1, 'v1', 10), (1, 'v2', 20)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO site_version (docid, version, bytes) VALUES (1, 'v1', 5)`); err == nil {
+		t.Error("duplicate version accepted")
+	}
+	if _, err := db.Exec(`INSERT INTO site_version (docid, version, bytes) VALUES (9, 'v1', 5)`); err == nil {
+		t.Error("version of an unknown site accepted")
+	}
+	if _, err := db.Exec(`DELETE FROM docs WHERE docid = 1`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM site_version`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("rows left after deleting the site = %d, err %v", n, err)
 	}
 }

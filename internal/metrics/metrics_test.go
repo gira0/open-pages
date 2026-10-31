@@ -17,6 +17,7 @@ func TestWrite(t *testing.T) {
 	c.ObserveRequest("GET", 200, 10*time.Millisecond)
 	c.ObserveRequest("OTHER", 503, 20*time.Second)
 	c.RecordDeploy(DeployRejected)
+	c.SetStoredBytes(4096)
 
 	var b strings.Builder
 	c.Write(&b)
@@ -28,6 +29,7 @@ func TestWrite(t *testing.T) {
 		`openpages_http_request_duration_seconds_bucket{le="+Inf"} 2`,
 		`openpages_deploys_total{result="rejected"} 1`,
 		`openpages_errors_total 1`,
+		`openpages_stored_bytes 4096`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
