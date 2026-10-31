@@ -275,18 +275,20 @@ func parseProxies(raw string) ([]netip.Prefix, error) {
 			}
 			p = netip.PrefixFrom(a, a.BitLen())
 		}
-		out = append(out, netip.PrefixFrom(p.Addr().Unmap(), unmapBits(p)).Masked())
+		out = append(out, unmapPrefix(p))
 	}
 	return out, nil
 }
 
-// unmapBits is the prefix length of p after its address loses an IPv4-in-IPv6 wrapper
-// (::ffff:10.0.0.0/104 is 10.0.0.0/8).
-func unmapBits(p netip.Prefix) int {
+// unmapPrefix masks p and, when it lies wholly inside ::ffff:0:0/96, rewrites it as the
+// IPv4 network it covers (::ffff:10.0.0.0/104 is 10.0.0.0/8). Masking comes first: a
+// shorter IPv4-mapped prefix such as ::ffff:192.0.2.1/80 is an IPv6 network and stays one.
+func unmapPrefix(p netip.Prefix) netip.Prefix {
+	p = p.Masked()
 	if p.Addr().Is4In6() && p.Bits() >= 96 {
-		return p.Bits() - 96
+		return netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
 	}
-	return p.Bits()
+	return p
 }
 
 // hostSetting reads a required bare host name: lowercased, one trailing dot trimmed, no

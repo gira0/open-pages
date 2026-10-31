@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,5 +197,23 @@ func TestTrustedProxies(t *testing.T) {
 	}
 	if _, err := Load(writeSettings(t, "[server]\ntrusted_proxies = 10.0.0.0/8, nope\n")); err == nil {
 		t.Error("expected an error for a bad entry")
+	}
+}
+
+func TestUnmapPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"::ffff:10.1.2.3/104":  "10.0.0.0/8",
+		"::ffff:192.0.2.7/128": "192.0.2.7/32",
+		"::ffff:192.0.2.1/96":  "0.0.0.0/0",
+		// Shorter than /96 the prefix is an IPv6 network, not an IPv4 one.
+		"::ffff:192.0.2.1/80": "::/80",
+		"::ffff:192.0.2.1/24": "::/24",
+		"fd00::1/8":           "fd00::/8",
+		"10.9.8.7/16":         "10.9.0.0/16",
+	} {
+		got := unmapPrefix(netip.MustParsePrefix(in))
+		if !got.IsValid() || got.String() != want {
+			t.Errorf("unmapPrefix(%s) = %v, want %s", in, got, want)
+		}
 	}
 }
