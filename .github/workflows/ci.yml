@@ -146,5 +146,9 @@ jobs:
           docker logs smoke
           if [ "$code" != 200 ]; then
             echo "::error::/readyz returned $code"
+            docker version --format 'docker {{.Server.Version}}'
+            docker info --format '{{.Driver}} {{.DriverStatus}}'
+            docker image inspect --format '{{json .Config.User}}' "$IMAGE"
+            docker run --rm -v smoke-data:/d busybox:1.37 ls -lan /d
             exit 1
           fi
