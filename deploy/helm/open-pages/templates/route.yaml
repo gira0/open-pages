@@ -1,0 +1,53 @@
+{{- if .Values.route.enabled }}
+{{- $app := include "open-pages.appHost" . }}
+{{- $content := include "open-pages.contentDomain" . }}
+{{- $svc := include "open-pages.fullname" . }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $svc }}
+  labels:
+    {{- include "open-pages.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: {{ .Values.route.timeout | quote }}
+    {{- with .Values.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  host: {{ $app | quote }}
+  to:
+    kind: Service
+    name: {{ $svc }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $svc }}-wildcard
+  labels:
+    {{- include "open-pages.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: {{ .Values.route.timeout | quote }}
+    {{- with .Values.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # A wildcard Route is named wildcard.<domain> and matches every host under <domain>.
+  host: {{ printf "wildcard.%s" $content | quote }}
+  to:
+    kind: Service
+    name: {{ $svc }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  wildcardPolicy: Subdomain
+{{- end }}

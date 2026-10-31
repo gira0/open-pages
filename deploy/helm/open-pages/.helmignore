@@ -1,0 +1,9 @@
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.bak
+*.tmp
+*~
+# CI values files are for the repository's checks, not for users of the packaged chart.
+ci/

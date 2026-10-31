@@ -1,0 +1,34 @@
+open-pages {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
+
+One replica runs, with its SQLite database and site files on {{ if .Values.persistence.enabled }}the volume claim "{{ include "open-pages.claimName" . }}"{{ else }}an emptyDir (data is lost when the pod goes away){{ end }}.
+
+App (API and UI): https://{{ include "open-pages.appHost" . }}/
+Sites:            https://<site>.{{ include "open-pages.contentDomain" . }}/
+
+DNS and TLS are not created by this chart. Point both names at your ingress or router:
+  {{ include "open-pages.appHost" . }}
+  *.{{ include "open-pages.contentDomain" . }}   (wildcard record and wildcard certificate)
+{{- if not (or .Values.ingress.enabled .Values.route.enabled .Values.httpRoute.enabled) }}
+
+No Ingress, Route or HTTPRoute is enabled. Enable one (ingress.enabled, route.enabled or
+httpRoute.enabled), or try it locally with:
+  kubectl port-forward svc/{{ include "open-pages.fullname" . }} 8080:{{ .Values.service.port }}
+{{- end }}
+{{- if not .Values.config.cookieSecure }}
+
+WARNING: config.cookieSecure is false. Use it only for plain-HTTP trials.
+{{- end }}
+{{- if not .Values.config.trustedProxies }}
+
+config.trustedProxies is empty, so X-Forwarded-For and X-Forwarded-Proto are ignored and
+logs show the proxy's address. Set it to the CIDRs of your ingress controller or router.
+{{- end }}
+{{- if and (not .Values.podSecurityContext.fsGroup) .Values.persistence.enabled }}
+
+podSecurityContext.fsGroup is not set. On OpenShift that is right. On other clusters, if the
+pod cannot write /data, upgrade with --set podSecurityContext.fsGroup=65532.
+{{- end }}
+
+Wait for readiness:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "open-pages.fullname" . }}
+See docs/kubernetes.md in the repository for DNS, TLS and upgrade notes.

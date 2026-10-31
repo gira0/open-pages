@@ -1,0 +1,171 @@
+{{- include "open-pages.validate" . -}}
+{{- $psc := deepCopy .Values.podSecurityContext }}
+{{- if not $psc.fsGroup }}{{- $_ := unset $psc "fsGroup" }}{{- $_ := unset $psc "fsGroupChangePolicy" }}{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "open-pages.fullname" . }}
+  labels:
+    {{- include "open-pages.labels" . | nindent 4 }}
+spec:
+  # One replica only: SQLite on a ReadWriteOnce volume.
+  replicas: 1
+  # Recreate: the old pod must release the volume before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "open-pages.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "open-pages.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "open-pages.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $psc | nindent 8 }}
+      containers:
+        - name: open-pages
+          image: {{ include "open-pages.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.httpPort }}
+              protocol: TCP
+            {{- if .Values.config.metrics.listen }}
+            - name: metrics
+              containerPort: {{ include "open-pages.metricsPort" . }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- if .Values.stagingVolume.enabled }}
+            - name: TMPDIR
+              value: {{ include "open-pages.stagingPath" . }}/tmp
+            {{- end }}
+            {{- if .Values.config.oidc.enabled }}
+            - name: OPEN_PAGES_OIDC_CLIENT_SECRET_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.oidcClientSecret }}
+            {{- end }}
+            {{- if .Values.config.metrics.tokenFromSecret }}
+            - name: OPEN_PAGES_METRICS_TOKEN_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.metricsToken }}
+            {{- end }}
+            {{- if and .Values.config.saml.enabled .Values.config.saml.signRequests }}
+            {{- /* saml key_file is itself a path setting, so these set the paths directly. */}}
+            - name: OPEN_PAGES_SAML_KEY_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.samlKey }}
+            - name: OPEN_PAGES_SAML_CERT_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.samlCert }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/open-pages/settings.ini
+              subPath: settings.ini
+              readOnly: true
+            {{- if .Values.stagingVolume.enabled }}
+            - name: staging
+              mountPath: {{ include "open-pages.stagingPath" . }}
+            {{- end }}
+            {{- if include "open-pages.usesSecret" . }}
+            - name: secrets
+              mountPath: {{ include "open-pages.secretsPath" . }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "open-pages.claimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "open-pages.fullname" . }}
+        {{- if .Values.stagingVolume.enabled }}
+        - name: staging
+          emptyDir:
+            sizeLimit: {{ .Values.stagingVolume.sizeLimit }}
+            {{- with .Values.stagingVolume.medium }}
+            medium: {{ . }}
+            {{- end }}
+        {{- end }}
+        {{- if include "open-pages.usesSecret" . }}
+        - name: secrets
+          secret:
+            secretName: {{ include "open-pages.secretName" . }}
+            defaultMode: {{ .Values.secrets.defaultMode }}
+            items:
+              {{- if .Values.config.oidc.enabled }}
+              - key: {{ .Values.secrets.keys.oidcClientSecret }}
+                path: {{ .Values.secrets.keys.oidcClientSecret }}
+              {{- end }}
+              {{- if .Values.config.metrics.tokenFromSecret }}
+              - key: {{ .Values.secrets.keys.metricsToken }}
+                path: {{ .Values.secrets.keys.metricsToken }}
+              {{- end }}
+              {{- if and .Values.config.saml.enabled .Values.config.saml.signRequests }}
+              - key: {{ .Values.secrets.keys.samlKey }}
+                path: {{ .Values.secrets.keys.samlKey }}
+              - key: {{ .Values.secrets.keys.samlCert }}
+                path: {{ .Values.secrets.keys.samlCert }}
+              {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
