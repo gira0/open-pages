@@ -1,0 +1,17 @@
+apiVersion: v2
+name: open-pages
+description: Self-hosted static site hosting with per-site access control (single replica, SQLite)
+type: application
+# Chart version. Keep it in step with appVersion at release time.
+version: 0.1.0
+# The image tag to deploy when image.tag is empty. Image tags are the release tag without the
+# leading "v" (release tag v1.2.3 gives ghcr.io/gira0/open-pages:1.2.3), so write it without "v".
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/gira0/open-pages
+sources:
+  - https://github.com/gira0/open-pages
+keywords:
+  - static-sites
+  - pages
+  - hosting

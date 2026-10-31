@@ -55,6 +55,8 @@ All reference material is in [`docs/`](docs/README.md):
 
 - [Getting started and operations](docs/getting-started.md): install, every settings key,
   sites and hosts, containers, health and metrics, CLI and CI deploys, backups.
+- [Kubernetes and OpenShift](docs/kubernetes.md): the Helm chart, volumes, wildcard DNS and
+  TLS, secrets, network policy.
 - [API reference](docs/api.md): every route with auth, request and response shapes, status
   codes and examples. The OpenAPI 3.1 version is [`api/openapi.yaml`](api/openapi.yaml),
   also served at `/v1/openapi.yaml`.

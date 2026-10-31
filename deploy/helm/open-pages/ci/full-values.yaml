@@ -1,0 +1,66 @@
+# Everything switched on, to render and validate every template.
+global:
+  imageRegistry: registry.mirror.example.com
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+imagePullSecrets:
+  - name: pull-secret
+config:
+  appHost: pages.example.com
+  contentDomain: pages-content.example.com
+  trustedProxies: ["10.128.0.0/14"]
+  corsOrigins: ["https://tools.example.com"]
+  metrics:
+    listen: ":9100"
+    tokenFromSecret: true
+  oidc:
+    enabled: true
+    issuer: https://sso.example.com/realms/corp
+    clientId: open-pages
+    redirectUrl: https://pages.example.com/v1/auth/oidc/callback
+    allowedEmailDomain: example.com
+  saml:
+    enabled: true
+    idpMetadataUrl: https://sso.example.com/realms/corp/protocol/saml/descriptor
+    entityId: https://pages.example.com/v1/auth/saml/metadata
+    acsUrl: https://pages.example.com/v1/auth/saml/acs
+    signRequests: true
+secrets:
+  oidcClientSecret: not-a-real-secret
+  metricsToken: ci-token-0123456789
+  samlKey: |
+    -----BEGIN PRIVATE KEY-----
+    ci-placeholder
+    -----END PRIVATE KEY-----
+  samlCert: |
+    -----BEGIN CERTIFICATE-----
+    ci-placeholder
+    -----END CERTIFICATE-----
+podSecurityContext:
+  fsGroup: 65532
+persistence:
+  storageClass: fast
+probes:
+  startup:
+    enabled: true
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+  tls:
+    appSecretName: pages-tls
+    wildcardSecretName: pages-content-wildcard-tls
+route:
+  enabled: true
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: shared-gateway
+      namespace: gateways
+serviceMonitor:
+  enabled: true
+networkPolicy:
+  enabled: true
+  egress:
+    allowedCIDRs: ["203.0.113.0/24"]

@@ -1,0 +1,4 @@
+# Smallest valid install.
+config:
+  appHost: pages.example.com
+  contentDomain: pages-content.example.com

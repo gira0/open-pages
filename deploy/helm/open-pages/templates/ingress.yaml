@@ -1,0 +1,53 @@
+{{- if .Values.ingress.enabled }}
+{{- $app := include "open-pages.appHost" . }}
+{{- $content := include "open-pages.contentDomain" . }}
+{{- $svc := include "open-pages.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $svc }}
+  labels:
+    {{- include "open-pages.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if or .Values.ingress.tls.appSecretName .Values.ingress.tls.wildcardSecretName }}
+  tls:
+    {{- with .Values.ingress.tls.appSecretName }}
+    - hosts:
+        - {{ $app | quote }}
+      secretName: {{ . }}
+    {{- end }}
+    {{- with .Values.ingress.tls.wildcardSecretName }}
+    - hosts:
+        - {{ printf "*.%s" $content | quote }}
+      secretName: {{ . }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ $app | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc }}
+                port:
+                  name: http
+    - host: {{ printf "*.%s" $content | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc }}
+                port:
+                  name: http
+{{- end }}
