@@ -128,27 +128,33 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      # Run as an arbitrary UID with GID 0 (what OpenShift's restricted-v2 SCC assigns), a
-      # read-only root, all capabilities dropped, and only /data (a fresh volume) and a
-      # tmpfs /tmp writable. The defaults baked into the image supply app_host/content_domain.
-      - name: Smoke test as an arbitrary UID with a read-only root
+      # Two runs, both with a read-only root, all capabilities dropped and only /data and a
+      # tmpfs /tmp writable; the defaults baked into the image supply app_host/content_domain.
+      # 1. The image's own user (65532:0) on a fresh named volume: the Docker/compose path.
+      # 2. An arbitrary UID with GID 0, what OpenShift's restricted-v2 SCC assigns. Docker's
+      #    classic storage driver copies the owner of /data into a new volume but not its
+      #    2775 mode, so the volume is made group-writable first, as a Kubernetes fsGroup or
+      #    an OpenShift PVC would be.
+      - name: Smoke test with a read-only root, as the image user and as an arbitrary UID
         run: |
-          docker volume create smoke-data
-          docker run -d --name smoke --read-only --user 1000780000:0 \
-            --cap-drop ALL --security-opt no-new-privileges \
-            --tmpfs /tmp -v smoke-data:/data -p 18080:8080 "$IMAGE"
-          code=000
-          for _ in $(seq 30); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/readyz || true)
-            [ "$code" = 200 ] && break
-            sleep 1
-          done
-          docker logs smoke
-          if [ "$code" != 200 ]; then
-            echo "::error::/readyz returned $code"
-            docker version --format 'docker {{.Server.Version}}'
-            docker info --format '{{.Driver}} {{.DriverStatus}}'
-            docker image inspect --format '{{json .Config.User}}' "$IMAGE"
-            docker run --rm -v smoke-data:/d busybox:1.37 ls -lan /d
-            exit 1
-          fi
+          smoke() {
+            name=$1 port=$2; shift 2
+            docker run -d --name "$name" --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp -p "$port:8080" "$@" "$IMAGE"
+            code=000
+            for _ in $(seq 30); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port/readyz" || true)
+              [ "$code" = 200 ] && break
+              sleep 1
+            done
+            docker logs "$name"
+            if [ "$code" != 200 ]; then
+              echo "::error::$name: /readyz returned $code"
+              exit 1
+            fi
+          }
+          docker volume create smoke-default
+          smoke smoke-default 18080 -v smoke-default:/data
+          docker volume create smoke-arbitrary
+          docker run --rm -v smoke-arbitrary:/d busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec sh -c 'chown 65532:0 /d && chmod 2775 /d'
+          smoke smoke-arbitrary 18081 --user 1000780000:0 -v smoke-arbitrary:/data
