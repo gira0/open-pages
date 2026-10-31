@@ -427,7 +427,8 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	emit()
-	s.refreshStoredBytes(ctx)
+	// The site is gone whether or not the client is still there.
+	s.refreshStoredBytes(context.WithoutCancel(ctx))
 	return nil
 }
 
@@ -484,6 +485,8 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		return "", err
 	}
 	if err := s.checkQuota(ctx, site, size); err != nil {
+		// checkQuota may have pruned versions and reconciled rows even when it rejects.
+		s.refreshStoredBytes(context.WithoutCancel(ctx))
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o755); err != nil { //nolint:gosec // G301: public site content
