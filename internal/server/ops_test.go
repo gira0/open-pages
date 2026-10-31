@@ -270,6 +270,18 @@ func TestLivezReadyzAndDrain(t *testing.T) {
 	}
 }
 
+// A probe whose checks were already running when Drain was called still answers draining.
+func TestReadyzDrainDuringChecks(t *testing.T) {
+	ts, s := newTestServer(t)
+	orig := afterReadyChecks
+	t.Cleanup(func() { afterReadyChecks = orig })
+	afterReadyChecks = s.Drain
+	resp, body := fetch(t, ts.URL+"/readyz", nil)
+	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, `"status":"draining"`) {
+		t.Errorf("drained during checks: status %d body %s", resp.StatusCode, body)
+	}
+}
+
 // Liveness does no I/O: it stays up when the database and the data directories are gone,
 // which is what a stalled volume looks like to the process.
 func TestLivezDoesNoIO(t *testing.T) {

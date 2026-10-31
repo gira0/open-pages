@@ -40,6 +40,8 @@ func TestClientIP(t *testing.T) {
 		{"several header lines", []string{"10.0.0.0/8"}, "10.1.2.3:4000", []string{"6.6.6.6", "198.51.100.1, 10.9.9.9"}, "198.51.100.1"},
 		{"every hop trusted", []string{"10.0.0.0/8"}, "10.1.2.3:4000", []string{"10.9.9.9"}, "10.1.2.3"},
 		{"garbage entry is not believed", []string{"10.0.0.0/8"}, "10.1.2.3:4000", []string{"198.51.100.1, not-an-ip"}, "10.1.2.3"},
+		{"zoned entry is not believed", []string{"10.0.0.0/8"}, "10.1.2.3:4000", []string{"2001:db8::1%evil text"}, "10.1.2.3"},
+		{"zoned trusted hop stops the walk", []string{"fd00::/8"}, "[fd00::1]:4000", []string{"198.51.100.1, fd00::2%eth0"}, "fd00::1"},
 		{"ipv6", []string{"fd00::/8"}, "[fd00::1]:4000", []string{"2001:db8::7"}, "2001:db8::7"},
 		{"ipv4-mapped peer matches an ipv4 network", []string{"10.0.0.0/8"}, "[::ffff:10.1.2.3]:4000", []string{"198.51.100.1"}, "198.51.100.1"},
 		{"not an ip peer", []string{"10.0.0.0/8"}, "pipe", []string{"198.51.100.1"}, "pipe"},

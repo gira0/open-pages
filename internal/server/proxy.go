@@ -52,8 +52,10 @@ func (s *Server) clientIP(r *http.Request) string {
 	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
 	for _, h := range slices.Backward(hops) {
 		addr, err := netip.ParseAddr(strings.TrimSpace(h))
-		if err != nil {
-			break // not an address: nothing further left can be believed either
+		if err != nil || addr.Zone() != "" {
+			// Not a plain address (a zone is free text and never matches a trusted
+			// network): nothing further left can be believed either.
+			break
 		}
 		if addr = addr.Unmap(); !s.trusted(addr) {
 			return addr.String()
