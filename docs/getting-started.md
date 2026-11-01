@@ -540,10 +540,18 @@ open-pages deploy -preview "$BRANCH" -delete blog      # when the branch or merg
   so previews nobody cleaned up do not pile up. Every deploy renews the expiry to
   `-expires-days` (default 14, at most 365) from now. `-delete` removes it at once and
   succeeds if it is already gone. It needs `-preview`, so it cannot delete a production site.
-- A preview is never more public than the site it previews: a new preview gets the
-  visibility of `<site>` (`authenticated` if `<site>` does not exist), and every deploy
-  applies it again. Pass `-visibility` to choose another. A preview counts towards the
-  owner's `sites_per_user` and storage quotas.
+- The server owns the `--` namespace: a site name containing `--` is a preview of the site
+  before the first `--`. That site must exist, and only its owner (or a member of its group)
+  may create the preview, so nobody can squat `blog--main` or publish look-alike
+  `blog--...` content. A preview may not be more public than its base site (a create with
+  no `visibility` inherits it, so does the CLI unless `-visibility` narrows it). Sites whose
+  third and fourth characters are hyphens (`xn--...`) cannot be created at all, which also
+  means two-letter sites cannot have previews. Names created before this rule keep working.
+- A preview counts towards the owner's `sites_per_user` and storage quotas.
+- Expired previews are removed by a background task every 10 minutes, so a preview can
+  stay up that long after its expiry. The removal is recorded as `site.delete` with
+  `{"reason":"expired"}`; every deploy's renewal is a `site.update` entry, so an active
+  branch adds one audit entry per push (see `[audit] retention_days`).
 - Any site can carry an expiry through the API: `expires_in_days` on
   `POST /v1/auth/sites` and `PUT /v1/auth/sites/<site>` (`0` removes it).
 

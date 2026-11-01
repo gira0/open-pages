@@ -70,9 +70,32 @@ func TestPreviewSite(t *testing.T) {
 	if n == n2 {
 		t.Error("long branches sharing a prefix must differ")
 	}
-	for _, bad := range [][2]string{{"blog", ""}, {"blog", "///"}, {"Bad", "main"}, {strings.Repeat("a", 60), "feature/x"}} {
+	for _, bad := range [][2]string{{"blog", ""}, {"blog", "///"}, {"Bad", "main"}, {strings.Repeat("a", 60), "feature/x"}, {"xn", "foo"}, {"ab", "main"}} {
 		if n, ok := PreviewSite(bad[0], bad[1]); ok {
 			t.Errorf("PreviewSite(%q, %q) = %q, want failure", bad[0], bad[1], n)
+		}
+	}
+}
+
+func TestReservedLDHAndPreviewBase(t *testing.T) {
+	for _, n := range []string{"xn--abc", "ab--c", "ab--"} {
+		if !ReservedSite(n) {
+			t.Errorf("ReservedSite(%q) = false, want true", n)
+		}
+	}
+	for _, n := range []string{"blog--x", "a--b", "abc--d", "a-b"} {
+		if ReservedSite(n) {
+			t.Errorf("ReservedSite(%q) = true, want false", n)
+		}
+	}
+	for name, want := range map[string]string{"blog--x": "blog", "a--b--c": "a"} {
+		if got, ok := PreviewBase(name); !ok || got != want {
+			t.Errorf("PreviewBase(%q) = %q, %v", name, got, ok)
+		}
+	}
+	for _, n := range []string{"blog", "a-b", "--x"} {
+		if _, ok := PreviewBase(n); ok {
+			t.Errorf("PreviewBase(%q) ok", n)
 		}
 	}
 }

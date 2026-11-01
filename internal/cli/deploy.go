@@ -30,8 +30,8 @@ import (
 // With -preview <branch>, the directory is deployed as a preview site "<site>--<branch slug>"
 // that the server deletes after -expires-days days; every deploy renews that time, and
 // "-preview <branch> -delete <site>" removes the preview at once (for example when the merge
-// request closes). A new preview is not public: it takes the visibility of <site>, or
-// "authenticated" if that does not exist, unless -visibility says otherwise.
+// request closes). A preview takes the visibility of <site> unless -visibility
+// says otherwise, and <site> must exist: the server only lets its owner create previews of it.
 //
 // With -visibility, the site is created with that visibility or its visibility is changed:
 // before the upload when the change narrows who can see the site, after a successful upload
@@ -454,8 +454,8 @@ func (c *deployClient) renewExpiry(ctx context.Context, site string, days int) e
 	return nil
 }
 
-// previewVisibility returns the visibility a preview of site should have: that of site, or
-// "authenticated" when site does not exist yet.
+// previewVisibility returns the visibility a preview of site should have, which is that of
+// site. The server only accepts previews of existing sites.
 func (c *deployClient) previewVisibility(ctx context.Context, site string) (string, error) {
 	rep, err := c.send(ctx, http.MethodGet, "/v1/auth/sites/"+site, "", nil, 0)
 	if err != nil {
@@ -468,7 +468,7 @@ func (c *deployClient) previewVisibility(ctx context.Context, site string) (stri
 		}
 		return "authenticated", nil
 	case http.StatusNotFound:
-		return "authenticated", nil
+		return "", fmt.Errorf("cannot preview %s: the site does not exist yet, deploy it first", site)
 	default:
 		return "", rep.failure("reading the site to preview")
 	}

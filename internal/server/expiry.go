@@ -35,34 +35,6 @@ func expiryFromDays(days int, now time.Time) (int64, error) {
 	return now.Add(time.Duration(days) * 24 * time.Hour).Unix(), nil
 }
 
-// setExpiry sets the site's expiry (0 clears it) and records the change in the audit log.
-// Like updateSite it matches the site's id, name and owner, and returns errSiteNotFound if
-// the site was deleted or replaced meanwhile.
-func (s *Server) setExpiry(ctx context.Context, site Site, expiresAt int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
-	res, err := tx.ExecContext(ctx, "UPDATE docs SET expires_at = ? WHERE docid = ? AND name = ? AND uowner IS ?",
-		nullableID(expiresAt), site.ID, site.Name, nullableID(site.OwnerID))
-	if err != nil {
-		return fmt.Errorf("set expiry: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return errSiteNotFound
-	}
-	emit := s.auditRecord(ctx, tx, auditEvent{
-		action: auditSiteUpdate, targetKind: targetSite, target: site.Name, siteID: site.ID,
-		details: map[string]any{"changes": map[string]any{"expires_at": map[string]any{"from": site.ExpiresAt, "to": expiresAt}}},
-	})
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	emit()
-	return nil
-}
-
 // reapExpired deletes every site whose expiry has passed and returns how many it removed.
 // A site that fails to delete is logged and retried at the next run.
 func (s *Server) reapExpired(ctx context.Context, now time.Time) (int, error) {
@@ -118,7 +90,7 @@ func (s *Server) reapOne(ctx context.Context, site Site, now time.Time) bool {
 	if cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
 		return false
 	}
-	if err := s.deleteSite(ctx, cur); err != nil {
+	if err := s.deleteSiteWith(ctx, cur, map[string]any{"reason": "expired", "expires_at": cur.ExpiresAt}); err != nil {
 		if !errors.Is(err, errSiteNotFound) {
 			slog.Error("delete expired site", "site", site.Name, "err", err)
 		}
@@ -128,15 +100,17 @@ func (s *Server) reapOne(ctx context.Context, site Site, now time.Time) bool {
 	return true
 }
 
-// startExpiryReaper reaps once now and then every expiryReapEvery until Close.
+// startExpiryReaper reaps once at start and then every expiryReapEvery until Close.
 func (s *Server) startExpiryReaper(ctx context.Context) {
 	run := func() {
 		if _, err := s.reapExpired(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			slog.Error("reap expired sites", "err", err)
 		}
 	}
-	run()
 	s.background.Go(func() {
+		// The first run is here too, not in New, so a long backlog of expired previews
+		// (after downtime) does not delay the listener.
+		run()
 		t := time.NewTicker(expiryReapEvery)
 		defer t.Stop()
 		for {

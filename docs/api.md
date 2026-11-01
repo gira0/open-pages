@@ -532,13 +532,15 @@ Body:
 group id (0 or absent for none). `visibility` is `public` (default), `authenticated` or
 `restricted`. `expires_in_days` (0 to 365, default 0) deletes the site, files included, after
 that many days (see [Preview deployments](getting-started.md#preview-deployments)); the
-response then carries `expires_at` (RFC 3339).
+response then carries `expires_at` (RFC 3339). A name containing `--` is a preview of the site
+before the first `--`: that site must exist, only its owner or a member of its group may
+create it, and it may not be more public than that site (omitting `visibility` inherits it).
 
 | Status | Body |
 |---|---|
 | 201 | `{"status":"site created","name":"blog","visibility":"restricted"}` |
-| 400 | invalid JSON, invalid or reserved name, description too long, bad visibility, or `{"error":"group not found"}` |
-| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group), or `{"error":"site quota exceeded: you may own at most 10 sites"}` (`sites_per_user`) |
+| 400 | invalid JSON, invalid or reserved name (this includes names with `--` as the third and fourth character), description too long, bad visibility, `expires_in_days` out of range, `{"error":"group not found"}`, or a preview whose base site does not exist or that would be more public than it |
+| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group), a preview of someone else's site, or `{"error":"site quota exceeded: you may own at most 10 sites"}` (`sites_per_user`) |
 | 409 | `{"error":"a site with that name already exists"}` |
 
 Creating a site does not deploy anything; upload an archive next. Until then the site

@@ -29,8 +29,24 @@ var reservedSites = map[string]bool{
 // ValidSite reports whether name is usable as a site name (a DNS label).
 func ValidSite(name string) bool { return siteNameRe.MatchString(name) }
 
-// ReservedSite reports whether name is reserved and so can't be used as a site name.
-func ReservedSite(name string) bool { return reservedSites[name] }
+// ReservedSite reports whether name is reserved and so can't be used as a site name. That
+// covers the operator-facing names above and "reserved LDH" labels, whose third and fourth
+// characters are hyphens (RFC 5891): "xn--" labels are IDNA A-labels, which browsers decode
+// to Unicode, so a site called "xn--..." would be a homograph risk.
+func ReservedSite(name string) bool {
+	return reservedSites[name] || (len(name) >= 4 && name[2:4] == "--")
+}
+
+// PreviewBase reports whether name has the form of a preview site, "<base>--<rest>", and
+// returns the name of the site it previews. The server only lets the owner of <base> (or a
+// member of its group) create such a name, and only while <base> exists.
+func PreviewBase(name string) (base string, ok bool) {
+	i := strings.Index(name, previewSep)
+	if i <= 0 {
+		return "", false
+	}
+	return name[:i], true
+}
 
 // GroupKey maps a group name to the key that must be unique: every rune is replaced by the
 // smallest member of its Unicode simple case-folding orbit, so "Ä" and "ä" (and "K" and
@@ -55,8 +71,9 @@ const previewSep = "--"
 // digits, runs of anything else become one hyphen). A slug that had to be shortened or
 // changed in any way but case gets an 8-hex-digit hash of the original branch appended, so
 // "feature/x" and "feature-x" (or two very long names with a common prefix) never share a
-// site. It reports false if site is not a valid site name or branch has no usable
-// characters at all.
+// site. Branches that differ only in case ("Fix" and "fix") share a preview. It reports false
+// if site is not a valid site name, branch has no usable characters at all, or the resulting
+// name is reserved (a two-letter site gives a "reserved LDH" label such as "xn--...").
 func PreviewSite(site, branch string) (string, bool) {
 	if !ValidSite(site) {
 		return "", false
@@ -93,5 +110,5 @@ func PreviewSite(site, branch string) (string, bool) {
 		}
 		name = site + previewSep + strings.Trim(slug[:min(len(slug), room)], "-") + suffix
 	}
-	return name, ValidSite(name)
+	return name, ValidSite(name) && !ReservedSite(name)
 }

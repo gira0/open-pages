@@ -49,7 +49,7 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		expiresAt = &at
 	}
-	updated, err := s.updateSite(r.Context(), site, d.Description, d.Group, d.Visibility)
+	updated, err := s.updateSiteExpiring(r.Context(), site, d.Description, d.Group, d.Visibility, expiresAt)
 	if errors.Is(err, errGroupNotFound) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -65,18 +65,6 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		internalError(w, "update site", err)
 		return
-	}
-	if expiresAt != nil {
-		if err := s.setExpiry(r.Context(), updated, *expiresAt); errors.Is(err, errSiteNotFound) {
-			writeError(w, http.StatusNotFound, err.Error())
-			return
-		} else if err != nil {
-			internalError(w, "set site expiry", err)
-			return
-		}
-		updated.ExpiresAt = *expiresAt
-	} else {
-		updated.ExpiresAt = site.ExpiresAt
 	}
 	resp := map[string]any{
 		"name": site.Name, "description": updated.Description, "group": updated.GroupID, "visibility": updated.Visibility,
