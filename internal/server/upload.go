@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gira0/open-pages/internal/metrics"
 	"github.com/gira0/open-pages/internal/names"
@@ -15,8 +17,9 @@ import (
 type siteCreate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Group       int64  `json:"group"`      // optional group id; 0 or absent for none
-	Visibility  string `json:"visibility"` // "public" (default), "authenticated" or "restricted"
+	Group       int64  `json:"group"`           // optional group id; 0 or absent for none
+	Visibility  string `json:"visibility"`      // "public" (default), "authenticated" or "restricted"
+	ExpiresIn   int    `json:"expires_in_days"` // optional; delete the site after this many days (0 or absent: never)
 }
 
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +49,12 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errBadVisibility)
 		return
 	}
-	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
+	expiresAt, err := expiryFromDays(d.ExpiresIn, time.Now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	site, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
 	if errors.Is(err, errSiteLimit) {
 		writeError(w, http.StatusForbidden,
 			fmt.Sprintf("site quota exceeded: you may own at most %d sites", s.cfg.SitesPerUser))
@@ -68,7 +76,21 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create site", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name, "visibility": d.Visibility})
+	if expiresAt != 0 {
+		if err := s.setExpiry(r.Context(), site, expiresAt); err != nil {
+			// The site exists but would never expire; take it back so the client can retry.
+			if delErr := s.deleteSite(context.WithoutCancel(r.Context()), site); delErr != nil {
+				ctxLogger(r.Context()).Error("remove site after failed expiry", "site", site.Name, "err", delErr)
+			}
+			internalError(w, "set site expiry", err)
+			return
+		}
+	}
+	resp := map[string]any{"status": "site created", "name": d.Name, "visibility": d.Visibility}
+	if expiresAt != 0 {
+		resp["expires_at"] = time.Unix(expiresAt, 0).UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // authorizeSite loads the site named in the URL and checks the caller owns it,

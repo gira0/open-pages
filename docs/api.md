@@ -530,7 +530,9 @@ Body:
 
 `name` is required. `description` is optional, at most 512 bytes. `group` is an optional
 group id (0 or absent for none). `visibility` is `public` (default), `authenticated` or
-`restricted`.
+`restricted`. `expires_in_days` (0 to 365, default 0) deletes the site, files included, after
+that many days (see [Preview deployments](getting-started.md#preview-deployments)); the
+response then carries `expires_at` (RFC 3339).
 
 | Status | Body |
 |---|---|
@@ -571,7 +573,9 @@ Returns the metadata to anyone who may view the site: any logged-in user for `pu
 ### PUT /v1/auth/sites/{name}
 
 Owner only. Body fields are all optional and absent fields are left unchanged:
-`description` (at most 512 bytes), `group` (id; `0` removes the group), `visibility`.
+`description` (at most 512 bytes), `group` (id; `0` removes the group), `visibility`,
+`expires_in_days` (0 to 365 days from now; `0` removes the expiry). The response carries
+`expires_at` while the site has an expiry.
 
 - `200 {"name":"blog","description":"d","group":0,"visibility":"restricted"}`
 - `400` invalid JSON, description too long, bad visibility, or `{"error":"group not found"}`

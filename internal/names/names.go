@@ -5,6 +5,8 @@
 package names
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 	"unicode"
@@ -43,4 +45,53 @@ func GroupKey(name string) string {
 		b.WriteRune(low)
 	}
 	return b.String()
+}
+
+// previewSep separates a site name from the branch slug in a preview site's name.
+const previewSep = "--"
+
+// PreviewSite returns the name of the preview site for branch of site: "<site>--<slug>",
+// where slug is the branch name folded into DNS-label characters (lowercase letters and
+// digits, runs of anything else become one hyphen). A slug that had to be shortened or
+// changed in any way but case gets an 8-hex-digit hash of the original branch appended, so
+// "feature/x" and "feature-x" (or two very long names with a common prefix) never share a
+// site. It reports false if site is not a valid site name or branch has no usable
+// characters at all.
+func PreviewSite(site, branch string) (string, bool) {
+	if !ValidSite(site) {
+		return "", false
+	}
+	var b strings.Builder
+	lossy := false
+	dash := true // suppresses a leading hyphen
+	for _, r := range strings.ToLower(branch) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash {
+				b.WriteByte('-')
+			}
+			dash = true
+			if r != '-' {
+				lossy = true
+			}
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "", false
+	}
+	name := site + previewSep + slug
+	if lossy || len(name) > 63 {
+		sum := sha256.Sum256([]byte(branch))
+		suffix := "-" + hex.EncodeToString(sum[:4])
+		room := 63 - len(site) - len(previewSep) - len(suffix)
+		if room < 1 {
+			return "", false
+		}
+		name = site + previewSep + strings.Trim(slug[:min(len(slug), room)], "-") + suffix
+	}
+	return name, ValidSite(name)
 }

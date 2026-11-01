@@ -70,6 +70,7 @@ type Site struct {
 	OwnerID     int64
 	GroupID     int64
 	Visibility  string
+	ExpiresAt   int64 // Unix time after which the site is deleted; 0 for never
 }
 
 // SiteDir returns the directory holding all versions of site, or "" for an invalid name.
@@ -251,20 +252,21 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 // getSite loads a site by name. It returns errSiteNotFound if there is none.
 func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 	var (
-		site  = Site{Name: name}
-		desc  sql.NullString
-		owner sql.NullInt64
-		group sql.NullInt64
+		site    = Site{Name: name}
+		desc    sql.NullString
+		owner   sql.NullInt64
+		group   sql.NullInt64
+		expires sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		"SELECT docid, description, uowner, ugroup, visibility FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group, &site.Visibility)
+		"SELECT docid, description, uowner, ugroup, visibility, expires_at FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group, &site.Visibility, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
 	if err != nil {
 		return Site{}, fmt.Errorf("query site: %w", err)
 	}
-	site.Description, site.OwnerID, site.GroupID = desc.String, owner.Int64, group.Int64
+	site.Description, site.OwnerID, site.GroupID, site.ExpiresAt = desc.String, owner.Int64, group.Int64, expires.Int64
 	return site, nil
 }
 

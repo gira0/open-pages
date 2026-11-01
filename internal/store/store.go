@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS docs (
 	description VARCHAR(512) NULL,
 	path        VARCHAR(256) NULL UNIQUE,
 	visibility  TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'authenticated', 'restricted')),
+	expires_at  BIGINT NULL,
 	FOREIGN KEY (uowner) REFERENCES user(userid),
 	FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 );
@@ -209,6 +210,10 @@ func migrate(db *sql.DB) error {
 			"ALTER TABLE docs ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'authenticated', 'restricted'))"); err != nil {
 			return err
 		}
+	}
+	// docs.expires_at: Unix time after which the site is deleted (NULL: never), used for previews.
+	if err := addColumn(ctx, db, "docs", "expires_at", "expires_at BIGINT NULL"); err != nil {
+		return err
 	}
 	// OIDC and SAML: user.oidc_issuer/oidc_subject identify a user created by single sign-on
 	// (NULL for local accounts); user_group.oidc marks memberships managed by the identity

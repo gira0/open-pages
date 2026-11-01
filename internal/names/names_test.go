@@ -46,3 +46,33 @@ func TestGroupKey(t *testing.T) {
 		t.Error("mixed-case variants should share a key")
 	}
 }
+
+func TestPreviewSite(t *testing.T) {
+	long := strings.Repeat("a", 70)
+	got, ok := PreviewSite("blog", "main")
+	if !ok || got != "blog--main" {
+		t.Fatalf("PreviewSite(blog, main) = %q, %v", got, ok)
+	}
+	// Case alone is folded without a hash.
+	if got, _ := PreviewSite("blog", "Main"); got != "blog--main" {
+		t.Errorf("Main = %q", got)
+	}
+	a, _ := PreviewSite("blog", "feature/x")
+	b, _ := PreviewSite("blog", "feature-x")
+	if a == b || !strings.HasPrefix(a, "blog--feature-x-") || b != "blog--feature-x" {
+		t.Errorf("feature/x = %q, feature-x = %q", a, b)
+	}
+	n, ok := PreviewSite("blog", long)
+	if !ok || len(n) > 63 || !ValidSite(n) {
+		t.Errorf("long branch = %q (%d), %v", n, len(n), ok)
+	}
+	n2, _ := PreviewSite("blog", long+"b")
+	if n == n2 {
+		t.Error("long branches sharing a prefix must differ")
+	}
+	for _, bad := range [][2]string{{"blog", ""}, {"blog", "///"}, {"Bad", "main"}, {strings.Repeat("a", 60), "feature/x"}} {
+		if n, ok := PreviewSite(bad[0], bad[1]); ok {
+			t.Errorf("PreviewSite(%q, %q) = %q, want failure", bad[0], bad[1], n)
+		}
+	}
+}

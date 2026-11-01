@@ -65,7 +65,8 @@ their visibility and group, deploy new versions, roll back and delete.
 
 ```text
 open-pages [-config settings.ini]                       run the server
-open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>   deploy a directory
+open-pages deploy [-server URL] [-create=false] [-visibility V] [-preview BRANCH] <site> <dir>   deploy a directory
+open-pages deploy [-server URL] -preview BRANCH -delete <site>                  delete a preview
 ```
 
 `-config` defaults to `settings.ini` in the working directory. The server stops gracefully
@@ -519,6 +520,35 @@ CI examples ready to copy, not run by this repository's CI:
     OPEN_PAGES_TOKEN: ${{ secrets.OPEN_PAGES_TOKEN }}
     OPEN_PAGES_URL: ${{ vars.OPEN_PAGES_URL }}
 ```
+
+### Preview deployments
+
+`-preview <branch>` deploys to a separate site named `<site>--<branch>` instead of `<site>`,
+for example `blog--feature-x`, served at `https://blog--feature-x.<content_domain>/`:
+
+```sh
+open-pages deploy -preview "$BRANCH" -expires-days 14 blog ./public
+open-pages deploy -preview "$BRANCH" -delete blog      # when the branch or merge request closes
+```
+
+- The branch name is folded into a host name label: lowercase letters and digits, runs of
+  anything else become one hyphen. If that changed more than the case (`feature/x`), or the
+  name would be over 63 characters, an 8-digit hash of the real branch name is appended, so
+  two branches never share a preview.
+- A preview is a normal site (same access control, quotas and audit log) with an expiry.
+  The server deletes it, files included, once the expiry passes (checked every 10 minutes),
+  so previews nobody cleaned up do not pile up. Every deploy renews the expiry to
+  `-expires-days` (default 14, at most 365) from now. `-delete` removes it at once and
+  succeeds if it is already gone. It needs `-preview`, so it cannot delete a production site.
+- A preview is never more public than the site it previews: a new preview gets the
+  visibility of `<site>` (`authenticated` if `<site>` does not exist), and every deploy
+  applies it again. Pass `-visibility` to choose another. A preview counts towards the
+  owner's `sites_per_user` and storage quotas.
+- Any site can carry an expiry through the API: `expires_in_days` on
+  `POST /v1/auth/sites` and `PUT /v1/auth/sites/<site>` (`0` removes it).
+
+See [`examples/github-actions.yml`](../examples/github-actions.yml) for a workflow that
+deploys pull requests and cleans up when they close.
 
 Without the CLI, any client can `POST` a zip to the upload route
 ([api.md](api.md#post-v1authsitesnameupload)).
