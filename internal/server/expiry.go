@@ -98,17 +98,24 @@ func (s *Server) reapExpired(ctx context.Context, now time.Time) (int, error) {
 		}
 		// The site may have been renewed since the listing; deleteSite only matches the
 		// exact id, name and owner, so re-check the expiry under the same conditions.
-		cur, err := s.getSite(ctx, site.Name)
-		if err != nil || cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
+		cur, getErr := s.getSite(ctx, site.Name)
+		if errors.Is(getErr, errSiteNotFound) {
 			continue
 		}
-		switch err := s.deleteSite(ctx, cur); {
-		case err == nil:
+		if getErr != nil {
+			slog.Error("load expired site", "site", site.Name, "err", getErr)
+			continue
+		}
+		if cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
+			continue
+		}
+		switch delErr := s.deleteSite(ctx, cur); {
+		case delErr == nil:
 			removed++
 			slog.Info("deleted expired site", "site", site.Name)
-		case errors.Is(err, errSiteNotFound):
+		case errors.Is(delErr, errSiteNotFound):
 		default:
-			slog.Error("delete expired site", "site", site.Name, "err", err)
+			slog.Error("delete expired site", "site", site.Name, "err", delErr)
 		}
 	}
 	return removed, nil
