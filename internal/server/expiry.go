@@ -93,8 +93,8 @@ func (s *Server) reapExpired(ctx context.Context, now time.Time) (int, error) {
 
 	removed := 0
 	for _, site := range expired {
-		if ctx.Err() != nil {
-			break
+		if err := ctx.Err(); err != nil {
+			return removed, err // shutting down; the rest waits for the next run
 		}
 		if s.reapOne(ctx, site, now) {
 			removed++
