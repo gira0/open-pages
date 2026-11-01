@@ -80,7 +80,7 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		if err := s.setExpiry(r.Context(), site, expiresAt); err != nil {
 			// The site exists but would never expire; take it back so the client can retry.
 			if delErr := s.deleteSite(context.WithoutCancel(r.Context()), site); delErr != nil {
-				ctxLogger(r.Context()).Error("remove site after failed expiry", "site", site.Name, "err", delErr)
+				ctxLogger(r.Context()).Error("remove site after failed expiry", "site", oneLine(site.Name), "err", delErr)
 			}
 			internalError(w, "set site expiry", err)
 			return
