@@ -100,6 +100,9 @@ func PreviewSite(site, branch string) (string, bool) {
 	if slug == "" {
 		return "", false
 	}
+	if slug != strings.ToLower(branch) {
+		lossy = true // collapsed or trimmed hyphens: "feature--x" and "feature-x-" must not share "feature-x"
+	}
 	name := site + previewSep + slug
 	if lossy || len(name) > 63 {
 		sum := sha256.Sum256([]byte(branch))

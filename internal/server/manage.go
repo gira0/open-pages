@@ -50,7 +50,7 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &at
 	}
 	updated, err := s.updateSiteExpiring(r.Context(), site, d.Description, d.Group, d.Visibility, expiresAt)
-	if errors.Is(err, errGroupNotFound) {
+	if errors.Is(err, errGroupNotFound) || errors.Is(err, errPreviewVisible) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

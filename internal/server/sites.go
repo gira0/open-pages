@@ -41,6 +41,8 @@ var (
 	errVersionAbsent = errors.New("version not found")
 	errGroupNotFound = errors.New("group not found")
 
+	errNotExpired = errors.New("site is not expired")
+
 	errPreviewBase    = errors.New(`a name containing "--" is a preview and needs an existing site before the "--"`)
 	errPreviewOwner   = errors.New(`a name containing "--" is a preview: only the owner of the site before the "--" (or a member of its group) may create it`)
 	errPreviewVisible = errors.New("a preview may not be more public than the site it previews")
@@ -232,6 +234,26 @@ func (s *Server) checkPreview(ctx context.Context, name string, owner int64, vis
 	return nil
 }
 
+// checkPreviewVisibility returns errPreviewVisible if name is a preview whose base site
+// exists and is less public than visibility. Other names pass.
+func (s *Server) checkPreviewVisibility(ctx context.Context, name, visibility string) error {
+	base, ok := names.PreviewBase(name)
+	if !ok {
+		return nil
+	}
+	parent, err := s.getSite(ctx, base)
+	if errors.Is(err, errSiteNotFound) {
+		return nil // orphaned preview: nothing to compare with
+	}
+	if err != nil {
+		return err
+	}
+	if visRank[visibility] > visRank[parent.Visibility] {
+		return errPreviewVisible
+	}
+	return nil
+}
+
 // createSiteExpiring is createSite for a site that is deleted at expiresAt (a Unix time; 0
 // for never), which is stored in the same INSERT so a preview can never exist without its
 // expiry. A name of the form "<base>--<rest>" is a preview and must pass checkPreview.
@@ -341,6 +363,12 @@ func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description 
 		sets []string
 		args []any
 	)
+	if visibility != nil {
+		// A preview may not be made more public than the site it previews.
+		if err := s.checkPreviewVisibility(ctx, site.Name, *visibility); err != nil {
+			return Site{}, err
+		}
+	}
 	if description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *description)
@@ -467,12 +495,16 @@ func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 // site was already deleted or replaced by another with the same name. A failure removing
 // the files leaves the row, so the delete can be retried.
 func (s *Server) deleteSite(ctx context.Context, site Site) error {
-	return s.deleteSiteWith(ctx, site, nil)
+	return s.deleteSiteWith(ctx, site, nil, 0)
 }
 
 // deleteSiteWith is deleteSite with details added to the site.delete audit entry, for
-// example the reason for a delete nobody asked for.
-func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[string]any) error {
+// example the reason for a delete nobody asked for. A non-zero expiredBy makes the delete
+// conditional: the site must still have an expiry at or before that Unix time, checked
+// under the database write lock that is then held until the delete commits, so a renewal
+// that lands first keeps the site (errNotExpired, nothing removed) and one that comes
+// later waits and finds the site gone.
+func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[string]any, expiredBy int64) error {
 	dir := s.SiteDir(site.Name)
 	if dir == "" {
 		return errors.New("invalid site name")
@@ -482,16 +514,35 @@ func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[stri
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return err
 	}
+	// The audit entry goes in the same transaction as the delete (and under deployMu), so
+	// it always precedes the site.create of a site that reuses the name and row id.
+	var tx *sql.Tx
+	if expiredBy != 0 {
+		var err error
+		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
+			return fmt.Errorf("begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after Commit
+		res, err := tx.ExecContext(ctx,
+			"UPDATE docs SET docid = docid WHERE docid = ? AND name = ? AND uowner IS ? AND expires_at IS NOT NULL AND expires_at <= ?",
+			site.ID, site.Name, nullableID(site.OwnerID), expiredBy)
+		if err != nil {
+			return fmt.Errorf("lock site: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return errNotExpired
+		}
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
-	// The audit entry goes in the same transaction as the delete (and under deployMu), so
-	// it always precedes the site.create of a site that reuses the name and row id.
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+	if tx == nil {
+		var err error
+		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
+			return fmt.Errorf("begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after Commit
 	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
 		site.ID, site.Name, nullableID(site.OwnerID))
 	if err != nil {

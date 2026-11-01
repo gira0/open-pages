@@ -580,7 +580,7 @@ Owner only. Body fields are all optional and absent fields are left unchanged:
 `expires_at` while the site has an expiry.
 
 - `200 {"name":"blog","description":"d","group":0,"visibility":"restricted"}`
-- `400` invalid JSON, description too long, bad visibility, or `{"error":"group not found"}`
+- `400` invalid JSON, description too long, bad visibility, `{"error":"group not found"}`, or a preview (`<site>--<rest>`) given a visibility more public than its base site
 - `403` not the owner, or `{"error":"you are not a member of this group"}`
 - `404` site not found
 

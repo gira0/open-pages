@@ -310,3 +310,85 @@ func TestReaperAuditsReason(t *testing.T) {
 		t.Errorf("details = %s", details)
 	}
 }
+
+// A renewal that lands between the reaper's listing and its delete must keep the site.
+func TestReapDoesNotDeleteRenewedSite(t *testing.T) {
+	_, s := newTestServer(t)
+	now := time.Now()
+	stale, err := s.createSiteExpiring(t.Context(), "tmp", "", testOwner(t, s), 0, visPublic, now.Add(-time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployNamedFiles(t, s, "tmp")
+
+	// Renewed after the reaper looked (it still holds the stale Site and ExpiresAt).
+	if err := setExpiry(t, s, stale, now.Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	err = s.deleteSiteWith(t.Context(), stale, nil, now.Unix())
+	if !errors.Is(err, errNotExpired) {
+		t.Fatalf("delete of a renewed site = %v, want errNotExpired", err)
+	}
+	if _, err := s.getSite(t.Context(), "tmp"); err != nil {
+		t.Errorf("renewed site is gone: %v", err)
+	}
+	if _, err := os.Lstat(s.CurrentDir("tmp")); err != nil {
+		t.Errorf("renewed site's files are gone: %v", err)
+	}
+	// Once it really is expired, the same call deletes it.
+	cur, _ := s.getSite(t.Context(), "tmp")
+	if err := setExpiry(t, s, cur, now.Add(-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ = s.getSite(t.Context(), "tmp")
+	if err := s.deleteSiteWith(t.Context(), cur, nil, now.Unix()); err != nil {
+		t.Fatalf("delete of an expired site = %v", err)
+	}
+}
+
+// A preview's visibility can't be widened past its base's afterwards, by its owner or by a
+// group member who owns it.
+func TestPreviewVisibilityCannotBeWidened(t *testing.T) {
+	_, s := newTestServer(t)
+	owner := testOwner(t, s)
+	if _, err := s.db.ExecContext(t.Context(),
+		"INSERT INTO user (userid, email, password) VALUES (2, 'two@example.com', 'x')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO groups (groupid, name, owner) VALUES (7, 'eng', ?)", owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(t.Context(), "INSERT INTO user_group (uid, gid) VALUES (?, 7), (2, 7)", owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createSite(t.Context(), "blog", "", owner, 7, visAuthenticated); err != nil {
+		t.Fatal(err)
+	}
+	wide := visPublic
+	same := visAuthenticated
+	narrow := visRestricted
+	for _, user := range []int64{owner, 2} {
+		name := map[int64]string{owner: "blog--own", 2: "blog--member"}[user]
+		prev, err := s.createSite(t.Context(), name, "", user, 0, visRestricted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.updateSite(t.Context(), prev, nil, nil, &wide); !errors.Is(err, errPreviewVisible) {
+			t.Errorf("%s: widening to public = %v, want errPreviewVisible", name, err)
+		}
+		if _, err := s.updateSite(t.Context(), prev, nil, nil, &same); err != nil {
+			t.Errorf("%s: matching the base = %v", name, err)
+		}
+		if _, err := s.updateSite(t.Context(), prev, nil, nil, &narrow); err != nil {
+			t.Errorf("%s: narrowing = %v", name, err)
+		}
+		if got, _ := s.getSite(t.Context(), name); got.Visibility != visRestricted {
+			t.Errorf("%s: visibility = %s after refused widening", name, got.Visibility)
+		}
+	}
+	// Sites that are not previews are unaffected.
+	plain, _ := s.getSite(t.Context(), "blog")
+	if _, err := s.updateSite(t.Context(), plain, nil, nil, &wide); err != nil {
+		t.Errorf("widening a normal site = %v", err)
+	}
+}

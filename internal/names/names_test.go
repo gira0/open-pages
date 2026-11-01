@@ -62,6 +62,18 @@ func TestPreviewSite(t *testing.T) {
 	if a == b || !strings.HasPrefix(a, "blog--feature-x-") || b != "blog--feature-x" {
 		t.Errorf("feature/x = %q, feature-x = %q", a, b)
 	}
+	// Hyphen runs and trailing hyphens are lossy too, so these four are all different.
+	seen := map[string]string{}
+	for _, br := range []string{"feature-x", "feature--x", "feature-x-", "-feature-x"} {
+		n, ok := PreviewSite("blog", br)
+		if !ok {
+			t.Fatalf("PreviewSite(%q) failed", br)
+		}
+		if other, dup := seen[n]; dup {
+			t.Errorf("%q and %q share the preview %q", br, other, n)
+		}
+		seen[n] = br
+	}
 	n, ok := PreviewSite("blog", long)
 	if !ok || len(n) > 63 || !ValidSite(n) {
 		t.Errorf("long branch = %q (%d), %v", n, len(n), ok)

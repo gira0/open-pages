@@ -90,8 +90,10 @@ func (s *Server) reapOne(ctx context.Context, site Site, now time.Time) bool {
 	if cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
 		return false
 	}
-	if err := s.deleteSiteWith(ctx, cur, map[string]any{"reason": "expired", "expires_at": cur.ExpiresAt}); err != nil {
-		if !errors.Is(err, errSiteNotFound) {
+	// deleteSiteWith re-checks the expiry under the database lock: a renewal that commits
+	// after the getSite above must keep the site.
+	if err := s.deleteSiteWith(ctx, cur, map[string]any{"reason": "expired", "expires_at": cur.ExpiresAt}, now.Unix()); err != nil {
+		if !errors.Is(err, errSiteNotFound) && !errors.Is(err, errNotExpired) {
 			slog.Error("delete expired site", "site", site.Name, "err", err)
 		}
 		return false
