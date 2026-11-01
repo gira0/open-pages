@@ -96,29 +96,36 @@ func (s *Server) reapExpired(ctx context.Context, now time.Time) (int, error) {
 		if ctx.Err() != nil {
 			break
 		}
-		// The site may have been renewed since the listing; deleteSite only matches the
-		// exact id, name and owner, so re-check the expiry under the same conditions.
-		cur, getErr := s.getSite(ctx, site.Name)
-		if errors.Is(getErr, errSiteNotFound) {
-			continue
-		}
-		if getErr != nil {
-			slog.Error("load expired site", "site", site.Name, "err", getErr)
-			continue
-		}
-		if cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
-			continue
-		}
-		switch delErr := s.deleteSite(ctx, cur); {
-		case delErr == nil:
+		if s.reapOne(ctx, site, now) {
 			removed++
-			slog.Info("deleted expired site", "site", site.Name)
-		case errors.Is(delErr, errSiteNotFound):
-		default:
-			slog.Error("delete expired site", "site", site.Name, "err", delErr)
 		}
 	}
 	return removed, nil
+}
+
+// reapOne deletes site if it is still the same site and still expired; the site may have
+// been renewed, deleted or replaced since it was listed. Failures are logged and retried
+// at the next run. It reports whether it deleted the site.
+func (s *Server) reapOne(ctx context.Context, site Site, now time.Time) bool {
+	cur, err := s.getSite(ctx, site.Name)
+	if errors.Is(err, errSiteNotFound) {
+		return false
+	}
+	if err != nil {
+		slog.Error("load expired site", "site", site.Name, "err", err)
+		return false
+	}
+	if cur.ID != site.ID || cur.ExpiresAt == 0 || cur.ExpiresAt > now.Unix() {
+		return false
+	}
+	if err := s.deleteSite(ctx, cur); err != nil {
+		if !errors.Is(err, errSiteNotFound) {
+			slog.Error("delete expired site", "site", site.Name, "err", err)
+		}
+		return false
+	}
+	slog.Info("deleted expired site", "site", site.Name)
+	return true
 }
 
 // startExpiryReaper reaps once now and then every expiryReapEvery until Close.
