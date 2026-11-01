@@ -190,7 +190,8 @@ persistence:
 stagingVolume:
   enabled: true
   # Cap for the emptyDir; the pod is evicted if it is exceeded. Size it above
-  # config.limits.maxUploadMb times config.limits.maxConcurrentDeploys.
+  # config.limits.maxUploadMb times config.limits.maxConcurrentDeploys, and keep
+  # resources.limits.ephemeral-storage above it (the emptyDir counts against that limit).
   sizeLimit: 1Gi
   # Use memory (tmpfs) instead of node disk. Counts against the memory limit.
   medium: ""
@@ -215,7 +216,10 @@ resources:
     # Zip extraction peaked near 330 MB resident in review; keep headroom.
     memory: 768Mi
     # No CPU limit by default (throttling hurts latency); set one if your cluster needs it.
-    ephemeral-storage: 1Gi
+    # Keep this above stagingVolume.sizeLimit: the emptyDir counts against the pod's
+    # ephemeral storage together with container logs, so an equal limit would evict the pod
+    # before sizeLimit takes effect.
+    ephemeral-storage: 2Gi
 
 # Seconds Kubernetes waits before killing the pod. Must be greater than
 # config.drainDelay + config.shutdownTimeout (checked at render time).
@@ -260,9 +264,11 @@ probes:
     timeoutSeconds: 3
     failureThreshold: 3
   startup:
-    # Probe /readyz until the first success before liveness starts; useful with a slow
-    # volume or a large database. Off by default.
-    enabled: false
+    # Probe /readyz until the first success before liveness starts. On by default: at start
+    # the app repairs group permissions across the whole data volume before it listens, which
+    # can take minutes on a large volume on slow storage, and liveness alone (about 30s)
+    # would kill the pod mid-way. The defaults below allow 5s x 60 = 5 minutes.
+    enabled: true
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 60
@@ -328,7 +334,8 @@ networkPolicy:
   # other ingress and egress is denied.
   enabled: false
   # Who may reach the app port. Entries are NetworkPolicy "from" peers. The default allows the
-  # OpenShift router namespaces. For ingress-nginx use
+  # OpenShift router namespaces ONLY: on other clusters set this to your ingress controller's
+  # namespace or the policy cuts it off. For ingress-nginx use
   # [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}].
   # An empty list allows nobody. Kubelet probes are not affected by NetworkPolicy.
   appIngressFrom:
@@ -336,7 +343,7 @@ networkPolicy:
         matchLabels:
           network.openshift.io/policy-group: ingress
   # Who may reach the metrics port (only when config.metrics.listen is set). The default is
-  # OpenShift user-workload monitoring. An empty list allows nobody.
+  # OpenShift user-workload monitoring; set it to your Prometheus namespace elsewhere. An empty list allows nobody.
   metricsIngressFrom:
     - namespaceSelector:
         matchLabels:

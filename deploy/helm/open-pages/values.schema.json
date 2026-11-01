@@ -100,13 +100,15 @@
         "trustedProxies": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
           }
         },
         "corsOrigins": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
           }
         },
         "drainDelay": {
@@ -230,25 +232,32 @@
               "type": "boolean"
             },
             "issuer": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "clientId": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "redirectUrl": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "scopes": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "emailClaim": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "groupsClaim": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "allowedEmailDomain": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             }
           },
           "additionalProperties": false
@@ -260,25 +269,32 @@
               "type": "boolean"
             },
             "idpMetadataUrl": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "entityId": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "acsUrl": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "emailAttribute": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "groupsAttribute": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "nameidAttribute": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "allowedEmailDomain": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
             },
             "signRequests": {
               "type": "boolean"

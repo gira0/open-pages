@@ -17,6 +17,12 @@
 {{- end }}
 {{- end }}
 
+{{/* Metrics Service name. Service names are DNS-1035 labels (63 characters), so cut the base
+name short enough for the "-metrics" suffix. */}}
+{{- define "open-pages.metricsServiceName" -}}
+{{- printf "%s-metrics" (include "open-pages.fullname" . | trunc 55 | trimSuffix "-") }}
+{{- end }}
+
 {{- define "open-pages.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
