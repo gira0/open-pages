@@ -6,6 +6,9 @@ type: application
 version: 0.1.0
 # The image tag to deploy when image.tag is empty. Image tags are the release tag without the
 # leading "v" (release tag v1.2.3 gives ghcr.io/gira0/open-pages:1.2.3), so write it without "v".
+#
+# When v0.1.0 is released, also delete the "defaults to image tag" note in templates/NOTES.txt
+# and the matching sentence in docs/kubernetes.md; they only apply while this is 0.1.0.
 appVersion: "0.1.0"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/gira0/open-pages
