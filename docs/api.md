@@ -530,13 +530,17 @@ Body:
 
 `name` is required. `description` is optional, at most 512 bytes. `group` is an optional
 group id (0 or absent for none). `visibility` is `public` (default), `authenticated` or
-`restricted`.
+`restricted`. `expires_in_days` (0 to 365, default 0) deletes the site, files included, after
+that many days (see [Preview deployments](getting-started.md#preview-deployments)); the
+response then carries `expires_at` (RFC 3339). A name containing `--` is a preview of the site
+before the first `--`: that site must exist, only its owner or a member of its group may
+create it, and it may not be more public than that site (omitting `visibility` inherits it).
 
 | Status | Body |
 |---|---|
 | 201 | `{"status":"site created","name":"blog","visibility":"restricted"}` |
-| 400 | invalid JSON, invalid or reserved name, description too long, bad visibility, or `{"error":"group not found"}` |
-| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group), or `{"error":"site quota exceeded: you may own at most 10 sites"}` (`sites_per_user`) |
+| 400 | invalid JSON, invalid or reserved name (this includes names with `--` as the third and fourth character), description too long, bad visibility, `expires_in_days` out of range, `{"error":"group not found"}`, or a preview whose base site does not exist or that would be more public than it |
+| 403 | `{"error":"you are not a member of this group"}` (the owner must belong to the group), a preview of someone else's site, or `{"error":"site quota exceeded: you may own at most 10 sites"}` (`sites_per_user`) |
 | 409 | `{"error":"a site with that name already exists"}` |
 
 Creating a site does not deploy anything; upload an archive next. Until then the site
@@ -571,10 +575,12 @@ Returns the metadata to anyone who may view the site: any logged-in user for `pu
 ### PUT /v1/auth/sites/{name}
 
 Owner only. Body fields are all optional and absent fields are left unchanged:
-`description` (at most 512 bytes), `group` (id; `0` removes the group), `visibility`.
+`description` (at most 512 bytes), `group` (id; `0` removes the group), `visibility`,
+`expires_in_days` (0 to 365 days from now; `0` removes the expiry). The response carries
+`expires_at` while the site has an expiry.
 
 - `200 {"name":"blog","description":"d","group":0,"visibility":"restricted"}`
-- `400` invalid JSON, description too long, bad visibility, or `{"error":"group not found"}`
+- `400` invalid JSON, description too long, bad visibility, `{"error":"group not found"}`, or a preview (`<site>--<rest>`) given a visibility more public than its base site
 - `403` not the owner, or `{"error":"you are not a member of this group"}`
 - `404` site not found
 

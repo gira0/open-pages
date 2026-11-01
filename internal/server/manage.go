@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gira0/open-pages/internal/names"
 )
@@ -14,6 +15,7 @@ type siteUpdate struct {
 	Description *string `json:"description"`
 	Group       *int64  `json:"group"`
 	Visibility  *string `json:"visibility"`
+	ExpiresIn   *int    `json:"expires_in_days"` // days from now until the site is deleted; 0 removes the expiry
 }
 
 const errBadVisibility = `visibility must be "public", "authenticated" or "restricted"`
@@ -38,8 +40,17 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errBadVisibility)
 		return
 	}
-	updated, err := s.updateSite(r.Context(), site, d.Description, d.Group, d.Visibility)
-	if errors.Is(err, errGroupNotFound) {
+	var expiresAt *int64
+	if d.ExpiresIn != nil {
+		at, err := expiryFromDays(*d.ExpiresIn, time.Now())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		expiresAt = &at
+	}
+	updated, err := s.updateSiteExpiring(r.Context(), site, d.Description, d.Group, d.Visibility, expiresAt)
+	if errors.Is(err, errGroupNotFound) || errors.Is(err, errPreviewVisible) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -55,9 +66,13 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "update site", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"name": site.Name, "description": updated.Description, "group": updated.GroupID, "visibility": updated.Visibility,
-	})
+	}
+	if updated.ExpiresAt != 0 {
+		resp["expires_at"] = time.Unix(updated.ExpiresAt, 0).UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleSiteGet returns a site's metadata to the people who may view it: everyone logged in
@@ -97,11 +112,15 @@ func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "read site usage", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"name": site.Name, "description": site.Description, "owner_id": nullableID(site.OwnerID),
 		"group": site.GroupID, "visibility": site.Visibility, "current": current,
 		"bytes": used, "quota_bytes": s.cfg.SiteQuota,
-	})
+	}
+	if site.ExpiresAt != 0 {
+		resp["expires_at"] = time.Unix(site.ExpiresAt, 0).UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handlePublicSites lists the public sites. No login needed; restricted sites never appear.

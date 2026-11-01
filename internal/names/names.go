@@ -5,6 +5,8 @@
 package names
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 	"unicode"
@@ -27,8 +29,24 @@ var reservedSites = map[string]bool{
 // ValidSite reports whether name is usable as a site name (a DNS label).
 func ValidSite(name string) bool { return siteNameRe.MatchString(name) }
 
-// ReservedSite reports whether name is reserved and so can't be used as a site name.
-func ReservedSite(name string) bool { return reservedSites[name] }
+// ReservedSite reports whether name is reserved and so can't be used as a site name. That
+// covers the operator-facing names above and "reserved LDH" labels, whose third and fourth
+// characters are hyphens (RFC 5891): "xn--" labels are IDNA A-labels, which browsers decode
+// to Unicode, so a site called "xn--..." would be a homograph risk.
+func ReservedSite(name string) bool {
+	return reservedSites[name] || (len(name) >= 4 && name[2:4] == "--")
+}
+
+// PreviewBase reports whether name has the form of a preview site, "<base>--<rest>", and
+// returns the name of the site it previews. The server only lets the owner of <base> (or a
+// member of its group) create such a name, and only while <base> exists.
+func PreviewBase(name string) (base string, ok bool) {
+	i := strings.Index(name, previewSep)
+	if i <= 0 {
+		return "", false
+	}
+	return name[:i], true
+}
 
 // GroupKey maps a group name to the key that must be unique: every rune is replaced by the
 // smallest member of its Unicode simple case-folding orbit, so "Ä" and "ä" (and "K" and
@@ -43,4 +61,57 @@ func GroupKey(name string) string {
 		b.WriteRune(low)
 	}
 	return b.String()
+}
+
+// previewSep separates a site name from the branch slug in a preview site's name.
+const previewSep = "--"
+
+// PreviewSite returns the name of the preview site for branch of site: "<site>--<slug>",
+// where slug is the branch name folded into DNS-label characters (lowercase letters and
+// digits, runs of anything else become one hyphen). A slug that had to be shortened or
+// changed in any way but case gets an 8-hex-digit hash of the original branch appended, so
+// "feature/x" and "feature-x" (or two very long names with a common prefix) never share a
+// site. Branches that differ only in case ("Fix" and "fix") share a preview. It reports false
+// if site is not a valid site name, branch has no usable characters at all, or the resulting
+// name is reserved (a two-letter site gives a "reserved LDH" label such as "xn--...").
+func PreviewSite(site, branch string) (string, bool) {
+	if !ValidSite(site) {
+		return "", false
+	}
+	var b strings.Builder
+	lossy := false
+	dash := true // suppresses a leading hyphen
+	for _, r := range strings.ToLower(branch) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash {
+				b.WriteByte('-')
+			}
+			dash = true
+			if r != '-' {
+				lossy = true
+			}
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "", false
+	}
+	if slug != strings.ToLower(branch) {
+		lossy = true // collapsed or trimmed hyphens: "feature--x" and "feature-x-" must not share "feature-x"
+	}
+	name := site + previewSep + slug
+	if lossy || len(name) > 63 {
+		sum := sha256.Sum256([]byte(branch))
+		suffix := "-" + hex.EncodeToString(sum[:4])
+		room := 63 - len(site) - len(previewSep) - len(suffix)
+		if room < 1 {
+			return "", false
+		}
+		name = site + previewSep + strings.Trim(slug[:min(len(slug), room)], "-") + suffix
+	}
+	return name, ValidSite(name) && !ReservedSite(name)
 }

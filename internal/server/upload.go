@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gira0/open-pages/internal/metrics"
 	"github.com/gira0/open-pages/internal/names"
@@ -15,8 +16,9 @@ import (
 type siteCreate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Group       int64  `json:"group"`      // optional group id; 0 or absent for none
-	Visibility  string `json:"visibility"` // "public" (default), "authenticated" or "restricted"
+	Group       int64  `json:"group"`           // optional group id; 0 or absent for none
+	Visibility  string `json:"visibility"`      // "public" (default), "authenticated" or "restricted"
+	ExpiresIn   int    `json:"expires_in_days"` // optional; delete the site after this many days (0 or absent: never)
 }
 
 func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
@@ -40,23 +42,34 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.Visibility == "" {
+		// A preview takes the visibility of the site it previews; everything else is public.
 		d.Visibility = visPublic
+		if base, ok := names.PreviewBase(d.Name); ok {
+			if parent, err := s.getSite(r.Context(), base); err == nil {
+				d.Visibility = parent.Visibility
+			}
+		}
 	}
 	if !validVisibility(d.Visibility) {
 		writeError(w, http.StatusBadRequest, errBadVisibility)
 		return
 	}
-	_, err := s.createSite(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility)
+	expiresAt, err := expiryFromDays(d.ExpiresIn, time.Now())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	_, err = s.createSiteExpiring(r.Context(), d.Name, d.Description, userID(r), d.Group, d.Visibility, expiresAt)
 	if errors.Is(err, errSiteLimit) {
 		writeError(w, http.StatusForbidden,
 			fmt.Sprintf("site quota exceeded: you may own at most %d sites", s.cfg.SitesPerUser))
 		return
 	}
-	if errors.Is(err, errGroupNotFound) {
+	if errors.Is(err, errGroupNotFound) || errors.Is(err, errPreviewBase) || errors.Is(err, errPreviewVisible) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if errors.Is(err, errNotGroupMember) {
+	if errors.Is(err, errNotGroupMember) || errors.Is(err, errPreviewOwner) {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -68,7 +81,11 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create site", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "site created", "name": d.Name, "visibility": d.Visibility})
+	resp := map[string]any{"status": "site created", "name": d.Name, "visibility": d.Visibility}
+	if expiresAt != 0 {
+		resp["expires_at"] = time.Unix(expiresAt, 0).UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // authorizeSite loads the site named in the URL and checks the caller owns it,

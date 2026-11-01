@@ -27,6 +27,12 @@ import (
 //
 //	OPEN_PAGES_TOKEN=opt_... open-pages deploy -server https://pages.corp blog ./public
 //
+// With -preview <branch>, the directory is deployed as a preview site "<site>--<branch slug>"
+// that the server deletes after -expires-days days; every deploy renews that time, and
+// "-preview <branch> -delete <site>" removes the preview at once (for example when the merge
+// request closes). A preview takes the visibility of <site> unless -visibility
+// says otherwise, and <site> must exist: the server only lets its owner create previews of it.
+//
 // With -visibility, the site is created with that visibility or its visibility is changed:
 // before the upload when the change narrows who can see the site, after a successful upload
 // when it widens it.
@@ -36,7 +42,9 @@ const (
 	envServerURL   = "OPEN_PAGES_URL"
 	deployTimeout  = 10 * time.Minute
 	maxReplyBytes  = 1 << 20
-	deployUsageMsg = "usage: open-pages deploy [-server URL] [-create=false] [-visibility V] <site> <dir>"
+	deployUsageMsg = "usage: open-pages deploy [-server URL] [-create=false] [-visibility V] [-preview BRANCH [-expires-days N]] <site> <dir>\n       open-pages deploy [-server URL] -preview BRANCH -delete <site>"
+
+	defaultPreviewDays = 14
 )
 
 // Deploy runs the deploy subcommand and returns the process exit code.
@@ -61,13 +69,36 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 	server := fl.String("server", getenv(envServerURL), "server base URL (default $"+envServerURL+")")
 	create := fl.Bool("create", true, "create the site if it does not exist")
 	visibility := fl.String("visibility", "", `set the site's visibility: "public", "authenticated" or "restricted" (default: leave as is; new sites are public)`)
+	preview := fl.String("preview", "", "deploy as a preview of this branch: site <site>--<branch>, deleted automatically after -expires-days")
+	expireDays := fl.Int("expires-days", defaultPreviewDays, "days until a preview is deleted; every deploy renews it (1 to 365)")
+	del := fl.Bool("delete", false, "with -preview: delete the preview site instead of deploying")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
-	if fl.NArg() != 2 {
+	if *del && *preview == "" {
+		return errors.New("-delete needs -preview, so a production site is not deleted by accident")
+	}
+	if want := map[bool]int{false: 2, true: 1}[*del]; fl.NArg() != want {
 		return errors.New(deployUsageMsg)
 	}
-	site, dir := fl.Arg(0), fl.Arg(1)
+	site := fl.Arg(0)
+	dir := ""
+	if !*del {
+		dir = fl.Arg(1)
+	}
+	baseSite := site
+	if *preview != "" {
+		if *expireDays < 1 || *expireDays > 365 {
+			return errors.New("-expires-days must be from 1 to 365")
+		}
+		if !names.ValidSite(baseSite) {
+			return fmt.Errorf("invalid site name %q: use a DNS label (lowercase letters, digits, hyphens)", baseSite)
+		}
+		var ok bool
+		if site, ok = names.PreviewSite(baseSite, *preview); !ok {
+			return fmt.Errorf("cannot name a preview of %q for branch %q: the branch needs letters or digits, and the name must fit in 63 characters", baseSite, *preview)
+		}
+	}
 	if *visibility != "" && !validVisibility(*visibility) {
 		return errors.New(errBadVisibility)
 	}
@@ -87,15 +118,6 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 		fmt.Fprintln(os.Stderr, "warning: the server URL is plain http, so the token is sent unencrypted")
 	}
 
-	archive, size, err := zipToTemp(dir)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = archive.Close()
-		_ = os.Remove(archive.Name())
-	}()
-
 	c := &deployClient{
 		http: &http.Client{
 			Timeout: deployTimeout,
@@ -105,20 +127,46 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 		base:  strings.TrimRight(base.String(), "/"),
 		token: token,
 	}
+	if *del {
+		if err := c.deleteSite(ctx, site); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "deleted %s\n", site)
+		return err
+	}
+	archive, size, err := zipToTemp(dir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = archive.Close()
+		_ = os.Remove(archive.Name())
+	}()
+
+	expires := 0
+	if *preview != "" {
+		expires = *expireDays
+		if *visibility == "" {
+			// A preview must not be more public than the site it previews.
+			if *visibility, err = c.previewVisibility(ctx, baseSite); err != nil {
+				return err
+			}
+		}
+	}
 	// A visibility change that narrows who can see the site is made before the upload, and
 	// one that widens it only after the upload succeeded, so neither the old nor the new
 	// version is served more widely than asked, even if the upload fails. These are separate
 	// requests, not one atomic step: concurrent deploys to the same site can interleave.
 	created, widen := false, false
 	if *visibility != "" {
-		if created, widen, err = c.prepareVisibility(ctx, site, *visibility, *create); err != nil {
+		if created, widen, err = c.prepareVisibility(ctx, site, *visibility, *create, expires); err != nil {
 			return err
 		}
 	}
 	rep, err := c.upload(ctx, site, archive, size)
 	if err == nil && rep.status == http.StatusNotFound && *create && !created {
 		// Unknown site: create it, then upload again. A 409 means someone created it meanwhile.
-		if err = c.createSite(ctx, site, *visibility); err == nil {
+		if err = c.createSite(ctx, site, *visibility, expires); err == nil {
 			rep, err = c.upload(ctx, site, archive, size)
 		}
 	}
@@ -130,6 +178,12 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 	}
 	if widen {
 		if err := c.setVisibility(ctx, site, *visibility); err != nil {
+			return fmt.Errorf("deployed %s (version %s), but %w", site, rep.Version, err)
+		}
+	}
+	if expires > 0 {
+		// Every deploy renews the preview, so one that is still being pushed to never expires.
+		if err := c.renewExpiry(ctx, site, expires); err != nil {
 			return fmt.Errorf("deployed %s (version %s), but %w", site, rep.Version, err)
 		}
 	}
@@ -312,8 +366,8 @@ func (c *deployClient) sendJSON(ctx context.Context, method, path string, v any)
 
 // createSite creates site with the given visibility ("" for the server's default). A 409
 // means someone created it meanwhile, which is fine.
-func (c *deployClient) createSite(ctx context.Context, site, visibility string) error {
-	rep, err := c.sendJSON(ctx, http.MethodPost, "/v1/auth/sites", siteCreateBody{Name: site, Visibility: visibility})
+func (c *deployClient) createSite(ctx context.Context, site, visibility string, expiresDays int) error {
+	rep, err := c.sendJSON(ctx, http.MethodPost, "/v1/auth/sites", siteCreateBody{Name: site, Visibility: visibility, ExpiresInDays: expiresDays})
 	if err != nil {
 		return err
 	}
@@ -336,20 +390,22 @@ func validVisibility(v string) bool {
 
 // siteCreateBody is the body of POST /v1/auth/sites.
 type siteCreateBody struct {
-	Name       string `json:"name"`
-	Visibility string `json:"visibility"`
+	Name          string `json:"name"`
+	Visibility    string `json:"visibility"`
+	ExpiresInDays int    `json:"expires_in_days,omitempty"`
 }
 
 // siteUpdateBody is the body of PUT /v1/auth/sites/{name}; absent fields are left unchanged.
 type siteUpdateBody struct {
-	Visibility *string `json:"visibility"`
+	Visibility    *string `json:"visibility,omitempty"`
+	ExpiresInDays *int    `json:"expires_in_days,omitempty"`
 }
 
 // prepareVisibility gets site ready to be deployed with the given visibility. A missing site
 // is created with it when create is set (created reports that). An existing site's
 // visibility is changed now if that narrows its audience; if it widens it, widen reports that
 // the change must wait until the upload has succeeded.
-func (c *deployClient) prepareVisibility(ctx context.Context, site, visibility string, create bool) (created, widen bool, err error) {
+func (c *deployClient) prepareVisibility(ctx context.Context, site, visibility string, create bool, expiresDays int) (created, widen bool, err error) {
 	rep, err := c.send(ctx, http.MethodGet, "/v1/auth/sites/"+site, "", nil, 0)
 	if err != nil {
 		return false, false, err
@@ -366,7 +422,7 @@ func (c *deployClient) prepareVisibility(ctx context.Context, site, visibility s
 	case rep.status == http.StatusNotFound && create:
 		// If someone else created it meanwhile (409), the upload that follows is refused,
 		// because only the owner may deploy.
-		return true, false, c.createSite(ctx, site, visibility)
+		return true, false, c.createSite(ctx, site, visibility, expiresDays)
 	case rep.status == http.StatusNotFound:
 		return false, false, nil // the upload reports the missing site
 	default:
@@ -382,6 +438,50 @@ func (c *deployClient) setVisibility(ctx context.Context, site, visibility strin
 	}
 	if rep.status != http.StatusOK {
 		return rep.failure("setting the visibility")
+	}
+	return nil
+}
+
+// renewExpiry sets the site to be deleted days days from now.
+func (c *deployClient) renewExpiry(ctx context.Context, site string, days int) error {
+	rep, err := c.sendJSON(ctx, http.MethodPut, "/v1/auth/sites/"+site, siteUpdateBody{ExpiresInDays: &days})
+	if err != nil {
+		return err
+	}
+	if rep.status != http.StatusOK {
+		return rep.failure("renewing the preview's expiry")
+	}
+	return nil
+}
+
+// previewVisibility returns the visibility a preview of site should have, which is that of
+// site. The server only accepts previews of existing sites.
+func (c *deployClient) previewVisibility(ctx context.Context, site string) (string, error) {
+	rep, err := c.send(ctx, http.MethodGet, "/v1/auth/sites/"+site, "", nil, 0)
+	if err != nil {
+		return "", err
+	}
+	switch rep.status {
+	case http.StatusOK:
+		if validVisibility(rep.Visibility) {
+			return rep.Visibility, nil
+		}
+		return "authenticated", nil
+	case http.StatusNotFound:
+		return "", fmt.Errorf("cannot preview %s: the site does not exist yet, deploy it first", site)
+	default:
+		return "", rep.failure("reading the site to preview")
+	}
+}
+
+// deleteSite deletes site; a site that is already gone counts as deleted.
+func (c *deployClient) deleteSite(ctx context.Context, site string) error {
+	rep, err := c.send(ctx, http.MethodDelete, "/v1/auth/sites/"+site, "", nil, 0)
+	if err != nil {
+		return err
+	}
+	if rep.status != http.StatusOK && rep.status != http.StatusNotFound {
+		return rep.failure("deleting the site")
 	}
 	return nil
 }

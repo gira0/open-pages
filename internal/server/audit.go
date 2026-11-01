@@ -172,6 +172,7 @@ func (s *Server) startAuditPruner() {
 	if err := s.pruneAudit(ctx); err != nil {
 		slog.Error("prune audit log", "err", err)
 	}
+	s.startExpiryReaper(ctx) // shares the background context, so Close stops both
 	s.background.Go(func() {
 		t := time.NewTicker(auditPruneEvery)
 		defer t.Stop()

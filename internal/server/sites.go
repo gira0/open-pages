@@ -40,7 +40,16 @@ var (
 	errSiteNotFound  = errors.New("site not found")
 	errVersionAbsent = errors.New("version not found")
 	errGroupNotFound = errors.New("group not found")
+
+	errNotExpired = errors.New("site is not expired")
+
+	errPreviewBase    = errors.New(`a name containing "--" is a preview and needs an existing site before the "--"`)
+	errPreviewOwner   = errors.New(`a name containing "--" is a preview: only the owner of the site before the "--" (or a member of its group) may create it`)
+	errPreviewVisible = errors.New("a preview may not be more public than the site it previews")
 )
+
+// visRank orders visibilities from the narrowest audience to the widest.
+var visRank = map[string]int{visRestricted: 0, visAuthenticated: 1, visPublic: 2}
 
 // badArchiveError marks a deploy failure caused by the uploaded archive itself.
 type badArchiveError struct{ err error }
@@ -70,6 +79,7 @@ type Site struct {
 	OwnerID     int64
 	GroupID     int64
 	Visibility  string
+	ExpiresAt   int64 // Unix time after which the site is deleted; 0 for never
 }
 
 // SiteDir returns the directory holding all versions of site, or "" for an invalid name.
@@ -191,6 +201,63 @@ func groupGone(err error, group int64) bool {
 // errNotGroupMember if owner is not in the group and errSiteLimit if owner already owns
 // cfg.SitesPerUser sites.
 func (s *Server) createSite(ctx context.Context, name, description string, owner, group int64, visibility string) (Site, error) {
+	return s.createSiteExpiring(ctx, name, description, owner, group, visibility, 0)
+}
+
+// checkPreview enforces the rules for a name of the form "<base>--<rest>": it is a preview
+// of <base>, so <base> must exist, only its owner (or a member of its group) may create the
+// preview, and the preview may not be more public than <base>. Other names pass.
+func (s *Server) checkPreview(ctx context.Context, name string, owner int64, visibility string) error {
+	base, ok := names.PreviewBase(name)
+	if !ok {
+		return nil
+	}
+	parent, err := s.getSite(ctx, base)
+	if errors.Is(err, errSiteNotFound) {
+		return errPreviewBase
+	}
+	if err != nil {
+		return err
+	}
+	allowed := owner != 0 && owner == parent.OwnerID
+	if !allowed && parent.GroupID != 0 {
+		if allowed, err = s.userInGroup(ctx, owner, parent.GroupID); err != nil {
+			return err
+		}
+	}
+	if !allowed {
+		return errPreviewOwner
+	}
+	if visRank[visibility] > visRank[parent.Visibility] {
+		return errPreviewVisible
+	}
+	return nil
+}
+
+// checkPreviewVisibility returns errPreviewVisible if name is a preview whose base site
+// exists and is less public than visibility. Other names pass.
+func (s *Server) checkPreviewVisibility(ctx context.Context, name, visibility string) error {
+	base, ok := names.PreviewBase(name)
+	if !ok {
+		return nil
+	}
+	parent, err := s.getSite(ctx, base)
+	if errors.Is(err, errSiteNotFound) {
+		return nil // orphaned preview: nothing to compare with
+	}
+	if err != nil {
+		return err
+	}
+	if visRank[visibility] > visRank[parent.Visibility] {
+		return errPreviewVisible
+	}
+	return nil
+}
+
+// createSiteExpiring is createSite for a site that is deleted at expiresAt (a Unix time; 0
+// for never), which is stored in the same INSERT so a preview can never exist without its
+// expiry. A name of the form "<base>--<rest>" is a preview and must pass checkPreview.
+func (s *Server) createSiteExpiring(ctx context.Context, name, description string, owner, group int64, visibility string, expiresAt int64) (Site, error) {
 	if !names.ValidSite(name) {
 		return Site{}, errors.New("invalid site name")
 	}
@@ -203,14 +270,17 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	if err := s.checkGroup(ctx, group, owner); err != nil {
 		return Site{}, err
 	}
+	if err := s.checkPreview(ctx, name, owner, visibility); err != nil {
+		return Site{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Site{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx,
-		"INSERT INTO docs (uowner, ugroup, name, description, visibility) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
-		owner, nullableID(group), name, description, visibility)
+		"INSERT INTO docs (uowner, ugroup, name, description, visibility, expires_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING",
+		owner, nullableID(group), name, description, visibility, nullableID(expiresAt))
 	if groupGone(err, group) {
 		return Site{}, errGroupNotFound
 	}
@@ -236,7 +306,7 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 	// row and is the one audit write that fails the request: no marker, no site.
 	emit, err := s.auditInsert(ctx, tx, auditEvent{
 		action: auditSiteCreate, targetKind: targetSite, target: name, siteID: id,
-		details: map[string]any{"description": description, "group": group, "visibility": visibility},
+		details: createDetails(description, group, visibility, expiresAt),
 	})
 	if err != nil {
 		return Site{}, fmt.Errorf("audit site create: %w", err)
@@ -245,26 +315,36 @@ func (s *Server) createSite(ctx context.Context, name, description string, owner
 		return Site{}, fmt.Errorf("commit: %w", err)
 	}
 	emit()
-	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group, Visibility: visibility}, nil
+	return Site{ID: id, Name: name, Description: description, OwnerID: owner, GroupID: group, Visibility: visibility, ExpiresAt: expiresAt}, nil
+}
+
+// createDetails is the audit detail object of site.create.
+func createDetails(description string, group int64, visibility string, expiresAt int64) map[string]any {
+	d := map[string]any{"description": description, "group": group, "visibility": visibility}
+	if expiresAt != 0 {
+		d["expires_at"] = expiresAt
+	}
+	return d
 }
 
 // getSite loads a site by name. It returns errSiteNotFound if there is none.
 func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 	var (
-		site  = Site{Name: name}
-		desc  sql.NullString
-		owner sql.NullInt64
-		group sql.NullInt64
+		site    = Site{Name: name}
+		desc    sql.NullString
+		owner   sql.NullInt64
+		group   sql.NullInt64
+		expires sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		"SELECT docid, description, uowner, ugroup, visibility FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group, &site.Visibility)
+		"SELECT docid, description, uowner, ugroup, visibility, expires_at FROM docs WHERE name = ?", name).Scan(&site.ID, &desc, &owner, &group, &site.Visibility, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
 	if err != nil {
 		return Site{}, fmt.Errorf("query site: %w", err)
 	}
-	site.Description, site.OwnerID, site.GroupID = desc.String, owner.Int64, group.Int64
+	site.Description, site.OwnerID, site.GroupID, site.ExpiresAt = desc.String, owner.Int64, group.Int64, expires.Int64
 	return site, nil
 }
 
@@ -273,10 +353,22 @@ func (s *Server) getSite(ctx context.Context, name string) (Site, error) {
 // site with its stored values, errGroupNotFound for an unknown group, errNotGroupMember if
 // the owner is not in the new group and errSiteNotFound if the site has been deleted meanwhile.
 func (s *Server) updateSite(ctx context.Context, site Site, description *string, group *int64, visibility *string) (Site, error) {
+	return s.updateSiteExpiring(ctx, site, description, group, visibility, nil)
+}
+
+// updateSiteExpiring is updateSite that can also set the expiry (a Unix time; 0 removes it)
+// in the same statement and audit entry. Its "from" value is read under the write lock.
+func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description *string, group *int64, visibility *string, expiresAt *int64) (Site, error) {
 	var (
 		sets []string
 		args []any
 	)
+	if visibility != nil {
+		// A preview may not be made more public than the site it previews.
+		if err := s.checkPreviewVisibility(ctx, site.Name, *visibility); err != nil {
+			return Site{}, err
+		}
+	}
 	if description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *description)
@@ -294,6 +386,10 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 		}
 		sets = append(sets, "visibility = ?")
 		args = append(args, *visibility)
+	}
+	if expiresAt != nil {
+		sets = append(sets, "expires_at = ?")
+		args = append(args, nullableID(*expiresAt))
 	}
 	if len(sets) == 0 {
 		sets = append(sets, "docid = docid") // no-op write, so RETURNING reads the row
@@ -322,21 +418,22 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 		before = site
 		desc   sql.NullString
 		grp    sql.NullInt64
+		exp    sql.NullInt64
 	)
-	err = tx.QueryRowContext(ctx, "SELECT description, ugroup, visibility FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
+	err = tx.QueryRowContext(ctx, "SELECT description, ugroup, visibility, expires_at FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
 		site.ID, site.Name, nullableID(site.OwnerID)).
-		Scan(&desc, &grp, &before.Visibility)
+		Scan(&desc, &grp, &before.Visibility, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
 	if err != nil {
 		return Site{}, fmt.Errorf("read site: %w", err)
 	}
-	before.Description, before.GroupID = desc.String, grp.Int64
+	before.Description, before.GroupID, before.ExpiresAt = desc.String, grp.Int64, exp.Int64
 	out := site
 	err = tx.QueryRowContext(ctx,
-		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? AND name = ? AND uowner IS ? RETURNING description, ugroup, visibility",
-		args...).Scan(&desc, &grp, &out.Visibility)
+		"UPDATE docs SET "+strings.Join(sets, ", ")+" WHERE docid = ? AND name = ? AND uowner IS ? RETURNING description, ugroup, visibility, expires_at",
+		args...).Scan(&desc, &grp, &out.Visibility, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Site{}, errSiteNotFound
 	}
@@ -346,7 +443,7 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	if err != nil {
 		return Site{}, fmt.Errorf("update site: %w", err)
 	}
-	out.Description, out.GroupID = desc.String, grp.Int64
+	out.Description, out.GroupID, out.ExpiresAt = desc.String, grp.Int64, exp.Int64
 
 	// Only real changes are recorded, each with its old and new value.
 	changes := map[string]any{}
@@ -358,6 +455,9 @@ func (s *Server) updateSite(ctx context.Context, site Site, description *string,
 	}
 	if out.Visibility != before.Visibility {
 		changes["visibility"] = map[string]any{"from": before.Visibility, "to": out.Visibility}
+	}
+	if out.ExpiresAt != before.ExpiresAt {
+		changes["expires_at"] = map[string]any{"from": before.ExpiresAt, "to": out.ExpiresAt}
 	}
 	emit := func() {}
 	if len(changes) > 0 {
@@ -395,6 +495,16 @@ func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 // site was already deleted or replaced by another with the same name. A failure removing
 // the files leaves the row, so the delete can be retried.
 func (s *Server) deleteSite(ctx context.Context, site Site) error {
+	return s.deleteSiteWith(ctx, site, nil, 0)
+}
+
+// deleteSiteWith is deleteSite with details added to the site.delete audit entry, for
+// example the reason for a delete nobody asked for. A non-zero expiredBy makes the delete
+// conditional: the site must still have an expiry at or before that Unix time, checked
+// under the database write lock that is then held until the delete commits, so a renewal
+// that lands first keeps the site (errNotExpired, nothing removed) and one that comes
+// later waits and finds the site gone.
+func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[string]any, expiredBy int64) error {
 	dir := s.SiteDir(site.Name)
 	if dir == "" {
 		return errors.New("invalid site name")
@@ -404,16 +514,35 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return err
 	}
+	// The audit entry goes in the same transaction as the delete (and under deployMu), so
+	// it always precedes the site.create of a site that reuses the name and row id.
+	var tx *sql.Tx
+	if expiredBy != 0 {
+		var err error
+		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
+			return fmt.Errorf("begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after Commit
+		res, err := tx.ExecContext(ctx,
+			"UPDATE docs SET docid = docid WHERE docid = ? AND name = ? AND uowner IS ? AND expires_at IS NOT NULL AND expires_at <= ?",
+			site.ID, site.Name, nullableID(site.OwnerID), expiredBy)
+		if err != nil {
+			return fmt.Errorf("lock site: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return errNotExpired
+		}
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
-	// The audit entry goes in the same transaction as the delete (and under deployMu), so
-	// it always precedes the site.create of a site that reuses the name and row id.
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+	if tx == nil {
+		var err error
+		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
+			return fmt.Errorf("begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }() // no-op after Commit
 	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
 		site.ID, site.Name, nullableID(site.OwnerID))
 	if err != nil {
@@ -422,7 +551,7 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errSiteNotFound
 	}
-	emit := s.auditRecord(ctx, tx, auditEvent{action: auditSiteDelete, targetKind: targetSite, target: site.Name, siteID: site.ID})
+	emit := s.auditRecord(ctx, tx, auditEvent{action: auditSiteDelete, targetKind: targetSite, target: site.Name, siteID: site.ID, details: details})
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
