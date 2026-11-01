@@ -29,6 +29,13 @@ podSecurityContext.fsGroup is not set. On OpenShift that is right. On other clus
 pod cannot write /data, upgrade with --set podSecurityContext.fsGroup=65532.
 {{- end }}
 
+{{- if and (eq .Chart.AppVersion "0.1.0") (not .Values.image.tag) (not .Values.image.digest) }}
+
+NOTE: this chart defaults to image tag {{ .Chart.AppVersion }}, which is published only once
+open-pages v0.1.0 is released. If the pod is in ImagePullBackOff, set image.tag (or
+image.digest) to an image that exists.
+{{- end }}
+
 Wait for readiness:
   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "open-pages.fullname" . }}
 See docs/kubernetes.md in the repository for DNS, TLS and upgrade notes.

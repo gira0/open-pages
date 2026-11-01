@@ -31,7 +31,9 @@ helm install open-pages deploy/helm/open-pages \
 naming the missing value. The chart does not create DNS records, certificates or the first
 user: register through the API or UI afterwards (see [auth.md](auth.md)). The image tag
 defaults to the chart's `appVersion`; set `image.tag`, or `image.digest` (which wins) to pin
-`sha256:...`. For an air-gapped mirror set `global.imageRegistry`, and `imagePullSecrets`.
+`sha256:...`. **Until open-pages v0.1.0 is released, `ghcr.io/gira0/open-pages:0.1.0` does not
+exist**, so a default install ends in `ImagePullBackOff`: set `image.tag` (or `image.digest`)
+to an image you have built or that exists. For an air-gapped mirror set `global.imageRegistry`, and `imagePullSecrets`.
 
 ## One replica, one RWO volume, Recreate
 
@@ -72,8 +74,10 @@ The image keeps `/data` writable for group 0, and the pod keeps group 0.
 ## Probes, shutdown and resources
 
 Liveness uses `/livez`, which does no I/O. Readiness uses `/readyz` (database answers and the
-data directories accept files). An optional `startupProbe` on `/readyz` is off by default
-(`probes.startup.enabled`). On shutdown the app fails `/readyz`, waits `config.drainDelay`
+data directories accept files). A `startupProbe` on `/readyz` is on by default
+(`probes.startup.enabled`, 5 s x 60). At start the app walks the whole data volume to repair
+group permissions before it listens, which can take minutes with many sites on slow storage;
+without the startup probe, liveness would kill the pod after about 30 seconds. On shutdown the app fails `/readyz`, waits `config.drainDelay`
 (5 seconds), then gives requests `config.shutdownTimeout` (30) to finish.
 `terminationGracePeriodSeconds` (60) must be larger than the sum, which the chart checks.
 
@@ -90,6 +94,11 @@ The security model needs two names, on separate registrable domains where you ca
 |---|---|
 | `config.appHost` (`pages.corp`) | API, UI, probes |
 | `*.` + `config.contentDomain` (`*.pages-content.corp`) | one host per site |
+
+Site hosts are exactly one label under the content domain (`blog.pages-content.corp`), so a
+wildcard Ingress host, Route or certificate for `*.<contentDomain>` covers them. It does not
+cover a deeper name such as `a.b.pages-content.corp`; site names are single labels, so the app
+never serves one.
 
 Create a DNS A/CNAME record for `appHost` and a **wildcard** record `*.<contentDomain>` to the
 ingress controller or router address. Both hosts must reach the same Service, which the
@@ -162,7 +171,14 @@ path, see [Environment variables](getting-started.md#environment-variables)). Tw
   Secret: restart the Deployment (`kubectl rollout restart`) after rotating it.
 
 OIDC and SAML are turned on with `config.oidc.enabled` and `config.saml.enabled`; see
-[auth.md](auth.md) for the provider side and the redirect URLs.
+[auth.md](auth.md) for the provider side and the redirect URLs. The chart only supports SAML
+metadata from a URL (`config.saml.idpMetadataUrl`); the app's `idp_metadata_file` setting is
+not wired up because the chart has no way to mount extra files. For an air-gapped cluster,
+serve the metadata from an internal HTTPS URL.
+
+Values written into `settings.ini` must not contain line breaks, a leading `#` or `;`, or a
+space followed by `#` or `;` (the ini parser would treat them as comments or new keys). The
+values schema rejects them.
 
 ## Metrics
 
@@ -184,6 +200,11 @@ bearer token and the ServiceMonitor sends it.
   provider's address changes, use a wide CIDR or an OpenShift `EgressFirewall` or a
   `CiliumNetworkPolicy` instead and leave the list empty.
 
+**The defaults only fit OpenShift.** `appIngressFrom` selects the OpenShift router namespaces
+and `metricsIngressFrom` selects `openshift-user-workload-monitoring`. On plain Kubernetes,
+enabling the policy without overriding them cuts off your ingress controller: set
+`networkPolicy.appIngressFrom` (and `metricsIngressFrom`) first.
+
 It needs a CNI that enforces NetworkPolicy and is off by default.
 
 ## Upgrade and uninstall
@@ -196,4 +217,5 @@ is deleted with the release unless it is an `existingClaim`; keep a backup first
 
 CI runs `helm lint --strict`, renders the files in `deploy/helm/open-pages/ci/`, and validates
 the output with `kubeconform -strict`, using the datree CRD catalog for Route, ServiceMonitor
-and HTTPRoute.
+and HTTPRoute. It also renders each file's `settings.ini` and loads it with the app's own
+config loader (`TestChartSettings`), so a renamed key or a changed value format fails CI.
