@@ -247,7 +247,7 @@ feed:
 	}
 	if firstErr != nil {
 		// Leave nothing unreachable behind; the caller's context may be the reason we failed.
-		_ = s.deletePrefix(context.WithoutCancel(ctx), prefix)
+		s.cleanup(ctx, prefix)
 		return firstErr
 	}
 	marker := s.markerKey(site, version)
@@ -255,10 +255,19 @@ feed:
 		Bucket: &s.bucket, Key: &marker, Body: strings.NewReader(strconv.FormatInt(total, 10)),
 	})
 	if err != nil {
-		_ = s.deletePrefix(context.WithoutCancel(ctx), prefix)
+		s.cleanup(ctx, prefix)
 		return fmt.Errorf("write version marker: %w", err)
 	}
 	return nil
+}
+
+// cleanup removes the objects of a failed publish. The caller's context may be the reason
+// the publish failed, so it is detached from it, but the cleanup still gets a deadline: the
+// server holds its deploy lock meanwhile.
+func (s *S3) cleanup(ctx context.Context, prefix string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
+	defer cancel()
+	_ = s.deletePrefix(ctx, prefix)
 }
 
 func (s *S3) upload(ctx context.Context, local, key string, size int64) error {
