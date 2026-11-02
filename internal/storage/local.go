@@ -194,26 +194,37 @@ func (l *Local) DeleteSite(_ context.Context, site string) error {
 	if dir == "" {
 		return ErrInvalid
 	}
-	return os.RemoveAll(dir)
+	return l.RemoveAll(dir)
 }
 
-// OpenCurrent opens the live version through os.Root.
-func (l *Local) OpenCurrent(_ context.Context, site string) (Root, string, error) {
-	link := l.CurrentDir(site)
-	if link == "" {
+// OpenCurrent opens the live version through os.Root. The version is read from the link
+// once and the root is opened by that version's directory, so the returned version is
+// always the one the root shows, even if a deploy switches the link meanwhile.
+func (l *Local) OpenCurrent(ctx context.Context, site string) (Root, string, error) {
+	dir := l.SiteDir(site)
+	if dir == "" {
 		return nil, "", ErrInvalid
 	}
-	// The link is followed once, for the root itself; os.Root then refuses any path
-	// (including symlinks inside the site) that leads outside it.
-	root, err := os.OpenRoot(link)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", ErrNotDeployed
+	// A deploy can switch the link and prune the old version between the two steps; one
+	// retry sees the new link.
+	for range 2 {
+		version, err := l.Current(ctx, site)
+		if err != nil {
+			return nil, "", err
+		}
+		if version == "" {
+			return nil, "", ErrNotDeployed
+		}
+		root, err := os.OpenRoot(filepath.Join(dir, versionsDir, version))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		return localRoot{root}, version, nil
 	}
-	if err != nil {
-		return nil, "", err
-	}
-	version, _ := l.Current(context.Background(), site)
-	return localRoot{root}, version, nil
+	return nil, "", ErrNotDeployed
 }
 
 type localRoot struct{ r *os.Root }

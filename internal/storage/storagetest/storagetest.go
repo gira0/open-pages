@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -118,6 +119,123 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		}
 		if cur, _ := s.Current(ctx, "blog"); cur != v1 {
 			t.Fatalf("Current after rollback = %q", cur)
+		}
+	})
+
+	t.Run("file semantics", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.Init(ctx); err != nil {
+			t.Fatal(err)
+		}
+		publish(t, s, "blog", v1, map[string]string{"index.html": "home", "docs/index.html": "docs", "docs/a.txt": "hello"})
+		if err := s.SetCurrent(ctx, "blog", v1); err != nil {
+			t.Fatal(err)
+		}
+		r, _, err := s.OpenCurrent(ctx, "blog")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		for _, dir := range []string{".", "docs"} {
+			f, err := r.Open(dir)
+			if err != nil {
+				t.Fatalf("Open(%q): %v", dir, err)
+			}
+			info, err := f.Stat()
+			f.Close()
+			if err != nil || !info.IsDir() {
+				t.Fatalf("%q must stat as a directory: %v %v", dir, info, err)
+			}
+		}
+		if _, err := r.Open("missing.html"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("missing file: %v, want fs.ErrNotExist", err)
+		}
+		f, err := r.Open("docs/a.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := f.Stat()
+		if err != nil || info.Size() != 5 || info.IsDir() || info.ModTime().IsZero() {
+			t.Fatalf("Stat = %v, %v; want a 5 byte file with a modtime", info, err)
+		}
+		if _, err := f.Seek(2, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := io.ReadAll(f); string(b) != "llo" {
+			t.Fatalf("after Seek read %q", b)
+		}
+		f.Close()
+		g, err := r.Open("docs/a.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, _ := g.Stat()
+		g.Close()
+		if !again.ModTime().Equal(info.ModTime()) {
+			t.Fatalf("modtime changed between opens: %v then %v", info.ModTime(), again.ModTime())
+		}
+	})
+
+	t.Run("sites are isolated", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.Init(ctx); err != nil {
+			t.Fatal(err)
+		}
+		publish(t, s, "blog", v1, map[string]string{"index.html": "blog"})
+		publish(t, s, "wiki", v2, map[string]string{"index.html": "wiki"})
+		for site, v := range map[string]string{"blog": v1, "wiki": v2} {
+			if err := s.SetCurrent(ctx, site, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.SetCurrent(ctx, "blog", v2); !errors.Is(err, storage.ErrVersionAbsent) {
+			t.Fatalf("SetCurrent to another site's version = %v", err)
+		}
+		if err := s.DeleteSite(ctx, "blog"); err != nil {
+			t.Fatal(err)
+		}
+		r, ver, err := s.OpenCurrent(ctx, "wiki")
+		if err != nil || ver != v2 {
+			t.Fatalf("wiki after deleting blog: %q, %v", ver, err)
+		}
+		defer r.Close()
+		if got := read(t, r, "index.html"); got != "wiki" {
+			t.Fatalf("wiki index = %q", got)
+		}
+	})
+
+	t.Run("staged symlink never exposes its target", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.Init(ctx); err != nil {
+			t.Fatal(err)
+		}
+		secret := filepath.Join(t.TempDir(), "secret")
+		if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dir, cleanup, err := s.Staging(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		if err := os.Symlink(secret, filepath.Join(dir, "link")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if err := s.Publish(ctx, "blog", v1, dir); err != nil {
+			return // refusing to publish it is fine too
+		}
+		if err := s.SetCurrent(ctx, "blog", v1); err != nil {
+			t.Fatal(err)
+		}
+		r, _, err := s.OpenCurrent(ctx, "blog")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if f, err := r.Open("link"); err == nil {
+			b, _ := io.ReadAll(f)
+			f.Close()
+			t.Fatalf("read %q through a symlink", b)
 		}
 	})
 
