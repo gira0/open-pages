@@ -33,9 +33,6 @@ const (
 )
 
 var (
-	// versionRe matches version ids, which are xids.
-	versionRe = storage.VersionRe
-
 	errSiteExists    = errors.New("a site with that name already exists")
 	errSiteNotFound  = errors.New("site not found")
 	errVersionAbsent = storage.ErrVersionAbsent

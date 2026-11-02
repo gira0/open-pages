@@ -9,10 +9,11 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/gira0/open-pages/internal/storage"
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/gira0/open-pages/internal/storage"
 )
 
 // serveSite serves filePath from the live version of site. Lookup and (later) access

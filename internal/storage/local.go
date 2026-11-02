@@ -58,6 +58,7 @@ func (l *Local) CurrentDir(site string) string {
 	return filepath.Join(dir, currentLink)
 }
 
+// Init creates the sites directory and repairs the group permissions of an older volume.
 func (l *Local) Init(context.Context) error {
 	// Sites are world-readable so a reverse proxy can serve them.
 	if err := os.MkdirAll(l.root, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
@@ -67,6 +68,7 @@ func (l *Local) Init(context.Context) error {
 	return nil
 }
 
+// Check proves the sites directory accepts new files.
 func (l *Local) Check(context.Context) error { return checkWritable(l.root) }
 
 func checkWritable(dir string) error {
@@ -77,6 +79,7 @@ func checkWritable(dir string) error {
 	return errors.Join(f.Close(), os.Remove(f.Name()))
 }
 
+// Staging creates an empty staging directory in the sites root, on the same file system as the final location.
 func (l *Local) Staging(context.Context) (string, func(), error) {
 	if err := os.MkdirAll(l.root, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 		return "", nil, err
@@ -89,6 +92,7 @@ func (l *Local) Staging(context.Context) (string, func(), error) {
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
+// Publish renames the staged directory into the site's versions directory.
 func (l *Local) Publish(_ context.Context, site, version, stagingDir string) error {
 	dir := l.SiteDir(site)
 	if dir == "" || !VersionRe.MatchString(version) {
@@ -103,6 +107,7 @@ func (l *Local) Publish(_ context.Context, site, version, stagingDir string) err
 	return os.Rename(stagingDir, filepath.Join(dir, versionsDir, version))
 }
 
+// Versions lists the version directories of site, oldest first.
 func (l *Local) Versions(_ context.Context, site string) ([]string, error) {
 	dir := l.SiteDir(site)
 	if dir == "" {
@@ -125,6 +130,7 @@ func (l *Local) Versions(_ context.Context, site string) ([]string, error) {
 	return out, nil
 }
 
+// Current reads the target of the current symlink.
 func (l *Local) Current(_ context.Context, site string) (string, error) {
 	link := l.CurrentDir(site)
 	if link == "" {
@@ -140,6 +146,7 @@ func (l *Local) Current(_ context.Context, site string) (string, error) {
 	return filepath.Base(target), nil
 }
 
+// SetCurrent replaces the current symlink with one to version, atomically.
 func (l *Local) SetCurrent(_ context.Context, site, version string) error {
 	dir := l.SiteDir(site)
 	if dir == "" {
@@ -163,6 +170,7 @@ func (l *Local) SetCurrent(_ context.Context, site, version string) error {
 	return nil
 }
 
+// VersionSize sums the regular files of the version directory.
 func (l *Local) VersionSize(_ context.Context, site, version string) (int64, error) {
 	dir := l.SiteDir(site)
 	if dir == "" || !VersionRe.MatchString(version) {
@@ -171,6 +179,7 @@ func (l *Local) VersionSize(_ context.Context, site, version string) (int64, err
 	return DirSize(filepath.Join(dir, versionsDir, version))
 }
 
+// DeleteVersion removes the version directory.
 func (l *Local) DeleteVersion(_ context.Context, site, version string) error {
 	dir := l.SiteDir(site)
 	if dir == "" || !VersionRe.MatchString(version) {
@@ -179,6 +188,7 @@ func (l *Local) DeleteVersion(_ context.Context, site, version string) error {
 	return l.RemoveAll(filepath.Join(dir, versionsDir, version))
 }
 
+// DeleteSite removes the site directory with all its versions.
 func (l *Local) DeleteSite(_ context.Context, site string) error {
 	dir := l.SiteDir(site)
 	if dir == "" {
@@ -187,6 +197,7 @@ func (l *Local) DeleteSite(_ context.Context, site string) error {
 	return os.RemoveAll(dir)
 }
 
+// OpenCurrent opens the live version through os.Root.
 func (l *Local) OpenCurrent(_ context.Context, site string) (Root, string, error) {
 	link := l.CurrentDir(site)
 	if link == "" {
