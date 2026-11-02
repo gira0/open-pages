@@ -547,6 +547,9 @@ open-pages deploy -preview "$BRANCH" -delete blog      # when the branch or merg
   no `visibility` inherits it, so does the CLI unless `-visibility` narrows it). Sites whose
   third and fourth characters are hyphens (`xn--...`) cannot be created at all, which also
   means two-letter sites cannot have previews. Names created before this rule keep working.
+- Narrowing a site's visibility narrows its existing previews with it (each change is an audit
+  entry); widening it leaves them alone. `-preview` with an empty value is an error, so a CI
+  job whose branch variable is unset cannot deploy to the production site by accident.
 - A preview counts towards the owner's `sites_per_user` and storage quotas.
 - Expired previews are removed by a background task every 10 minutes, so a preview can
   stay up that long after its expiry. The removal is recorded as `site.delete` with

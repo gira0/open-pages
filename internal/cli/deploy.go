@@ -75,6 +75,13 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
+	// An empty value (a CI job whose branch variable is unset) must not look like no flag:
+	// that would deploy to the production site with no expiry.
+	previewSet := false
+	fl.Visit(func(f *flag.Flag) { previewSet = previewSet || f.Name == "preview" })
+	if previewSet && strings.TrimSpace(*preview) == "" {
+		return errors.New("-preview needs a branch name, but the value is empty (is the CI variable unset?)")
+	}
 	if *del && *preview == "" {
 		return errors.New("-delete needs -preview, so a production site is not deleted by accident")
 	}
@@ -163,6 +170,14 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 			return err
 		}
 	}
+	if expires > 0 && !created {
+		// Renew before the upload: a preview about to expire could otherwise be reaped
+		// between publishing and a later renewal. A missing site is created below with
+		// its expiry already set.
+		if err := c.renewExpiry(ctx, site, expires); err != nil {
+			return err
+		}
+	}
 	rep, err := c.upload(ctx, site, archive, size)
 	if err == nil && rep.status == http.StatusNotFound && *create && !created {
 		// Unknown site: create it, then upload again. A 409 means someone created it meanwhile.
@@ -178,12 +193,6 @@ func DeployCommand(ctx context.Context, args []string, getenv func(string) strin
 	}
 	if widen {
 		if err := c.setVisibility(ctx, site, *visibility); err != nil {
-			return fmt.Errorf("deployed %s (version %s), but %w", site, rep.Version, err)
-		}
-	}
-	if expires > 0 {
-		// Every deploy renews the preview, so one that is still being pushed to never expires.
-		if err := c.renewExpiry(ctx, site, expires); err != nil {
 			return fmt.Errorf("deployed %s (version %s), but %w", site, rep.Version, err)
 		}
 	}
@@ -442,13 +451,14 @@ func (c *deployClient) setVisibility(ctx context.Context, site, visibility strin
 	return nil
 }
 
-// renewExpiry sets the site to be deleted days days from now.
+// renewExpiry sets the site to be deleted days days from now. A missing site is not an
+// error: the deploy creates it with its expiry.
 func (c *deployClient) renewExpiry(ctx context.Context, site string, days int) error {
 	rep, err := c.sendJSON(ctx, http.MethodPut, "/v1/auth/sites/"+site, siteUpdateBody{ExpiresInDays: &days})
 	if err != nil {
 		return err
 	}
-	if rep.status != http.StatusOK {
+	if rep.status != http.StatusOK && rep.status != http.StatusNotFound {
 		return rep.failure("renewing the preview's expiry")
 	}
 	return nil

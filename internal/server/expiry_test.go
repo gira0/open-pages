@@ -392,3 +392,98 @@ func TestPreviewVisibilityCannotBeWidened(t *testing.T) {
 		t.Errorf("widening a normal site = %v", err)
 	}
 }
+
+// Narrowing a site narrows its previews in the same step; widening leaves them alone.
+func TestNarrowingBaseNarrowsPreviews(t *testing.T) {
+	_, s := newTestServer(t)
+	owner := testOwner(t, s)
+	base, err := s.createSite(t.Context(), "blog", "", owner, 0, visPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, vis := range map[string]string{"blog--a": visPublic, "blog--b": visAuthenticated, "blog--c": visRestricted} {
+		if _, err := s.createSite(t.Context(), name, "", owner, 0, vis); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.createSite(t.Context(), "blogger", "", owner, 0, visPublic); err != nil { // not a preview
+		t.Fatal(err)
+	}
+	vis := func(name string) string {
+		t.Helper()
+		got, err := s.getSite(t.Context(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Visibility
+	}
+	auth, restricted, pub := visAuthenticated, visRestricted, visPublic
+
+	if base, err = s.updateSite(t.Context(), base, nil, nil, &auth); err != nil {
+		t.Fatal(err)
+	}
+	if vis("blog--a") != visAuthenticated || vis("blog--b") != visAuthenticated || vis("blog--c") != visRestricted {
+		t.Errorf("after narrowing to authenticated: a=%s b=%s c=%s", vis("blog--a"), vis("blog--b"), vis("blog--c"))
+	}
+	if vis("blogger") != visPublic {
+		t.Errorf("blogger = %s, a site that is not a preview must be untouched", vis("blogger"))
+	}
+	if base, err = s.updateSite(t.Context(), base, nil, nil, &restricted); err != nil {
+		t.Fatal(err)
+	}
+	if vis("blog--a") != visRestricted || vis("blog--b") != visRestricted {
+		t.Errorf("after narrowing to restricted: a=%s b=%s", vis("blog--a"), vis("blog--b"))
+	}
+	if _, err = s.updateSite(t.Context(), base, nil, nil, &pub); err != nil {
+		t.Fatal(err)
+	}
+	if vis("blog--a") != visRestricted {
+		t.Errorf("widening the base changed a preview to %s", vis("blog--a"))
+	}
+	var n int
+	if err := s.db.QueryRowContext(t.Context(),
+		"SELECT COUNT(*) FROM audit_log WHERE action = 'site.update' AND target = 'blog--a'").Scan(&n); err != nil || n != 2 {
+		t.Errorf("audit entries for blog--a = %d, %v; want 2", n, err)
+	}
+}
+
+func TestDeployPreviewFlagEdgeCases(t *testing.T) {
+	ts, s := newTestServer(t)
+	c := loggedInClient(t, ts)
+	token := apiToken(t, ts, c)
+	dir := writeSiteTree(t, map[string]string{"index.html": "x"})
+	run := func(args ...string) error {
+		return cli.DeployCommand(context.Background(), args, cliEnv(token, ts.URL), &bytes.Buffer{})
+	}
+	// An empty -preview (unset CI variable) must fail, not deploy to production.
+	for _, v := range []string{"", "  "} {
+		if err := run("-preview", v, "blog", dir); err == nil {
+			t.Errorf("-preview %q accepted", v)
+		}
+		if err := run("-preview="+v, "-delete", "blog"); err == nil {
+			t.Errorf("-preview=%q -delete accepted", v)
+		}
+	}
+	if _, err := s.getSite(t.Context(), "blog"); !errors.Is(err, errSiteNotFound) {
+		t.Errorf("blog was created by an empty -preview: %v", err)
+	}
+
+	// The expiry is renewed before the upload, so a refused upload still renews it.
+	if err := run("blog", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("-preview", "x", "-expires-days", "1", "blog", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(t.Context(), "UPDATE docs SET expires_at = ? WHERE name = 'blog--x'", time.Now().Add(time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.SiteQuota = 1
+	if err := run("-preview", "x", "-expires-days", "30", "blog", dir); err == nil {
+		t.Fatal("deploy over the quota succeeded")
+	}
+	got, _ := s.getSite(t.Context(), "blog--x")
+	if d := time.Until(time.Unix(got.ExpiresAt, 0)); d < 29*24*time.Hour {
+		t.Errorf("expiry renews to %v from now, want about 30 days, even though the upload failed", d)
+	}
+}

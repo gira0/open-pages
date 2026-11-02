@@ -459,18 +459,73 @@ func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description 
 	if out.ExpiresAt != before.ExpiresAt {
 		changes["expires_at"] = map[string]any{"from": before.ExpiresAt, "to": out.ExpiresAt}
 	}
-	emit := func() {}
+	emits := []func(){}
 	if len(changes) > 0 {
-		emit = s.auditRecord(ctx, tx, auditEvent{
+		emits = append(emits, s.auditRecord(ctx, tx, auditEvent{
 			action: auditSiteUpdate, targetKind: targetSite, target: site.Name, siteID: site.ID,
 			details: map[string]any{"changes": changes},
-		})
+		}))
+	}
+	// Narrowing a site narrows its previews with it, in the same transaction, so a preview
+	// never stays more public than its base.
+	if _, isPreview := names.PreviewBase(site.Name); !isPreview && out.Visibility != before.Visibility {
+		narrowed, err := s.narrowPreviews(ctx, tx, site.Name, out.Visibility)
+		if err != nil {
+			return Site{}, err
+		}
+		emits = append(emits, narrowed...)
 	}
 	if err := tx.Commit(); err != nil {
 		return Site{}, fmt.Errorf("commit: %w", err)
 	}
-	emit()
+	for _, emit := range emits {
+		emit()
+	}
 	return out, nil
+}
+
+// narrowPreviews lowers the visibility of every preview of base ("<base>--...") that is more
+// public than visibility, in tx, and returns the functions that log each audit entry.
+func (s *Server) narrowPreviews(ctx context.Context, tx *sql.Tx, base, visibility string) ([]func(), error) {
+	type preview struct {
+		id         int64
+		name, from string
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT docid, name, visibility FROM docs WHERE substr(name, 1, ?) = ?",
+		len(base)+2, base+"--")
+	if err != nil {
+		return nil, fmt.Errorf("list previews: %w", err)
+	}
+	var wide []preview
+	for rows.Next() {
+		var p preview
+		if err := rows.Scan(&p.id, &p.name, &p.from); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan preview: %w", err)
+		}
+		if visRank[p.from] > visRank[visibility] {
+			wide = append(wide, p)
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("list previews: %w", err)
+	}
+	var emits []func()
+	for _, p := range wide {
+		if _, err := tx.ExecContext(ctx, "UPDATE docs SET visibility = ? WHERE docid = ?", visibility, p.id); err != nil {
+			return nil, fmt.Errorf("narrow preview: %w", err)
+		}
+		emits = append(emits, s.auditRecord(ctx, tx, auditEvent{
+			action: auditSiteUpdate, targetKind: targetSite, target: p.name, siteID: p.id,
+			details: map[string]any{
+				"changes": map[string]any{"visibility": map[string]any{"from": p.from, "to": visibility}},
+				"reason":  "base site " + base + " was narrowed",
+			},
+		}))
+	}
+	return emits, nil
 }
 
 // checkSiteLive returns errSiteNotFound unless the database still has this exact site:

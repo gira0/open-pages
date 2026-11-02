@@ -577,7 +577,8 @@ Returns the metadata to anyone who may view the site: any logged-in user for `pu
 Owner only. Body fields are all optional and absent fields are left unchanged:
 `description` (at most 512 bytes), `group` (id; `0` removes the group), `visibility`,
 `expires_in_days` (0 to 365 days from now; `0` removes the expiry). The response carries
-`expires_at` while the site has an expiry.
+`expires_at` while the site has an expiry. Making a site less public also lowers the visibility of its
+previews (`<site>--...`) that are more public than the new value.
 
 - `200 {"name":"blog","description":"d","group":0,"visibility":"restricted"}`
 - `400` invalid JSON, description too long, bad visibility, `{"error":"group not found"}`, or a preview (`<site>--<rest>`) given a visibility more public than its base site
