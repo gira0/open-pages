@@ -44,8 +44,9 @@ type Server struct {
 	oidc      *oidcClient // nil unless [oidc] is enabled
 	saml      *samlClient // nil unless [saml] is enabled
 
-	background     sync.WaitGroup     // goroutines stopped by Close
-	stopBackground context.CancelFunc // set once they run
+	afterPreviewCheck func()             // tests only: runs between the early preview check and the write
+	background        sync.WaitGroup     // goroutines stopped by Close
+	stopBackground    context.CancelFunc // set once they run
 }
 
 // route is one pattern the API mux registers.

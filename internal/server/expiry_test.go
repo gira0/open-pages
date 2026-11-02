@@ -487,3 +487,54 @@ func TestDeployPreviewFlagEdgeCases(t *testing.T) {
 		t.Errorf("expiry renews to %v from now, want about 30 days, even though the upload failed", d)
 	}
 }
+
+// The base can be narrowed after the early preview check but before the write; the
+// check inside the write transaction must still refuse a preview wider than the base.
+func TestPreviewCeilingHoldsAgainstConcurrentNarrowing(t *testing.T) {
+	_, s := newTestServer(t)
+	owner := testOwner(t, s)
+	base, err := s.createSite(t.Context(), "blog", "", owner, 0, visPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restricted := visRestricted
+	narrow := func() {
+		s.afterPreviewCheck = nil
+		if _, err := s.updateSite(t.Context(), base, nil, nil, &restricted); err != nil {
+			t.Error(err)
+		}
+	}
+
+	// Create: public preview passes the early check against a public base, then the base is narrowed.
+	s.afterPreviewCheck = narrow
+	if _, err := s.createSite(t.Context(), "blog--x", "", owner, 0, visPublic); !errors.Is(err, errPreviewVisible) {
+		t.Fatalf("create after concurrent narrowing = %v, want errPreviewVisible", err)
+	}
+	if _, err := s.getSite(t.Context(), "blog--x"); !errors.Is(err, errSiteNotFound) {
+		t.Errorf("preview wider than its base was kept: %v", err)
+	}
+
+	// Update: widen a restricted preview to authenticated while the base goes back to
+	// authenticated and then restricted again between the check and the write.
+	base, _ = s.getSite(t.Context(), "blog")
+	auth := visAuthenticated
+	if base, err = s.updateSite(t.Context(), base, nil, nil, &auth); err != nil {
+		t.Fatal(err)
+	}
+	prev, err := s.createSite(t.Context(), "blog--y", "", owner, 0, visRestricted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.afterPreviewCheck = func() {
+		s.afterPreviewCheck = nil
+		if _, err := s.updateSite(t.Context(), base, nil, nil, &restricted); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := s.updateSite(t.Context(), prev, nil, nil, &auth); !errors.Is(err, errPreviewVisible) {
+		t.Fatalf("update after concurrent narrowing = %v, want errPreviewVisible", err)
+	}
+	if got, _ := s.getSite(t.Context(), "blog--y"); got.Visibility != visRestricted {
+		t.Errorf("preview visibility = %s, want restricted", got.Visibility)
+	}
+}

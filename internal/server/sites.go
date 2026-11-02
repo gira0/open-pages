@@ -234,21 +234,30 @@ func (s *Server) checkPreview(ctx context.Context, name string, owner int64, vis
 	return nil
 }
 
-// checkPreviewVisibility returns errPreviewVisible if name is a preview whose base site
-// exists and is less public than visibility. Other names pass.
+// checkPreviewVisibility is previewCeiling on the database, for an early, cheap refusal.
+// The authoritative check runs again inside the write transaction (see previewCeiling).
 func (s *Server) checkPreviewVisibility(ctx context.Context, name, visibility string) error {
+	return previewCeiling(ctx, s.db, name, visibility)
+}
+
+// previewCeiling returns errPreviewVisible if name is a preview whose base site exists and
+// is less public than visibility. Other names pass. Called on a transaction after it has
+// taken the write lock, the base's visibility cannot change before the transaction ends,
+// and a base that is narrowed later narrows this preview with it (narrowPreviews).
+func previewCeiling(ctx context.Context, q execQuerier, name, visibility string) error {
 	base, ok := names.PreviewBase(name)
 	if !ok {
 		return nil
 	}
-	parent, err := s.getSite(ctx, base)
-	if errors.Is(err, errSiteNotFound) {
+	var parent string
+	err := q.QueryRowContext(ctx, "SELECT visibility FROM docs WHERE name = ?", base).Scan(&parent)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil // orphaned preview: nothing to compare with
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("read base visibility: %w", err)
 	}
-	if visRank[visibility] > visRank[parent.Visibility] {
+	if visRank[visibility] > visRank[parent] {
 		return errPreviewVisible
 	}
 	return nil
@@ -273,6 +282,9 @@ func (s *Server) createSiteExpiring(ctx context.Context, name, description strin
 	if err := s.checkPreview(ctx, name, owner, visibility); err != nil {
 		return Site{}, err
 	}
+	if s.afterPreviewCheck != nil {
+		s.afterPreviewCheck() // test hook: a change landing between the check and the write
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Site{}, fmt.Errorf("begin: %w", err)
@@ -291,6 +303,11 @@ func (s *Server) createSiteExpiring(ctx context.Context, name, description strin
 		return Site{}, errSiteExists
 	}
 	id, _ := res.LastInsertId()
+	// The insert took the write lock, so the base's visibility can't change any more:
+	// check it again now, because it may have been narrowed after the early check.
+	if err := previewCeiling(ctx, tx, name, visibility); err != nil {
+		return Site{}, err
+	}
 	// The insert took the write lock, so this count is exact: two creates cannot both pass.
 	if limit := s.cfg.SitesPerUser; limit > 0 {
 		var n int
@@ -368,6 +385,9 @@ func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description 
 		if err := s.checkPreviewVisibility(ctx, site.Name, *visibility); err != nil {
 			return Site{}, err
 		}
+		if s.afterPreviewCheck != nil {
+			s.afterPreviewCheck() // test hook
+		}
 	}
 	if description != nil {
 		sets = append(sets, "description = ?")
@@ -413,6 +433,12 @@ func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description 
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Site{}, errSiteNotFound
+	}
+	if visibility != nil {
+		// With the write lock held, check the base again: it may have been narrowed since.
+		if err := previewCeiling(ctx, tx, site.Name, *visibility); err != nil {
+			return Site{}, err
+		}
 	}
 	var (
 		before = site
