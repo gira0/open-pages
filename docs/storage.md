@@ -69,6 +69,17 @@ binaries.
 
 ### Limits
 
+- Uploading a version runs under the same lock as every other deploy, rollback and delete.
+  Each call has a deadline (30 seconds for a marker or pointer, 5 minutes to delete a
+  version or site, 15 minutes to upload one version) and the HTTP client gives up when a
+  response does not start within 60 seconds. A slow or stuck object store therefore fails the
+  deploy with an error instead of freezing the others, but a deploy of a large site over a
+  slow link can hit the 15 minutes.
+- A crash in the middle of a deploy can leave uploaded objects without a marker. They are
+  never served, but they take space until someone removes the version's prefix, or the
+  site is deleted. An `http://` endpoint sends the keys and the site contents unencrypted;
+  open-pages logs a warning for any such endpoint that is not on a loopback address.
+
 - One open-pages instance writes to a prefix. Running several writers is not supported (the
   deploy lock is in process, as is the database).
 - Moving existing sites between backends is not automated: redeploy them.

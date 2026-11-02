@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -41,6 +43,21 @@ type S3Config struct {
 
 // uploadWorkers is how many objects Publish uploads at once.
 const uploadWorkers = 8
+
+// Deadlines for calls the server makes under its deploy lock. They are variables so a test
+// can shorten them.
+var (
+
+	// The server holds its deploy lock while it calls the store, and the AWS SDK sets no
+	// deadline of its own, so every call that can run under that lock has one. A hung
+	// connection then fails the deploy instead of freezing every deploy, rollback and delete.
+	metaTimeout    = 30 * time.Second // one small request: HEAD, GET or PUT of a marker
+	bulkTimeout    = 5 * time.Minute  // deleting a version or a site: a LIST and batched DELETEs
+	publishTimeout = 15 * time.Minute // uploading every file of a version
+	// responseHeaderTimeout bounds the wait for the first byte of any response, including
+	// the reads that serve a file, which run under the visitor's request context only.
+	responseHeaderTimeout = 60 * time.Second
+)
 
 // S3 keeps sites in an object store:
 //
@@ -67,16 +84,20 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("s3: bucket is required")
 	}
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.ResponseHeaderTimeout = responseHeaderTimeout
+	})
 	var base aws.Config
 	if cfg.AccessKey != "" {
 		base = aws.Config{Credentials: credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")}
 	} else {
 		var err error
-		if base, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region)); err != nil {
+		if base, err = awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region), awsconfig.WithHTTPClient(httpClient)); err != nil {
 			return nil, fmt.Errorf("s3: load credentials: %w", err)
 		}
 	}
 	base.Region = cfg.Region
+	base.HTTPClient = httpClient
 	client := s3.NewFromConfig(base, func(o *s3.Options) {
 		if cfg.Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
@@ -104,7 +125,7 @@ func isNotFound(err error) bool {
 	var api smithy.APIError
 	if errors.As(err, &api) {
 		switch api.ErrorCode() {
-		case "NotFound", "NoSuchKey", "NoSuchBucket":
+		case "NotFound", "NoSuchKey":
 			return true
 		}
 	}
@@ -115,6 +136,8 @@ func isNotFound(err error) bool {
 
 // Init checks that the bucket exists and the staging directory is usable.
 func (s *S3) Init(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
 	if _, err := s.c.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err != nil {
 		return fmt.Errorf("s3 bucket %q: %w", s.bucket, err)
 	}
@@ -126,6 +149,8 @@ func (s *S3) Init(ctx context.Context) error {
 
 // Check proves the bucket accepts writes by putting and deleting a small object.
 func (s *S3) Check(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
 	key := s.healthKey()
 	if _, err := s.c.PutObject(ctx, &s3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader([]byte("ok"))}); err != nil {
 		return err
@@ -146,6 +171,8 @@ func (s *S3) Staging(context.Context) (string, func(), error) {
 // Publish uploads every regular file of the staged directory, then writes the marker.
 // Symbolic links and other special files are not uploaded.
 func (s *S3) Publish(ctx context.Context, site, version, stagingDir string) error {
+	ctx, cancelTimeout := context.WithTimeout(ctx, publishTimeout)
+	defer cancelTimeout()
 	if !validS3Site(site) || !VersionRe.MatchString(version) {
 		return ErrInvalid
 	}
@@ -300,6 +327,8 @@ func (s *S3) deletePrefix(ctx context.Context, prefix string) error {
 
 // Versions lists the markers of site, oldest first.
 func (s *S3) Versions(ctx context.Context, site string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	defer cancel()
 	if !validS3Site(site) {
 		return nil, ErrInvalid
 	}
@@ -317,6 +346,8 @@ func (s *S3) Versions(ctx context.Context, site string) ([]string, error) {
 
 // Current reads the .current object.
 func (s *S3) Current(ctx context.Context, site string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
 	if !validS3Site(site) {
 		return "", ErrInvalid
 	}
@@ -342,6 +373,8 @@ func (s *S3) Current(ctx context.Context, site string) (string, error) {
 
 // SetCurrent writes the .current object after checking the version's marker.
 func (s *S3) SetCurrent(ctx context.Context, site, version string) error {
+	ctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
 	if !validS3Site(site) {
 		return ErrInvalid
 	}
@@ -358,6 +391,8 @@ func (s *S3) SetCurrent(ctx context.Context, site, version string) error {
 
 // VersionSize reads the size recorded in the version's marker.
 func (s *S3) VersionSize(ctx context.Context, site, version string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
 	if !validS3Site(site) || !VersionRe.MatchString(version) {
 		return 0, ErrInvalid
 	}
@@ -384,6 +419,8 @@ func (s *S3) VersionSize(ctx context.Context, site, version string) (int64, erro
 // DeleteVersion removes the marker first, so the version disappears from Versions before
 // its objects do, then the objects.
 func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
+	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	defer cancel()
 	if !validS3Site(site) || !VersionRe.MatchString(version) {
 		return ErrInvalid
 	}
@@ -396,6 +433,8 @@ func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
 
 // DeleteSite removes .current first, so the site stops being served, then everything.
 func (s *S3) DeleteSite(ctx context.Context, site string) error {
+	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	defer cancel()
 	if !validS3Site(site) {
 		return ErrInvalid
 	}

@@ -12,6 +12,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -319,11 +321,23 @@ func New(cfg config.Config) (*Server, error) {
 	return s, nil
 }
 
+// isLoopbackHost reports whether host is localhost or a loopback address.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
+}
+
 // openStorage creates the site store described by the configuration and prepares it.
 func (s *Server) openStorage(ctx context.Context) error {
 	switch s.cfg.Storage.Type {
 	case config.StorageS3:
 		c := s.cfg.Storage.S3
+		if u, err := url.Parse(c.Endpoint); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+			slog.Warn("storage.s3_endpoint uses plain http: credentials are signed but site contents travel unencrypted", "endpoint", c.Endpoint)
+		}
 		st, err := storage.NewS3(ctx, storage.S3Config{
 			Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, Prefix: c.Prefix,
 			PathStyle: c.PathStyle, AccessKey: c.AccessKey, SecretKey: c.SecretKey,
@@ -353,5 +367,14 @@ func (s *Server) Close() error {
 	return s.db.Close()
 }
 
-// SitesDir returns the directory holding the extracted sites.
+// SitesDir returns the directory holding the extracted sites. It is only meaningful for the
+// local storage backend.
 func (s *Server) SitesDir() string { return s.sites }
+
+// StorageDescription says where site files are kept, for the startup log.
+func (s *Server) StorageDescription() string {
+	if c := s.cfg.Storage; c.Type == config.StorageS3 {
+		return "s3 bucket " + c.S3.Bucket
+	}
+	return s.sites
+}
