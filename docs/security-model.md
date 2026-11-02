@@ -107,8 +107,10 @@ address. Entries are snapshots: they stay after the user, site or group is delet
   and a malicious site can still do what any web page can do from its own origin (phish,
   mine, call other origins), without access to the app's session. Review who may create
   sites.
-- **No rate limits**, no scanning of uploads, and no quota beyond the archive size limits in
-  `[limits]`.
+- **No rate limits** and no scanning of uploads. Size is bounded by the archive limits in
+  `[limits]`; storage per site and per user, and the number of sites per user, can be capped
+  with `[quotas]`, which are off by default (see
+  [getting-started.md](getting-started.md#quotas)).
 
 See [auth.md](auth.md) for accounts, tokens and visibility rules, and
 [SECURITY.md](../SECURITY.md) for reporting a vulnerability.

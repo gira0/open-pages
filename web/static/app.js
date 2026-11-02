@@ -411,8 +411,14 @@
         body.appendChild(tr);
       });
     }
+    // Each refresh gets a number, and only the newest one may repaint the table: an older
+    // response that arrives last would otherwise show stale data, and the success alert after
+    // a rollback would name a version that is no longer live.
+    var versionsRequest = 0;
     async function loadVersions() {
+      var mine = ++versionsRequest;
       var r = await callAPI('GET', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/versions');
+      if (mine !== versionsRequest) { return false; } // superseded by a newer refresh
       if (!r.ok) { showAlert($('versions-result'), 'danger', 'Could not load the versions.', r.error); return false; }
       $('versions-result').replaceChildren();
       renderVersions(r.data);

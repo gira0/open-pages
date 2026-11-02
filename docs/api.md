@@ -12,8 +12,10 @@ A test fails when a registered route is missing from the spec or the spec lists 
 server does not register. Nothing checks this page automatically, so a route change should
 update it by hand alongside the spec.
 
-All routes below are served on `app_host` only (see [Serving sites](#serving-sites)); a
-request for any other host is a `404`, except the probes `GET /livez`, `/readyz` and `/healthz`. The `curl` examples assume
+All routes below are served on the main listener's `app_host` only (see
+[Serving sites](#serving-sites)); a request for any other host is a `404`, except the probes
+`GET` or `HEAD` `/livez`, `/readyz` and `/healthz`. The dedicated metrics listener
+(`[metrics] listen`) serves `/metrics` without looking at the host. The `curl` examples assume
 `app_host = pages.corp`. `cookies` is a cookie jar
 file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 

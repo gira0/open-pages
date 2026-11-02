@@ -37,8 +37,9 @@ info:
       redeems the one-time code and sets the per-site cookie `site_session`
       (`__Host-site_session` with `cookie_secure`), `HttpOnly`, `SameSite=Lax`, valid 1 hour.
       It is not part of the API and is described in `docs/auth.md`. Every route
-      in this document is served on `app_host` only; a request for any other host is a
-      404, except `GET /livez`, `/readyz` and `/healthz`, which answer on any host that is not a site host.
+      in this document is served on the main listener's `app_host` only; a request for any other host is a
+      404, except `GET` or `HEAD` `/livez`, `/readyz` and `/healthz`, which answer on any host that is not a site host.
+      The dedicated metrics listener (`[metrics] listen`) serves `/metrics` without looking at the host.
 servers:
   - url: /
 security:
