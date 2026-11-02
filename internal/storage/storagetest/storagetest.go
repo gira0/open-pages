@@ -142,7 +142,7 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 				t.Fatalf("Open(%q): %v", dir, err)
 			}
 			info, err := f.Stat()
-			f.Close()
+			_ = f.Close()
 			if err != nil || !info.IsDir() {
 				t.Fatalf("%q must stat as a directory: %v %v", dir, info, err)
 			}
@@ -164,13 +164,13 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		if b, _ := io.ReadAll(f); string(b) != "llo" {
 			t.Fatalf("after Seek read %q", b)
 		}
-		f.Close()
+		_ = f.Close()
 		g, err := r.Open("docs/a.txt")
 		if err != nil {
 			t.Fatal(err)
 		}
 		again, _ := g.Stat()
-		g.Close()
+		_ = g.Close()
 		if !again.ModTime().Equal(info.ModTime()) {
 			t.Fatalf("modtime changed between opens: %v then %v", info.ModTime(), again.ModTime())
 		}
@@ -234,7 +234,7 @@ func Run(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		defer r.Close()
 		if f, err := r.Open("link"); err == nil {
 			b, _ := io.ReadAll(f)
-			f.Close()
+			_ = f.Close()
 			t.Fatalf("read %q through a symlink", b)
 		}
 	})
