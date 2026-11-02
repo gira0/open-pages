@@ -1102,6 +1102,11 @@ paths:
                   minimum: 0
                 visibility:
                   $ref: "#/components/schemas/Visibility"
+                expires_in_days:
+                  description: Delete the site this many days from now, 1 to 365 (0 or absent in a create request for never; 0 in an update removes the expiry). Meant for preview deployments. Expired sites are removed by a background task that runs every 10 minutes.
+                  type: integer
+                  minimum: 0
+                  maximum: 365
       responses:
         "201":
           description: Site created.
@@ -1117,6 +1122,10 @@ paths:
                     $ref: "#/components/schemas/SiteName"
                   visibility:
                     $ref: "#/components/schemas/Visibility"
+                  expires_at:
+                    description: When the site will be deleted (RFC 3339). Absent for a site that does not expire.
+                    type: string
+                    format: date-time
         "400":
           description: Invalid JSON, invalid or reserved name, description too long, bad visibility, or `group not found`.
           content:
@@ -1195,6 +1204,11 @@ paths:
                   minimum: 0
                 visibility:
                   $ref: "#/components/schemas/Visibility"
+                expires_in_days:
+                  description: Delete the site this many days from now, 1 to 365 (0 or absent in a create request for never; 0 in an update removes the expiry). Meant for preview deployments. Expired sites are removed by a background task that runs every 10 minutes.
+                  type: integer
+                  minimum: 0
+                  maximum: 365
       responses:
         "200":
           description: The updated fields.
@@ -1214,6 +1228,10 @@ paths:
                     format: int64
                   visibility:
                     $ref: "#/components/schemas/Visibility"
+                  expires_at:
+                    description: When the site will be deleted (RFC 3339). Absent for a site that does not expire.
+                    type: string
+                    format: date-time
         "400":
           description: Invalid JSON, description too long, bad visibility, or `group not found`.
           content:
@@ -1806,6 +1824,10 @@ components:
           description: "`[quotas] site_mb` in bytes; 0 means unlimited."
           type: integer
           format: int64
+        expires_at:
+          description: When the site will be deleted (RFC 3339). Absent for a site that does not expire.
+          type: string
+          format: date-time
     SiteName:
       description: |
         A DNS label: 1 to 63 lowercase letters, digits or hyphens, not starting or ending

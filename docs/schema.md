@@ -191,6 +191,7 @@ Sites. One row per site; files live on disk (see below).
 | `description` | VARCHAR(512) | NULL | Free text (API limit 512 bytes) |
 | `path` | VARCHAR(256) | NULL, UNIQUE | Not used by the current code; always NULL |
 | `visibility` | TEXT | NOT NULL, DEFAULT `'public'`, CHECK in (`public`, `authenticated`, `restricted`) | See [auth.md](auth.md#site-visibility) |
+| `expires_at` | BIGINT | NULL | Unix time after which a background task deletes the site (checked every 10 minutes); NULL for never. Used by preview deployments |
 
 `name` and `path` each have the automatic unique index SQLite creates for a UNIQUE
 constraint (`sqlite_autoindex_docs_1`, `sqlite_autoindex_docs_2`). `session.token`,

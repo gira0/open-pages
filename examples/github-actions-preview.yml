@@ -1,0 +1,45 @@
+# Example only: copy to .github/workflows/preview.yml in the repository that holds your site.
+#
+# Deploys every pull request to its own preview site, <site>--<branch>, and deletes it when
+# the pull request closes. The server also deletes previews after -expires-days without a
+# new push, so a missed close event does not leave them around. Setup is the same as in
+# github-actions.yml: the repository secret OPEN_PAGES_TOKEN and the variable OPEN_PAGES_URL.
+name: Preview site
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    # Pull requests from forks get no secrets, so they cannot be deployed.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      OPEN_PAGES_TOKEN: ${{ secrets.OPEN_PAGES_TOKEN }}
+      OPEN_PAGES_URL: ${{ vars.OPEN_PAGES_URL }}
+      BRANCH: ${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event.action != 'closed'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      # Pin a release tag instead of @latest once you have one.
+      - run: go install github.com/gira0/open-pages/cmd/open-pages@latest
+      # Build your site into ./public here (hugo, npm run build, ...).
+      - name: Deploy preview
+        if: github.event.action != 'closed'
+        run: open-pages deploy -preview "$BRANCH" -expires-days 14 blog ./public
+      - name: Delete preview
+        if: github.event.action == 'closed'
+        run: open-pages deploy -preview "$BRANCH" -delete blog
