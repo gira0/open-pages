@@ -289,14 +289,12 @@ func New(cfg config.Config) (*Server, error) {
 			return nil, err
 		}
 	}
-	s.local = storage.NewLocal(s.sites)
-	s.store = s.local
-	if err := s.store.Init(context.Background()); err != nil {
-		return nil, fmt.Errorf("init storage: %w", err)
-	}
 	// Spooled uploads are private.
 	if err := os.MkdirAll(s.tmp, 0o770); err != nil { //nolint:gosec // G301: group 0 shares the volume under OpenShift arbitrary UIDs
 		return nil, fmt.Errorf("create %s: %w", s.tmp, err)
+	}
+	if err := s.openStorage(context.Background()); err != nil {
+		return nil, err
 	}
 	storage.GroupWritableDirs(s.tmp)
 
@@ -319,6 +317,30 @@ func New(cfg config.Config) (*Server, error) {
 	}
 	s.startAuditPruner()
 	return s, nil
+}
+
+// openStorage creates the site store described by the configuration and prepares it.
+func (s *Server) openStorage(ctx context.Context) error {
+	switch s.cfg.Storage.Type {
+	case config.StorageS3:
+		c := s.cfg.Storage.S3
+		st, err := storage.NewS3(ctx, storage.S3Config{
+			Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, Prefix: c.Prefix,
+			PathStyle: c.PathStyle, AccessKey: c.AccessKey, SecretKey: c.SecretKey,
+			StagingDir: filepath.Join(s.tmp, "staging"),
+		})
+		if err != nil {
+			return fmt.Errorf("storage: %w", err)
+		}
+		s.store = st
+	default:
+		s.local = storage.NewLocal(s.sites)
+		s.store = s.local
+	}
+	if err := s.store.Init(ctx); err != nil {
+		return fmt.Errorf("init storage: %w", err)
+	}
+	return nil
 }
 
 // Close stops the background tasks and releases the database. Call it after the HTTP

@@ -289,3 +289,43 @@ jobs:
           kind load docker-image docker.io/library/open-pages:e2e
       - name: Run the end-to-end test
         run: scripts/e2e-kind.sh
+
+  # Runs the storage conformance suite against a real S3-compatible server. SeaweedFS is
+  # Apache-2.0 licensed and maintained (MinIO's community edition is archived). The suite also
+  # runs against an in-process fake in the test job; this job checks the real wire behaviour.
+  s3-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: Start SeaweedFS
+        run: |
+          cat > "$RUNNER_TEMP/s3.json" <<'EOF'
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"ci-access","secretKey":"ci-secret-key"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+          EOF
+          docker run -d --name seaweedfs -p 8333:8333 \
+            -v "$RUNNER_TEMP/s3.json:/etc/seaweedfs/s3.json:ro" \
+            chrislusf/seaweedfs:4.45 server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+          for _ in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/ || true)"
+            if [ "$code" != 000 ]; then exit 0; fi
+            sleep 1
+          done
+          docker logs seaweedfs
+          echo "SeaweedFS never answered" >&2
+          exit 1
+      - name: Run the conformance suite
+        env:
+          OPEN_PAGES_TEST_S3_ENDPOINT: http://127.0.0.1:8333
+          OPEN_PAGES_TEST_S3_BUCKET: open-pages-ci
+          OPEN_PAGES_TEST_S3_ACCESS_KEY: ci-access
+          OPEN_PAGES_TEST_S3_SECRET_KEY: ci-secret-key
+        run: go test -count=1 -v -run TestS3 ./internal/storage
+      - name: Show the SeaweedFS log on failure
+        if: failure()
+        run: docker logs seaweedfs

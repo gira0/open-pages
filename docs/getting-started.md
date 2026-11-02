@@ -108,6 +108,18 @@ value fails startup. Integers that do not parse also fall back to the default.
 The `op_data/` and `tmp/` directories are created if missing (`op_data` mode 0755, `tmp`
 0700).
 
+### [storage]
+
+| Key | Default | Meaning |
+|---|---|---|
+| `type` | `local` | `local` keeps site files under `datapath`; `s3` keeps them in an S3-compatible bucket. See [storage](storage.md) |
+| `s3_endpoint` | empty | Base URL of the S3 service, `http://` or `https://`. Empty means Amazon S3 |
+| `s3_region` | `us-east-1` | Signing region |
+| `s3_bucket` | none | Required for `s3`. The bucket must exist |
+| `s3_prefix` | empty | Key prefix, so one bucket can serve several instances |
+| `s3_path_style` | `false` | Address the bucket as `<endpoint>/<bucket>`; most self-hosted servers need `true` |
+| `s3_access_key`, `s3_secret_key` | empty | Static credentials, both or neither. Empty uses the AWS default credential chain. Set them through `OPEN_PAGES_STORAGE_S3_*` (or `..._FILE`) rather than the file |
+
 ### [limits]
 
 | Key | Default | Meaning |
