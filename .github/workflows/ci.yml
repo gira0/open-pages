@@ -242,6 +242,13 @@ jobs:
               go test -count=1 -run TestChartSettings ./internal/config
             echo "::endgroup::"
           done
+      # The release workflow packages the chart with the release version for both fields.
+      - name: Package the chart as the release does
+        run: |
+          helm package "$CHART" --version 0.0.0-ci --app-version 0.0.0-ci --destination "$RUNNER_TEMP/pkg"
+          helm lint --strict "$RUNNER_TEMP/pkg/open-pages-0.0.0-ci.tgz" -f "$CHART/ci/default-values.yaml"
+          helm template ci "$RUNNER_TEMP/pkg/open-pages-0.0.0-ci.tgz" --kube-version "$KUBE_VERSION" \
+            -f "$CHART/ci/default-values.yaml" | grep -q 'ghcr.io/gira0/open-pages:0.0.0-ci'
       - name: Check that unsupported settings are refused
         run: |
           set -u
@@ -253,3 +260,32 @@ jobs:
             echo "::error::rendering without config.appHost should fail"; exit 1
           fi
           grep -q 'config.appHost is required' err.txt
+
+  # Installs the chart on a kind cluster that enforces the Pod Security "restricted" level,
+  # runs the pod as an arbitrary UID in group 0 (what OpenShift's restricted-v2 does), deploys
+  # a site through the API, fetches it on its wildcard host and restarts the pod. See
+  # scripts/e2e-kind.sh.
+  kind-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: Install Helm and kind
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install helm.sh/helm/v3/cmd/helm@v3.19.4
+          GOBIN="$RUNNER_TEMP/bin" go install sigs.k8s.io/kind@v0.30.0
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build the image
+        run: docker build -t docker.io/library/open-pages:e2e .
+      - name: Create the cluster and load the image
+        run: |
+          kind create cluster --wait 120s
+          kind load docker-image docker.io/library/open-pages:e2e
+      - name: Run the end-to-end test
+        run: scripts/e2e-kind.sh

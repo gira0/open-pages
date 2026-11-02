@@ -8,14 +8,17 @@ filesystem, no `hostPath`, no host ports, no init containers. `runAsUser` is not
 OpenShift can assign one from the namespace range. See
 [Container image](getting-started.md#container-image) for how the image supports that.
 
+OpenShift specifics (SCC, Routes, router settings, certificates) are in [openshift.md](openshift.md).
+
 Every value is commented in [`values.yaml`](../deploy/helm/open-pages/values.yaml) and checked
 by `values.schema.json`.
 
 ## Install
 
 You need a cluster with a default StorageClass for block storage, an ingress controller or an
-OpenShift router, and two DNS names (below). There is no published chart repository yet, so
-install from a checkout:
+OpenShift router, and two DNS names (below). Releases publish the chart to
+`oci://ghcr.io/gira0/charts/open-pages` (chart version = release version, for example
+`--version 1.2.3`); until the first release, install from a checkout:
 
 ```sh
 helm install open-pages deploy/helm/open-pages \
@@ -219,3 +222,16 @@ CI runs `helm lint --strict`, renders the files in `deploy/helm/open-pages/ci/`,
 the output with `kubeconform -strict`, using the datree CRD catalog for Route, ServiceMonitor
 and HTTPRoute. It also renders each file's `settings.ini` and loads it with the app's own
 config loader (`TestChartSettings`), so a renamed key or a changed value format fails CI.
+
+A `kind-e2e` job installs the chart on a kind cluster whose namespace enforces the Pod Security
+`restricted` level, runs the pod as an arbitrary UID (`1000780000`) in group 0 with no
+`fsGroup`, as OpenShift's `restricted-v2` does, then registers a user, creates and uploads a
+site through the API, fetches it on its wildcard host, restarts the pod and checks that the
+site and the account survived and that the old pod logged a graceful shutdown. Run it locally
+with a kind cluster that holds the image `docker.io/library/open-pages:e2e`:
+`scripts/e2e-kind.sh`. `scripts/e2e-flow.sh` is the HTTP part on its own and works against any
+instance.
+
+The release workflow packages the chart with the release version as both chart version and
+`appVersion`, pushes it to `oci://ghcr.io/gira0/charts/open-pages` and signs it with cosign
+(keyless), like the image. CI packages the chart the same way on every run.
