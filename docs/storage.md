@@ -51,7 +51,7 @@ binaries.
 
 ```
 <prefix>/sites/<site>/<version>/<file>       the files of one version
-<prefix>/sites/<site>/.versions/<version>    marker, written last, body = size in bytes
+<prefix>/sites/<site>/_versions/<version>    marker, written last, body = size in bytes
 <prefix>/sites/<site>/.current               the live version id
 ```
 

@@ -45,8 +45,11 @@ const uploadWorkers = 8
 // S3 keeps sites in an object store:
 //
 //	<prefix>/sites/<site>/<version>/<file>      the files of a version
-//	<prefix>/sites/<site>/.versions/<version>   marker, written last: the version exists
+//	<prefix>/sites/<site>/_versions/<version>   marker, written last: the version exists
 //	<prefix>/sites/<site>/.current              the live version id
+//
+// The marker directory is not called ".versions" because SeaweedFS reserves that name for its
+// own object versioning and hides what is stored under it (found by the CI conformance job).
 //
 // A version appears in Versions only once its marker exists, so an interrupted publish
 // leaves unreachable objects but never a half-visible version. The marker's body is the
@@ -93,7 +96,7 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 
 func (s *S3) siteKey(site string) string             { return s.prefix + "sites/" + site + "/" }
 func (s *S3) versionKey(site, version string) string { return s.siteKey(site) + version + "/" }
-func (s *S3) markerKey(site, version string) string  { return s.siteKey(site) + ".versions/" + version }
+func (s *S3) markerKey(site, version string) string  { return s.siteKey(site) + "_versions/" + version }
 func (s *S3) currentKey(site string) string          { return s.siteKey(site) + ".current" }
 func (s *S3) healthKey() string                      { return s.prefix + ".healthz" }
 func validS3Site(site string) bool                   { return names.ValidSite(site) }
@@ -300,7 +303,7 @@ func (s *S3) Versions(ctx context.Context, site string) ([]string, error) {
 	if !validS3Site(site) {
 		return nil, ErrInvalid
 	}
-	prefix := s.siteKey(site) + ".versions/"
+	prefix := s.siteKey(site) + "_versions/"
 	var out []string
 	err := s.list(ctx, prefix, func(key string) error {
 		if v := strings.TrimPrefix(key, prefix); VersionRe.MatchString(v) {
