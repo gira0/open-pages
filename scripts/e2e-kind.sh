@@ -7,7 +7,7 @@
 # runs the pod as an arbitrary UID with group 0 (as OpenShift's restricted-v2 SCC does),
 # deploys a site through the API and fetches it on its wildcard host, restarts the pod and
 # checks that the data survived and that the old pod shut down cleanly.
-set -euo pipefail
+set -Eeuo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 ns=open-pages-e2e
