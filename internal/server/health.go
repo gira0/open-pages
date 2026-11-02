@@ -104,7 +104,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		checks["database"] = "fail"
 	}
 	if err := s.health.run(ctx, func() error {
-		return errors.Join(checkWritable(s.sites), checkWritable(s.tmp))
+		return errors.Join(s.store.Check(ctx), checkWritable(s.tmp))
 	}); err != nil {
 		slog.Warn("health: data directory", "err", err, "request_id", requestIDOf(w))
 		checks["data_dir"] = "fail"

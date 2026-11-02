@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gira0/open-pages/internal/storage"
 )
 
 // payload is an archive entry of n bytes, so a version's size is easy to predict.
@@ -307,10 +309,10 @@ func TestDirSizeAndHumanSize(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, err := dirSize(dir); err != nil || n != 15 {
+	if n, err := storage.DirSize(dir); err != nil || n != 15 {
 		t.Fatalf("dirSize = %d, %v", n, err)
 	}
-	if _, err := dirSize(filepath.Join(dir, "missing")); err == nil {
+	if _, err := storage.DirSize(filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("dirSize of a missing dir succeeded")
 	}
 	if humanSize(512) != "512 bytes" || humanSize(3<<19) != "1.5 MiB" {
@@ -390,14 +392,14 @@ func TestQuotaDoesNotCreditUndeletableVersion(t *testing.T) {
 	s.cfg.KeepVersions = 1
 	v1 := deployFiles(t, s, payload(600))
 	stuck := filepath.Join(s.SiteDir("blog"), versionsDir, v1)
-	orig := removeAll
-	removeAll = func(p string) error {
+	orig := s.local.RemoveAll
+	s.local.RemoveAll = func(p string) error {
 		if p == stuck {
 			return errors.New("device busy")
 		}
 		return orig(p)
 	}
-	t.Cleanup(func() { removeAll = orig })
+	t.Cleanup(func() { s.local.RemoveAll = orig })
 
 	// 600 + 400 fits only by crediting v1, whose removal then fails.
 	deployFiles(t, s, payload(400))
@@ -409,7 +411,7 @@ func TestQuotaDoesNotCreditUndeletableVersion(t *testing.T) {
 	}
 	noStaging(t, s)
 
-	removeAll = orig
+	s.local.RemoveAll = orig
 	deployFiles(t, s, payload(400))
 	if vs, _ := s.Versions("blog"); len(vs) != 1 {
 		t.Fatalf("versions after the delete works again = %v", vs)

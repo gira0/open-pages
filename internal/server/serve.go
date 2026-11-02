@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
+
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/gira0/open-pages/internal/storage"
 )
 
 // serveSite serves filePath from the live version of site. Lookup and (later) access
@@ -49,15 +51,17 @@ func (s *Server) serveSite(w http.ResponseWriter, r *http.Request, site, filePat
 		h.Add("Vary", "Cookie, Authorization")
 	}
 
-	// CurrentDir is a symlink; os.Root follows it for the root itself but then refuses
-	// any path (including symlinks inside the site) that leads outside it.
-	root, err := os.OpenRoot(s.CurrentDir(site))
-	if err != nil {
+	root, version, err := s.store.OpenCurrent(r.Context(), site)
+	if errors.Is(err, storage.ErrNotDeployed) {
 		http.NotFound(w, r) // never deployed
 		return
 	}
+	if err != nil {
+		slog.Error("open site", "site", site, "err", err, "request_id", requestIDOf(w))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	defer root.Close()
-	version, _ := s.CurrentVersion(site)
 
 	name, ok := rootName(filePath)
 	if !ok {
@@ -120,7 +124,7 @@ func (s *Server) viewerMaySee(r *http.Request, name string, site Site, missing b
 }
 
 // serveNotFound sends the site's own 404.html with status 404, or a plain 404.
-func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, root *os.Root) {
+func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, root storage.Root) {
 	f, info, err := openFile(root, "404.html")
 	if err != nil {
 		http.NotFound(w, r)
@@ -143,7 +147,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, root *os.
 var errIsDir = errors.New("is a directory")
 
 // openFile opens a regular file in root. It returns errIsDir for a directory.
-func openFile(root *os.Root, name string) (*os.File, fs.FileInfo, error) {
+func openFile(root storage.Root, name string) (storage.File, fs.FileInfo, error) {
 	f, err := root.Open(name)
 	if err != nil {
 		return nil, nil, err

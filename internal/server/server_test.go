@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/config"
+	"github.com/gira0/open-pages/internal/storage"
 )
 
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
@@ -326,7 +327,7 @@ func TestGroupWritableDirs(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "site"), 0o755|os.ModeSetgid); err != nil {
 		t.Fatal(err)
 	}
-	groupWritableDirs(root)
+	storage.GroupWritableDirs(root)
 	for path, want := range map[string]os.FileMode{
 		filepath.Join(root, "site"): 0o775 | os.ModeSetgid,
 		old:                         0o775,
