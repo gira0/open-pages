@@ -49,6 +49,31 @@ type Config struct {
 	LocalLogin      bool           // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
 	OIDC            OIDCConfig     // optional OpenID Connect sign-in; disabled by default
 	SAML            SAMLConfig     // optional SAML 2.0 sign-in; disabled by default
+	Storage         StorageConfig  // where the files of deployed sites are kept
+}
+
+// Storage backends.
+const (
+	StorageLocal = "local" // a directory under datapath (default)
+	StorageS3    = "s3"    // any S3-compatible object store
+)
+
+// StorageConfig is the [storage] section.
+type StorageConfig struct {
+	Type string // StorageLocal or StorageS3
+	S3   S3Config
+}
+
+// S3Config holds the s3_* keys of [storage]. It speaks the plain S3 API, so any
+// compatible service works (Amazon S3, Ceph RGW, SeaweedFS, Garage, ...).
+type S3Config struct {
+	Endpoint  string // base URL of the service, e.g. "https://s3.corp:9000"; empty means Amazon S3
+	Region    string // signing region; many compatible services accept any value
+	Bucket    string // must exist; open-pages does not create it
+	Prefix    string // optional key prefix, so one bucket can hold several instances
+	PathStyle bool   // address the bucket as <endpoint>/<bucket> (most self-hosted services need this)
+	AccessKey string // static credentials; both empty means the SDK's default chain (IAM role, environment)
+	SecretKey string
 }
 
 // SAMLConfig is the [saml] section.
@@ -102,6 +127,7 @@ func Default() Config {
 		LogFormat:       logging.FormatText,
 		AuditRetention:  365,
 		LocalLogin:      true,
+		Storage:         StorageConfig{Type: StorageLocal, S3: S3Config{Region: "us-east-1"}},
 	}
 }
 
@@ -179,6 +205,10 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("limits.deploy_timeout_seconds: must be at most %d", maxTimeoutSecs)
 	}
 	cfg.DeployTimeout = time.Duration(timeoutSecs) * time.Second
+
+	if cfg.Storage, err = loadStorageConfig(f.Section("storage"), cfg.Storage); err != nil {
+		return cfg, err
+	}
 
 	cfg.KeepVersions = max(f.Section("sites").Key("keep_versions").MustInt(cfg.KeepVersions), 1)
 
@@ -474,4 +504,47 @@ func CheckURL(key, raw string) error {
 		}
 	}
 	return fmt.Errorf("%s: must use https (http is only allowed for localhost)", key)
+}
+
+// loadStorageConfig reads [storage]. For type = s3 it checks the settings that cannot work
+// without a value, so a typo fails at start instead of at the first deploy.
+func loadStorageConfig(sec *ini.Section, def StorageConfig) (StorageConfig, error) {
+	out := def
+	out.Type = strings.ToLower(strings.TrimSpace(sec.Key("type").MustString(def.Type)))
+	switch out.Type {
+	case StorageLocal:
+		for _, k := range sec.Keys() {
+			if strings.HasPrefix(k.Name(), "s3_") {
+				return out, fmt.Errorf("storage.%s is set but storage.type is %q", k.Name(), StorageLocal)
+			}
+		}
+		return out, nil
+	case StorageS3:
+	default:
+		return out, fmt.Errorf("storage.type %q: must be %q or %q", out.Type, StorageLocal, StorageS3)
+	}
+	s3 := &out.S3
+	s3.Endpoint = strings.TrimSpace(sec.Key("s3_endpoint").MustString(s3.Endpoint))
+	if s3.Endpoint != "" {
+		u, err := url.Parse(s3.Endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return out, fmt.Errorf("storage.s3_endpoint %q: must be an http:// or https:// URL", s3.Endpoint)
+		}
+	}
+	s3.Region = strings.TrimSpace(sec.Key("s3_region").MustString(s3.Region))
+	s3.Bucket = strings.TrimSpace(sec.Key("s3_bucket").String())
+	if s3.Bucket == "" {
+		return out, errors.New("storage.s3_bucket: required when storage.type = s3")
+	}
+	s3.Prefix = strings.Trim(strings.TrimSpace(sec.Key("s3_prefix").String()), "/")
+	var err error
+	if s3.PathStyle, err = strictBool(sec, "s3_path_style", s3.PathStyle); err != nil {
+		return out, err
+	}
+	s3.AccessKey = strings.TrimSpace(sec.Key("s3_access_key").String())
+	s3.SecretKey = strings.TrimSpace(sec.Key("s3_secret_key").String())
+	if (s3.AccessKey == "") != (s3.SecretKey == "") {
+		return out, errors.New("storage.s3_access_key and storage.s3_secret_key: set both or neither")
+	}
+	return out, nil
 }

@@ -24,7 +24,7 @@ const envFileSuffix = "_FILE"
 // those must not be mistaken for settings. No section name contains an underscore, so the
 // first word after the prefix names the section and the rest names the key. Add a new
 // section here.
-var envSections = []string{"server", "paths", "limits", "sites", "log", "metrics", "audit", "quotas", "auth", "oidc", "saml"}
+var envSections = []string{"server", "paths", "limits", "sites", "log", "metrics", "audit", "quotas", "auth", "oidc", "saml", "storage"}
 
 // fileKeys are the settings whose own name ends in _file. OPEN_PAGES_SAML_KEY_FILE sets
 // saml key_file directly (it is a path); the file form of that setting is

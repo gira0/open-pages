@@ -81,12 +81,18 @@ type Site struct {
 
 // SiteDir returns the directory holding all versions of site, or "" for an invalid name.
 func (s *Server) SiteDir(site string) string {
+	if s.local == nil {
+		return "" // not the local backend: there is no directory
+	}
 	return s.local.SiteDir(site)
 }
 
 // CurrentDir returns the path of the site's live content (a symlink to the current
 // version), or "" for an invalid name. It exists once the site has been deployed.
 func (s *Server) CurrentDir(site string) string {
+	if s.local == nil {
+		return ""
+	}
 	return s.local.CurrentDir(site)
 }
 

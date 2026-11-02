@@ -395,3 +395,74 @@ func TestLoadQuotas(t *testing.T) {
 		}
 	}
 }
+
+func loadINI(t *testing.T, body string) (Config, error) {
+	t.Helper()
+	return Load(writeConfig(t, body))
+}
+
+func TestStorageDefaultsToLocal(t *testing.T) {
+	cfg, err := loadINI(t, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.Type != StorageLocal {
+		t.Fatalf("type = %q", cfg.Storage.Type)
+	}
+}
+
+func TestLoadS3Storage(t *testing.T) {
+	cfg, err := loadINI(t, `
+[storage]
+type = S3
+s3_endpoint = https://s3.corp:9000
+s3_bucket = pages
+s3_prefix = /prod/
+s3_path_style = true
+s3_access_key = AK
+s3_secret_key = SK
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := S3Config{Endpoint: "https://s3.corp:9000", Region: "us-east-1", Bucket: "pages", Prefix: "prod", PathStyle: true, AccessKey: "AK", SecretKey: "SK"}
+	if cfg.Storage.Type != StorageS3 || cfg.Storage.S3 != want {
+		t.Fatalf("storage = %+v", cfg.Storage)
+	}
+}
+
+func TestStorageErrors(t *testing.T) {
+	for name, tc := range map[string]struct{ ini, want string }{
+		"unknown type":    {"[storage]\ntype = ftp\n", "must be"},
+		"no bucket":       {"[storage]\ntype = s3\n", "s3_bucket"},
+		"bad endpoint":    {"[storage]\ntype = s3\ns3_bucket = b\ns3_endpoint = s3.corp\n", "s3_endpoint"},
+		"half the keys":   {"[storage]\ntype = s3\ns3_bucket = b\ns3_access_key = AK\n", "both or neither"},
+		"typo bool":       {"[storage]\ntype = s3\ns3_bucket = b\ns3_path_style = yes please\n", "true or false"},
+		"s3 key if local": {"[storage]\ns3_bucket = b\n", "storage.type"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadINI(t, tc.ini)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestS3SecretFromFile(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "sk")
+	if err := os.WriteFile(secret, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPEN_PAGES_STORAGE_TYPE", "s3")
+	t.Setenv("OPEN_PAGES_STORAGE_S3_BUCKET", "pages")
+	t.Setenv("OPEN_PAGES_STORAGE_S3_ACCESS_KEY", "AK")
+	t.Setenv("OPEN_PAGES_STORAGE_S3_SECRET_KEY_FILE", secret)
+	cfg, err := loadINI(t, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.S3.SecretKey != "from-file" {
+		t.Fatalf("secret = %q", cfg.Storage.S3.SecretKey)
+	}
+}
