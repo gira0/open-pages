@@ -63,7 +63,11 @@ func ensureBucket(t *testing.T, cfg storage.S3Config) {
 	})
 	_, err := c.CreateBucket(t.Context(), &s3.CreateBucketInput{Bucket: &cfg.Bucket})
 	var api smithy.APIError
-	if err != nil && !(errors.As(err, &api) && (api.ErrorCode() == "BucketAlreadyOwnedByYou" || api.ErrorCode() == "BucketAlreadyExists")) {
-		t.Fatalf("create bucket: %v", err)
+	if err == nil {
+		return
 	}
+	if errors.As(err, &api) && (api.ErrorCode() == "BucketAlreadyOwnedByYou" || api.ErrorCode() == "BucketAlreadyExists") {
+		return
+	}
+	t.Fatalf("create bucket: %v", err)
 }
