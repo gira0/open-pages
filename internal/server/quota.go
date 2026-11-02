@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
-	"path/filepath"
 )
 
 // Quotas limit the bytes a site and its owner keep on disk. A site's usage is the sum of
@@ -25,25 +23,6 @@ func (e *quotaError) Error() string { return e.msg }
 
 // errSiteLimit is returned by createSite when the owner already owns sites_per_user sites.
 var errSiteLimit = errors.New("site limit reached")
-
-// dirSize returns the total size in bytes of the regular files under root.
-func dirSize(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type().IsRegular() {
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			total += info.Size()
-		}
-		return nil
-	})
-	return total, err
-}
 
 // humanSize renders a byte count for error messages.
 func humanSize(n int64) string {
@@ -84,7 +63,7 @@ func (s *Server) syncVersionSizes(ctx context.Context, site Site) (map[string]in
 	for _, v := range versions {
 		n, ok := known[v]
 		if !ok {
-			if n, err = dirSize(filepath.Join(s.SiteDir(site.Name), versionsDir, v)); err != nil {
+			if n, err = s.store.VersionSize(ctx, site.Name, v); err != nil {
 				return nil, fmt.Errorf("measure version %s: %w", v, err)
 			}
 			missing[v] = n

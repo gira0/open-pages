@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/gira0/open-pages/internal/extract"
 	"github.com/gira0/open-pages/internal/names"
+	"github.com/gira0/open-pages/internal/storage"
 	"github.com/rs/xid"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -25,20 +23,22 @@ import (
 //
 // Deploys extract into a staging dir, move it into versions/ and then replace the
 // "current" symlink with a rename, so readers see either the old or the new version,
-// never a partial one. Other code should serve files from CurrentDir(site).
+// never a partial one. That layout belongs to the local storage backend (internal/storage);
+// the server reaches site files only through its storage.Store. SiteDir and CurrentDir
+// exist for tests and tools that know the backend is local.
 
 const (
-	versionsDir = "versions"
+	versionsDir = "versions" // local backend layout; tests look inside it
 	currentLink = "current"
 )
 
 var (
 	// versionRe matches version ids, which are xids.
-	versionRe = regexp.MustCompile(`^[0-9a-v]{20}$`)
+	versionRe = storage.VersionRe
 
 	errSiteExists    = errors.New("a site with that name already exists")
 	errSiteNotFound  = errors.New("site not found")
-	errVersionAbsent = errors.New("version not found")
+	errVersionAbsent = storage.ErrVersionAbsent
 	errGroupNotFound = errors.New("group not found")
 
 	errNotExpired = errors.New("site is not expired")
@@ -84,20 +84,13 @@ type Site struct {
 
 // SiteDir returns the directory holding all versions of site, or "" for an invalid name.
 func (s *Server) SiteDir(site string) string {
-	if !names.ValidSite(site) {
-		return ""
-	}
-	return filepath.Join(s.sites, site)
+	return s.local.SiteDir(site)
 }
 
 // CurrentDir returns the path of the site's live content (a symlink to the current
 // version), or "" for an invalid name. It exists once the site has been deployed.
 func (s *Server) CurrentDir(site string) string {
-	dir := s.SiteDir(site)
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, currentLink)
+	return s.local.CurrentDir(site)
 }
 
 // nullableID maps the "none" value 0 to SQL NULL.
@@ -586,8 +579,7 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 // that lands first keeps the site (errNotExpired, nothing removed) and one that comes
 // later waits and finds the site gone.
 func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[string]any, expiredBy int64) error {
-	dir := s.SiteDir(site.Name)
-	if dir == "" {
+	if !names.ValidSite(site.Name) {
 		return errors.New("invalid site name")
 	}
 	s.deployMu.Lock()
@@ -614,7 +606,7 @@ func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[stri
 			return errNotExpired
 		}
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := s.store.DeleteSite(ctx, site.Name); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
 	if tx == nil {
@@ -647,22 +639,17 @@ func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[stri
 // *quotaError. Old versions beyond cfg.KeepVersions are pruned afterwards. The site must already exist; deploy returns errSiteNotFound if
 // it was deleted (or replaced by a different site of the same name) before publishing.
 func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, error) {
-	dir := s.SiteDir(site.Name)
-	if dir == "" {
+	if !names.ValidSite(site.Name) {
 		return "", errors.New("invalid site name")
 	}
-	if err := os.MkdirAll(s.sites, 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
-		return "", err
-	}
 
-	// Stage in the sites root, not in the site's own directory, so that nothing here can
-	// recreate a site directory that deleteSite removed. Site names never start with a
-	// dot, and the rename into place stays on one filesystem.
-	staging, err := os.MkdirTemp(s.sites, ".staging-*")
+	// Staging is local disk outside any site's own directory, so that nothing here can
+	// recreate a site that deleteSite removed.
+	staging, cleanup, err := s.store.Staging(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(staging)
+	defer cleanup()
 
 	limits := extract.Limits{MaxBytes: s.cfg.MaxExtractSize, MaxFiles: s.cfg.MaxExtractFile}
 	extractCtx, cancel := context.WithTimeout(ctx, s.cfg.DeployTimeout)
@@ -676,11 +663,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		}
 		return "", &badArchiveError{err}
 	}
-	if err := os.Chmod(staging, 0o775); err != nil { //nolint:gosec // G302: public site content, group-writable for arbitrary UIDs in group 0
-		return "", err
-	}
-
-	size, err := dirSize(staging)
+	size, err := storage.DirSize(staging)
 	if err != nil {
 		return "", err
 	}
@@ -699,11 +682,8 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		s.refreshStoredBytes(context.WithoutCancel(ctx))
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Join(dir, versionsDir), 0o775); err != nil { //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
-		return "", err
-	}
 	version := xid.New().String() // time-sortable, so lexical order is deploy order
-	if err := os.Rename(staging, filepath.Join(dir, versionsDir, version)); err != nil {
+	if err := s.store.Publish(ctx, site.Name, version, staging); err != nil {
 		return "", err
 	}
 	// The accounting below must not stop half-way because the client went away.
@@ -760,26 +740,10 @@ func (s *Server) rollbackSite(ctx context.Context, site Site, version string) er
 
 // switchCurrent does the work of SwitchCurrent; the caller holds deployMu.
 func (s *Server) switchCurrent(site, version string) error {
-	dir := s.SiteDir(site)
-	if dir == "" {
+	if !names.ValidSite(site) {
 		return errors.New("invalid site name")
 	}
-	if !versionRe.MatchString(version) {
-		return errVersionAbsent
-	}
-	if st, err := os.Stat(filepath.Join(dir, versionsDir, version)); err != nil || !st.IsDir() {
-		return errVersionAbsent
-	}
-	// Build the new link beside the old one, then rename over it: rename(2) is atomic.
-	tmp := filepath.Join(dir, ".link-"+xid.New().String())
-	if err := os.Symlink(filepath.Join(versionsDir, version), tmp); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, currentLink)); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return s.store.SetCurrent(context.Background(), site, version)
 }
 
 // versionsAndCurrent reads the version list and the live version as one snapshot,
@@ -796,47 +760,21 @@ func (s *Server) versionsAndCurrent(site string) (versions []string, current str
 	return versions, current, nil
 }
 
-// Versions lists the site's versions on disk, oldest first.
+// Versions lists the site's versions in the store, oldest first.
 func (s *Server) Versions(site string) ([]string, error) {
-	dir := s.SiteDir(site)
-	if dir == "" {
+	if !names.ValidSite(site) {
 		return nil, errors.New("invalid site name")
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, versionsDir))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() && versionRe.MatchString(e.Name()) {
-			out = append(out, e.Name())
-		}
-	}
-	slices.Sort(out)
-	return out, nil
+	return s.store.Versions(context.Background(), site)
 }
 
 // CurrentVersion returns the version the site currently serves, or "" if never deployed.
 func (s *Server) CurrentVersion(site string) (string, error) {
-	link := s.CurrentDir(site)
-	if link == "" {
+	if !names.ValidSite(site) {
 		return "", errors.New("invalid site name")
 	}
-	target, err := os.Readlink(link)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return filepath.Base(target), nil
+	return s.store.Current(context.Background(), site)
 }
-
-// removeAll deletes a version directory; tests replace it to simulate a failing delete.
-var removeAll = os.RemoveAll
 
 // pruneVersions removes the oldest versions beyond cfg.KeepVersions, never the current
 // one. The caller holds deployMu.
@@ -858,7 +796,7 @@ func (s *Server) pruneVersions(site string) error {
 		if v == current {
 			continue
 		}
-		if err := removeAll(filepath.Join(s.SiteDir(site), versionsDir, v)); err != nil {
+		if err := s.store.DeleteVersion(context.Background(), site, v); err != nil {
 			errs = append(errs, err)
 			continue
 		}
