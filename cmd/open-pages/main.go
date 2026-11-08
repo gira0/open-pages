@@ -99,7 +99,7 @@ func run(configPath string, noFile bool) error {
 		}()
 	}
 	go func() {
-		slog.Info("listening", "addr", cfg.Listen, "data", srv.SitesDir())
+		slog.Info("listening", "addr", cfg.Listen, "data", srv.StorageDescription())
 		serveErr <- httpSrv.ListenAndServe()
 	}()
 
