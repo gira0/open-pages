@@ -105,6 +105,7 @@ func streamLimit(l Limits) int64 {
 type extractor struct {
 	ctx     context.Context
 	dest    string
+	root    *os.Root // dest, opened so every create is confined to it even through symlinks
 	limits  Limits
 	written int64
 	files   int
@@ -122,32 +123,32 @@ func (e *extractor) count() error {
 	return nil
 }
 
-// target validates an entry name and returns where it belongs on disk.
-func (e *extractor) target(name string) (string, error) {
+// local validates an entry name and returns it as a path relative to the site root.
+func (e *extractor) local(name string) (string, error) {
 	local := filepath.FromSlash(name)
 	if !filepath.IsLocal(local) {
 		return "", fmt.Errorf("archive entry %q points outside the site", name)
 	}
-	return filepath.Join(e.dest, local), nil
+	return local, nil
 }
 
 func (e *extractor) dir(name string) error {
-	path, err := e.target(name)
+	local, err := e.local(name)
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(path, 0o775) //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
+	return e.root.MkdirAll(local, 0o775) //nolint:gosec // G301: public site content, group-writable for arbitrary UIDs in group 0
 }
 
 func (e *extractor) file(name string, r io.Reader) error {
-	path, err := e.target(name)
+	local, err := e.local(name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o775); err != nil { //nolint:gosec // G301: as above
+	if err := e.root.MkdirAll(filepath.Dir(local), 0o775); err != nil { //nolint:gosec // G301: as above
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o664) //nolint:gosec // G302, G304: group-writable for arbitrary UIDs in group 0; path checked by target()
+	f, err := e.root.OpenFile(local, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o664) //nolint:gosec // G302: group-writable for arbitrary UIDs in group 0; os.Root refuses any path leaving dest
 	if err != nil {
 		return err
 	}
@@ -306,7 +307,12 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 		}
 		declared += size
 	}
-	e := &extractor{ctx: ctx, dest: dest, limits: limits}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	e := &extractor{ctx: ctx, dest: dest, root: root, limits: limits}
 	for _, f := range zr.File {
 		if err := e.count(); err != nil {
 			return err
@@ -334,7 +340,12 @@ func extractZip(ctx context.Context, src io.ReaderAt, size int64, dest string, l
 // stream itself bounds that work.
 func extractTar(ctx context.Context, src io.Reader, dest string, limits Limits) error {
 	tr := tar.NewReader(&guardReader{ctx: ctx, r: src, limit: streamLimit(limits), maxBytes: limits.MaxBytes})
-	e := &extractor{ctx: ctx, dest: dest, limits: limits}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	e := &extractor{ctx: ctx, dest: dest, root: root, limits: limits}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
