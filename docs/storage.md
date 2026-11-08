@@ -43,8 +43,8 @@ manage yourself.
 open-pages uses only the plain object API (PUT, GET with `Range`, HEAD, LIST, multi-object
 DELETE), no vendor extensions, so any server that implements it works: Amazon S3, Ceph RGW,
 SeaweedFS, Garage, and others. CI runs the storage conformance suite against
-[SeaweedFS](https://github.com/seaweedfs/seaweedfs) (Apache-2.0) and against an in-process
-fake. **MinIO is not recommended**: its community edition no longer ships maintained images or
+[Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0, developed in France) and against an
+in-process fake. **MinIO is not recommended**: its community edition no longer ships maintained images or
 binaries.
 
 ### Layout and consistency

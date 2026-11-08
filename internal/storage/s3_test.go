@@ -20,7 +20,7 @@ import (
 
 // TestS3 runs the conformance suite against an in-process fake S3. Set
 // OPEN_PAGES_TEST_S3_ENDPOINT, _BUCKET, _ACCESS_KEY and _SECRET_KEY to run it against a
-// real service instead (CI uses SeaweedFS); each case then gets its own key prefix.
+// real service instead (CI uses Garage); each case then gets its own key prefix.
 func TestS3(t *testing.T) {
 	cfg := storage.S3Config{Region: "us-east-1", PathStyle: true, AccessKey: "test", SecretKey: "test-secret"}
 	if ep := os.Getenv("OPEN_PAGES_TEST_S3_ENDPOINT"); ep != "" {
