@@ -192,10 +192,8 @@ func TestKeyPublicKeyRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	small, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Only the modulus size matters to PublicKey, so no 1024-bit key is generated.
+	small := &rsa.PublicKey{N: new(big.Int).SetBit(big.NewInt(1), 1023, 1)}
 	e := b64(big.NewInt(int64(rsaKey.E)).Bytes())
 	good := b64(make([]byte, 32))
 	for name, k := range map[string]Key{
