@@ -49,3 +49,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+replace github.com/yuin/goldmark => github.com/yuin/goldmark v1.8.7
