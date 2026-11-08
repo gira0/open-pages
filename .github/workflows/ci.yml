@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -96,7 +96,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   dependency-review:
     if: github.event_name == 'pull_request'
@@ -169,6 +169,62 @@ jobs:
           smoke smoke-default 18080 -v smoke-default:/data
           docker volume create smoke-arbitrary
           smoke smoke-arbitrary 18081 --user 1000780000:0 -v smoke-arbitrary:/data
+
+  # Workflow and script lint. CodeQL's actions analysis does not catch syntax or expression
+  # errors. actionlint runs shellcheck on inline run: blocks when shellcheck is on PATH.
+  workflow-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color
+      - name: shellcheck scripts
+        run: shellcheck scripts/*.sh
+
+  dockerfile-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --failure-threshold warning - < Dockerfile
+
+  # Misconfiguration scan of the Dockerfile, the compose file and the rendered Helm chart.
+  config-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      - name: Render the chart with each CI values file
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install helm.sh/helm/v3/cmd/helm@v3.19.4
+          mkdir -p "$RUNNER_TEMP/scan/chart"
+          for f in deploy/helm/open-pages/ci/*.yaml; do
+            "$RUNNER_TEMP/bin/helm" template ci deploy/helm/open-pages --kube-version 1.31.0 -f "$f" \
+              > "$RUNNER_TEMP/scan/chart/$(basename "$f")"
+          done
+          cp Dockerfile "$RUNNER_TEMP/scan/"
+          cp deploy/docker-compose.yml "$RUNNER_TEMP/scan/"
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ${{ runner.temp }}/scan
+          severity: HIGH,CRITICAL
+          exit-code: 1
 
   helm:
     runs-on: ubuntu-latest
