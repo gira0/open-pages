@@ -15,6 +15,7 @@ known limits.
 | [auth.md](auth.md) | Understand local accounts, sessions, API tokens, OIDC and SAML sign-in, groups and per-site visibility |
 | [security-model.md](security-model.md) | Know what separates hosted content from the app, and what a deployment must provide (content domain, wildcard TLS, HTTPS) |
 | [schema.md](schema.md) | See every database table and column, the indexes, and how migrations work |
+| [ci.md](ci.md) | See the CI jobs, which checks should be required, and when the image scan blocks |
 
 Other files in the repository:
 
