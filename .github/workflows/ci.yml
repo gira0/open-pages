@@ -316,6 +316,16 @@ jobs:
             echo "::error::rendering without config.appHost should fail"; exit 1
           fi
           grep -q 'config.appHost is required' err.txt
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.type=s3; then
+            echo "::error::storage.type=s3 without a bucket should be rejected"; exit 1
+          fi
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.s3.bucket=b; then
+            echo "::error::an s3 bucket with storage.type=local should be rejected"; exit 1
+          fi
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.type=s3 \
+            --set config.storage.s3.bucket=b --set config.storage.s3.credentialsFromSecret=true; then
+            echo "::error::credentialsFromSecret without keys should be rejected"; exit 1
+          fi
 
   # Installs the chart on a kind cluster that enforces the Pod Security "restricted" level,
   # runs the pod as an arbitrary UID in group 0 (what OpenShift's restricted-v2 does), deploys

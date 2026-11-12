@@ -62,6 +62,37 @@ Uploads are staged on a separate `emptyDir` (`stagingVolume`, 1Gi by default, mo
 PVC. Set `stagingVolume.sizeLimit` above `config.limits.maxUploadMb` times
 `config.limits.maxConcurrentDeploys`. Disable it to stage on the PVC.
 
+## S3 site storage
+
+By default site files live on the PVC next to the database. To keep them in an S3-compatible
+bucket instead (see [storage.md](storage.md) for the layout, limits and compatible servers):
+
+```yaml
+config:
+  storage:
+    type: s3
+    s3:
+      endpoint: https://s3.corp:9000   # empty means Amazon S3
+      bucket: open-pages               # must exist already
+      prefix: prod
+      pathStyle: true                  # most self-hosted servers need this
+      credentialsFromSecret: true
+secrets:
+  existingSecret: open-pages-secrets   # keys s3-access-key and s3-secret-key
+```
+
+- `credentialsFromSecret: true` reads the keys from `secrets.s3AccessKey` and
+  `secrets.s3SecretKey` (or the same keys in `secrets.existingSecret`; rename them in
+  `secrets.keys`) and sets `OPEN_PAGES_STORAGE_S3_ACCESS_KEY_FILE` and
+  `OPEN_PAGES_STORAGE_S3_SECRET_KEY_FILE`. Leave it `false` to use the AWS default credential
+  chain, for example an IAM role for the service account through `serviceAccount.annotations`.
+- The chart still runs one replica on a ReadWriteOnce volume, because the database stays on
+  it. With S3 the volume only holds `data.db`, so `persistence.size` can be small. Uploads are
+  extracted on the `stagingVolume` first and then uploaded.
+- Switching an existing release from `local` to `s3` does not move the sites: redeploy them.
+- Network policy: with `networkPolicy.enabled`, add the object store to
+  `networkPolicy.egress.allowedCIDRs` and `allowedPorts`.
+
 ## Volume ownership: fsGroup
 
 The image keeps `/data` writable for group 0, and the pod keeps group 0.
@@ -165,13 +196,14 @@ They are mounted as files under `/etc/open-pages/secrets` and handed to the app 
 `OPEN_PAGES_SAML_KEY_FILE` / `OPEN_PAGES_SAML_CERT_FILE` (for SAML the setting itself is a
 path, see [Environment variables](getting-started.md#environment-variables)). Two ways:
 
-- Set `secrets.oidcClientSecret`, `secrets.metricsToken`, `secrets.samlKey`, `secrets.samlCert`
+- Set `secrets.oidcClientSecret`, `secrets.metricsToken`, `secrets.samlKey`, `secrets.samlCert`,
+  `secrets.s3AccessKey`, `secrets.s3SecretKey`
   and the chart creates a Secret. These values are kept in Helm's release records, so use
   this for trials.
 - Set `secrets.existingSecret` to a Secret you manage with External Secrets, Sealed Secrets or
-  Vault. Key names default to `oidc-client-secret`, `metrics-token`, `saml.key` and
-  `saml.crt`; override them in `secrets.keys`. The chart cannot see changes inside such a
-  Secret: restart the Deployment (`kubectl rollout restart`) after rotating it.
+  Vault. Key names default to `oidc-client-secret`, `metrics-token`, `saml.key`,
+  `saml.crt`, `s3-access-key` and `s3-secret-key`; override them in `secrets.keys`. The chart
+  cannot see changes inside such a Secret: restart the Deployment (`kubectl rollout restart`) after rotating it.
 
 OIDC and SAML are turned on with `config.oidc.enabled` and `config.saml.enabled`; see
 [auth.md](auth.md) for the provider side and the redirect URLs. The chart only supports SAML

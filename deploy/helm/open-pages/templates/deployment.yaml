@@ -77,6 +77,12 @@ spec:
             - name: OPEN_PAGES_SAML_CERT_FILE
               value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.samlCert }}
             {{- end }}
+            {{- if include "open-pages.s3FromSecret" . }}
+            - name: OPEN_PAGES_STORAGE_S3_ACCESS_KEY_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.s3AccessKey }}
+            - name: OPEN_PAGES_STORAGE_S3_SECRET_KEY_FILE
+              value: {{ include "open-pages.secretsPath" . }}/{{ .Values.secrets.keys.s3SecretKey }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
