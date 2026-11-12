@@ -108,6 +108,25 @@ config:
     # listener, and let ServiceMonitor send it. The token is read from a file, never put in
     # the ConfigMap.
     tokenFromSecret: false
+  storage:
+    # Where the files of deployed sites live: "local" (on the persistence volume) or "s3".
+    # The database stays on the volume either way, so persistence stays on with s3; it then
+    # only has to hold data.db. See docs/storage.md.
+    type: local
+    # Used when type is "s3". Any S3-compatible service works; the bucket must already exist.
+    s3:
+      # Base URL of the service, for example https://s3.corp:9000. Empty means Amazon S3.
+      endpoint: ""
+      region: us-east-1
+      bucket: ""
+      # Optional key prefix, so several instances can share a bucket.
+      prefix: ""
+      # Address the bucket as <endpoint>/<bucket>. Most self-hosted servers need true.
+      pathStyle: false
+      # Read static keys from secrets.s3AccessKey / secrets.s3SecretKey (or the existing
+      # Secret). Leave false to use the AWS default credential chain instead (for example an
+      # IAM role for service accounts via serviceAccount.annotations).
+      credentialsFromSecret: false
   oidc:
     # OpenID Connect sign-in. The client secret comes from secrets.oidcClientSecret or the
     # existing Secret, never from here.
@@ -160,6 +179,8 @@ secrets:
     metricsToken: metrics-token
     samlKey: saml.key
     samlCert: saml.crt
+    s3AccessKey: s3-access-key
+    s3SecretKey: s3-secret-key
   # Values for the chart-created Secret. Only non-empty ones are written.
   oidcClientSecret: ""
   # At least 16 characters.
@@ -167,6 +188,9 @@ secrets:
   # PEM RSA private key and certificate for signing SAML requests.
   samlKey: ""
   samlCert: ""
+  # Static keys for config.storage.s3 when credentialsFromSecret is true. Set both.
+  s3AccessKey: ""
+  s3SecretKey: ""
 
 persistence:
   # Mount a PersistentVolumeClaim at /data (database, site files). false uses an emptyDir

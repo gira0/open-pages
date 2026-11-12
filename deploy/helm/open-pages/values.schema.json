@@ -301,6 +301,46 @@
             }
           },
           "additionalProperties": false
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": [
+                "local",
+                "s3"
+              ]
+            },
+            "s3": {
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "pattern": "^$|^https?://[^\\s#;]+$"
+                },
+                "region": {
+                  "type": "string",
+                  "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
+                },
+                "bucket": {
+                  "type": "string",
+                  "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                },
+                "prefix": {
+                  "type": "string",
+                  "pattern": "^$|^[^\\r\\n \\t#;]([^\\r\\n \\t]|[ \\t]+([^\\r\\n \\t#;]|$))*$"
+                },
+                "pathStyle": {
+                  "type": "boolean"
+                },
+                "credentialsFromSecret": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -333,6 +373,14 @@
             "samlCert": {
               "type": "string",
               "minLength": 1
+            },
+            "s3AccessKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "s3SecretKey": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false
@@ -347,6 +395,12 @@
           "type": "string"
         },
         "samlCert": {
+          "type": "string"
+        },
+        "s3AccessKey": {
+          "type": "string"
+        },
+        "s3SecretKey": {
           "type": "string"
         }
       },

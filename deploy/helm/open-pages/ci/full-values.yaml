@@ -10,6 +10,13 @@ config:
   contentDomain: pages-content.example.com
   trustedProxies: ["10.128.0.0/14"]
   corsOrigins: ["https://tools.example.com"]
+  storage:
+    type: s3
+    s3:
+      endpoint: https://s3.example.com
+      bucket: open-pages
+      pathStyle: true
+      credentialsFromSecret: true
   metrics:
     listen: ":9100"
     tokenFromSecret: true
@@ -27,6 +34,8 @@ config:
     signRequests: true
 secrets:
   oidcClientSecret: not-a-real-secret
+  s3AccessKey: ci-access-key
+  s3SecretKey: ci-secret-key-0123456789
   metricsToken: ci-token-0123456789
   samlKey: |
     -----BEGIN PRIVATE KEY-----

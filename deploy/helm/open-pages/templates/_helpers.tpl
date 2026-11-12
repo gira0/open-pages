@@ -97,6 +97,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and .Values.config.metrics.tokenFromSecret (not (include "open-pages.hasSecret" (dict "ctx" . "key" "metricsToken"))) }}
 {{- fail "config.metrics.tokenFromSecret needs secrets.metricsToken or secrets.existingSecret" }}
 {{- end }}
+{{- if and (eq .Values.config.storage.type "s3") (not .Values.config.storage.s3.bucket) }}
+{{- fail "config.storage.type s3 needs config.storage.s3.bucket" }}
+{{- end }}
+{{- if and (ne .Values.config.storage.type "s3") (or .Values.config.storage.s3.bucket .Values.config.storage.s3.endpoint .Values.config.storage.s3.prefix .Values.config.storage.s3.credentialsFromSecret) }}
+{{- fail "config.storage.s3 is set but config.storage.type is not s3" }}
+{{- end }}
+{{- if and (include "open-pages.s3FromSecret" .) (not (and (include "open-pages.hasSecret" (dict "ctx" . "key" "s3AccessKey")) (include "open-pages.hasSecret" (dict "ctx" . "key" "s3SecretKey")))) }}
+{{- fail "config.storage.s3.credentialsFromSecret needs secrets.s3AccessKey and secrets.s3SecretKey, or secrets.existingSecret" }}
+{{- end }}
 {{- if and .Values.serviceMonitor.enabled (not .Values.config.metrics.listen) }}
 {{- fail "serviceMonitor.enabled needs config.metrics.listen" }}
 {{- end }}
@@ -113,7 +122,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/* True when the chart creates the Secret. */}}
 {{- define "open-pages.createSecret" -}}
-{{- if and (not .Values.secrets.existingSecret) (or .Values.secrets.oidcClientSecret .Values.secrets.metricsToken .Values.secrets.samlKey .Values.secrets.samlCert) }}true{{ end -}}
+{{- if and (not .Values.secrets.existingSecret) (or .Values.secrets.oidcClientSecret .Values.secrets.metricsToken .Values.secrets.samlKey .Values.secrets.samlCert .Values.secrets.s3AccessKey .Values.secrets.s3SecretKey) }}true{{ end -}}
 {{- end }}
 
 {{- define "open-pages.secretName" -}}
@@ -136,5 +145,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/* Whether any secret file is delivered to the container. */}}
 {{- define "open-pages.usesSecret" -}}
 {{- $c := .Values.config -}}
-{{- if or $c.oidc.enabled $c.metrics.tokenFromSecret (and $c.saml.enabled $c.saml.signRequests) }}true{{ end -}}
+{{- if or $c.oidc.enabled $c.metrics.tokenFromSecret (and $c.saml.enabled $c.saml.signRequests) (include "open-pages.s3FromSecret" .) }}true{{ end -}}
+{{- end }}
+
+{{/* "true" when S3 is the store and its static keys come from the Secret. */}}
+{{- define "open-pages.s3FromSecret" -}}
+{{- if and (eq .Values.config.storage.type "s3") .Values.config.storage.s3.credentialsFromSecret }}true{{ end -}}
 {{- end }}

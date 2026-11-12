@@ -1,0 +1,15 @@
+# S3 site storage with static keys from the chart-created Secret.
+config:
+  appHost: pages.example.com
+  contentDomain: pages-content.example.com
+  storage:
+    type: s3
+    s3:
+      endpoint: https://s3.example.com:9000
+      bucket: open-pages
+      prefix: prod
+      pathStyle: true
+      credentialsFromSecret: true
+secrets:
+  s3AccessKey: ci-access-key
+  s3SecretKey: ci-secret-key-0123456789

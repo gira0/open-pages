@@ -35,8 +35,13 @@ credentials, IAM role, web identity), which suits Amazon S3 and EKS.
 
 The service account needs `s3:GetObject`, `PutObject`, `DeleteObject` and `ListBucket` on the
 bucket (and prefix). Nothing else: open-pages never creates buckets, sets ACLs or reads
-policies. In the Helm chart, set the variables through `extraEnv` and the secrets you
-manage yourself.
+policies.
+
+### Helm chart
+
+Set `config.storage.type: s3` and the `config.storage.s3.*` values; see
+[Kubernetes](kubernetes.md#s3-site-storage). The keys come from the chart's Secret like the
+other secrets and reach the app as `OPEN_PAGES_STORAGE_S3_*_FILE`.
 
 ### Compatible servers
 

@@ -285,7 +285,15 @@ jobs:
           import os, sys, tempfile, yaml
           cm, dep, ini, envfile = sys.argv[1:]
           open(ini, "w").write(yaml.safe_load(open(cm))["data"]["settings.ini"])
-          env = yaml.safe_load(open(dep))["spec"]["template"]["spec"]["containers"][0].get("env", [])
+          pod = yaml.safe_load(open(dep))["spec"]["template"]["spec"]
+          env = pod["containers"][0].get("env", [])
+          # Every secret file the app is told to read must be projected by the Secret volume.
+          vols = [v for v in pod.get("volumes", []) if v["name"] == "secrets"]
+          items = {i["path"] for v in vols for i in v["secret"].get("items") or []}
+          for e in env:
+              if e["value"].startswith("/etc/open-pages/secrets/") and items:
+                  if os.path.basename(e["value"]) not in items:
+                      sys.exit(f"{e['name']} points at {e['value']}, which the Secret volume does not project")
           d = tempfile.mkdtemp()
           with open(envfile, "w") as out:
               for e in env:
@@ -316,6 +324,16 @@ jobs:
             echo "::error::rendering without config.appHost should fail"; exit 1
           fi
           grep -q 'config.appHost is required' err.txt
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.type=s3; then
+            echo "::error::storage.type=s3 without a bucket should be rejected"; exit 1
+          fi
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.s3.bucket=b; then
+            echo "::error::an s3 bucket with storage.type=local should be rejected"; exit 1
+          fi
+          if helm template ci "$CHART" "${base[@]}" --set config.storage.type=s3 \
+            --set config.storage.s3.bucket=b --set config.storage.s3.credentialsFromSecret=true; then
+            echo "::error::credentialsFromSecret without keys should be rejected"; exit 1
+          fi
 
   # Installs the chart on a kind cluster that enforces the Pod Security "restricted" level,
   # runs the pod as an arbitrary UID in group 0 (what OpenShift's restricted-v2 does), deploys
