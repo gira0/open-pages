@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -57,6 +58,12 @@ var (
 	// responseHeaderTimeout bounds the wait for the first byte of any response, including
 	// the reads that serve a file, which run under the visitor's request context only.
 	responseHeaderTimeout = 60 * time.Second
+	// readStallTimeout is how long a visitor's read may wait on the store for the next
+	// bytes. The whole body gets no deadline, because a slow visitor legitimately takes
+	// long and the server sets no WriteTimeout for the same reason; only the time spent
+	// waiting on the store counts, so a store that goes quiet mid-body cannot hold the
+	// request, and its connection, for ever.
+	readStallTimeout = 60 * time.Second
 )
 
 // S3 keeps sites in an object store:
@@ -486,7 +493,9 @@ func (r *s3Root) Open(name string) (File, error) {
 		return &s3Dir{name: "."}, nil
 	}
 	key := r.prefix + name
-	head, err := r.s.c.HeadObject(r.ctx, &s3.HeadObjectInput{Bucket: &r.s.bucket, Key: &key})
+	ctx, cancel := context.WithTimeout(r.ctx, metaTimeout)
+	defer cancel()
+	head, err := r.s.c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &r.s.bucket, Key: &key})
 	if err == nil {
 		return &s3File{r: r, key: key, name: path.Base(name), size: aws.ToInt64(head.ContentLength), mtime: aws.ToTime(head.LastModified)}, nil
 	}
@@ -494,7 +503,7 @@ func (r *s3Root) Open(name string) (File, error) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 	dirPrefix := key + "/"
-	out, err := r.s.c.ListObjectsV2(r.ctx, &s3.ListObjectsV2Input{Bucket: &r.s.bucket, Prefix: &dirPrefix, MaxKeys: aws.Int32(1)})
+	out, err := r.s.c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &r.s.bucket, Prefix: &dirPrefix, MaxKeys: aws.Int32(1)})
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
@@ -523,8 +532,11 @@ type s3File struct {
 	size  int64
 	mtime time.Time
 
-	pos  int64
-	body io.ReadCloser
+	pos    int64
+	body   io.ReadCloser
+	cancel context.CancelFunc // ends the GET that body belongs to
+	// stalled is set by the watchdog when it cancels a read that waited too long.
+	stalled atomic.Bool
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
@@ -535,17 +547,60 @@ func (f *s3File) Read(p []byte) (int, error) {
 	if f.pos >= f.size {
 		return 0, io.EOF
 	}
+	// The GET gets its own context so the watchdog can cancel it without touching the
+	// request's. The timer runs only while this call waits on the store.
 	if f.body == nil {
+		ctx, cancel := context.WithCancel(f.r.ctx)
+		f.cancel = cancel
+		f.stalled.Store(false)
+		stop := f.watch()
 		rng := fmt.Sprintf("bytes=%d-", f.pos)
-		out, err := f.r.s.c.GetObject(f.r.ctx, &s3.GetObjectInput{Bucket: &f.r.s.bucket, Key: &f.key, Range: &rng})
+		out, err := f.r.s.c.GetObject(ctx, &s3.GetObjectInput{Bucket: &f.r.s.bucket, Key: &f.key, Range: &rng})
+		stop()
 		if err != nil {
-			return 0, err
+			f.release()
+			return 0, f.readErr(err)
 		}
 		f.body = out.Body
 	}
+	stop := f.watch()
 	n, err := f.body.Read(p)
+	stop()
 	f.pos += int64(n)
+	if err != nil && err != io.EOF {
+		return n, f.readErr(err)
+	}
 	return n, err
+}
+
+// watch cancels the current GET if the returned stop function is not called within
+// readStallTimeout.
+func (f *s3File) watch() (stop func()) {
+	cancel := f.cancel
+	t := time.AfterFunc(readStallTimeout, func() {
+		f.stalled.Store(true)
+		cancel()
+	})
+	return func() { t.Stop() }
+}
+
+func (f *s3File) readErr(err error) error {
+	if f.stalled.Load() {
+		return fmt.Errorf("s3: no data from %s for %v: %w", f.key, readStallTimeout, os.ErrDeadlineExceeded)
+	}
+	return err
+}
+
+// release closes the body, if any, and ends the GET's context.
+func (f *s3File) release() {
+	if f.body != nil {
+		_ = f.body.Close()
+		f.body = nil
+	}
+	if f.cancel != nil {
+		f.cancel()
+		f.cancel = nil
+	}
 }
 
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
@@ -563,20 +618,23 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	if abs < 0 {
 		return 0, errors.New("negative position")
 	}
-	if abs != f.pos && f.body != nil {
-		_ = f.body.Close()
-		f.body = nil
+	if abs != f.pos {
+		f.release()
 	}
 	f.pos = abs
 	return abs, nil
 }
 
 func (f *s3File) Close() error {
-	if f.body == nil {
-		return nil
+	var err error
+	if f.body != nil {
+		err = f.body.Close()
+		f.body = nil
 	}
-	err := f.body.Close()
-	f.body = nil
+	if f.cancel != nil {
+		f.cancel()
+		f.cancel = nil
+	}
 	return err
 }
 
