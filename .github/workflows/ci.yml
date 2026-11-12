@@ -285,7 +285,15 @@ jobs:
           import os, sys, tempfile, yaml
           cm, dep, ini, envfile = sys.argv[1:]
           open(ini, "w").write(yaml.safe_load(open(cm))["data"]["settings.ini"])
-          env = yaml.safe_load(open(dep))["spec"]["template"]["spec"]["containers"][0].get("env", [])
+          pod = yaml.safe_load(open(dep))["spec"]["template"]["spec"]
+          env = pod["containers"][0].get("env", [])
+          # Every secret file the app is told to read must be projected by the Secret volume.
+          vols = [v for v in pod.get("volumes", []) if v["name"] == "secrets"]
+          items = {i["path"] for v in vols for i in v["secret"].get("items") or []}
+          for e in env:
+              if e["value"].startswith("/etc/open-pages/secrets/") and items:
+                  if os.path.basename(e["value"]) not in items:
+                      sys.exit(f"{e['name']} points at {e['value']}, which the Secret volume does not project")
           d = tempfile.mkdtemp()
           with open(envfile, "w") as out:
               for e in env:

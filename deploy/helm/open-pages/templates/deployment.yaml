@@ -162,6 +162,12 @@ spec:
               - key: {{ .Values.secrets.keys.samlCert }}
                 path: {{ .Values.secrets.keys.samlCert }}
               {{- end }}
+              {{- if include "open-pages.s3FromSecret" . }}
+              - key: {{ .Values.secrets.keys.s3AccessKey }}
+                path: {{ .Values.secrets.keys.s3AccessKey }}
+              - key: {{ .Values.secrets.keys.s3SecretKey }}
+                path: {{ .Values.secrets.keys.s3SecretKey }}
+              {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
