@@ -262,7 +262,7 @@ feed:
 		// marker left behind without its files would list a version that cannot be served,
 		// so remove the marker first, then the files.
 		if cerr := s.cleanupVersion(ctx, marker, prefix); cerr != nil {
-			return fmt.Errorf("write version marker: %w (cleanup: %v)", err, cerr)
+			return fmt.Errorf("write version marker: %w (cleanup: %w)", err, cerr)
 		}
 		return fmt.Errorf("write version marker: %w", err)
 	}
