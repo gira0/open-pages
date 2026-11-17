@@ -1,0 +1,11 @@
+# S3 on Amazon S3 with the AWS default credential chain (IAM role for the service account).
+config:
+  appHost: pages.example.com
+  contentDomain: pages-content.example.com
+  storage:
+    type: s3
+    s3:
+      bucket: open-pages
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/open-pages

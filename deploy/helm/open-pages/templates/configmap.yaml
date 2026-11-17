@@ -44,6 +44,20 @@ data:
     user_mb = {{ .Values.config.quotas.userMb }}
     sites_per_user = {{ .Values.config.quotas.sitesPerUser }}
 
+    [storage]
+    type = {{ .Values.config.storage.type }}
+    {{- with .Values.config.storage }}
+    {{- if eq .type "s3" }}
+    {{- with .s3 }}
+    s3_endpoint = {{ .endpoint }}
+    s3_region = {{ .region }}
+    s3_bucket = {{ .bucket }}
+    s3_prefix = {{ .prefix }}
+    s3_path_style = {{ .pathStyle }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+
     [log]
     level = {{ .Values.config.log.level }}
     format = {{ .Values.config.log.format }}
