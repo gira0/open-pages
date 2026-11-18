@@ -3,8 +3,11 @@ package storage_test
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,4 +73,55 @@ func ensureBucket(t *testing.T, cfg storage.S3Config) {
 		return
 	}
 	t.Fatalf("create bucket: %v", err)
+}
+
+// When the marker PUT reports failure but the store did apply it (a lost response), Publish
+// must leave neither the marker nor the files: a surviving marker would list a version whose
+// files were just deleted.
+func TestS3PublishMarkerLostResponse(t *testing.T) {
+	backend := s3mem.New()
+	if err := backend.CreateBucket("pages"); err != nil {
+		t.Fatal(err)
+	}
+	fake := gofakes3.New(backend).Server()
+	lose := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if lose && r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/_versions/") {
+			fake.ServeHTTP(httptest.NewRecorder(), r) // applied, but the answer never arrives
+			http.Error(w, "<Error><Code>AccessDenied</Code></Error>", http.StatusForbidden)
+			return
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	s, err := storage.NewS3(t.Context(), storage.S3Config{
+		Endpoint: srv.URL, Region: "us-east-1", Bucket: "pages", Prefix: "p", PathStyle: true,
+		AccessKey: "test", SecretKey: "test-secret", StagingDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staged, "index.html"), []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const version = "0123456789abcdefghij"
+	if err := s.Publish(t.Context(), "blog", version, staged); err == nil {
+		t.Fatal("Publish succeeded although the marker PUT failed")
+	}
+	c := s3.New(s3.Options{
+		Region: "us-east-1", BaseEndpoint: aws.String(srv.URL), UsePathStyle: true,
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test-secret", ""),
+	})
+	out, err := c.ListObjectsV2(t.Context(), &s3.ListObjectsV2Input{Bucket: aws.String("pages")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range out.Contents {
+		t.Errorf("left behind: %s", aws.ToString(o.Key))
+	}
+	if v, err := s.Versions(t.Context(), "blog"); err != nil || len(v) != 0 {
+		t.Errorf("Versions = %v, %v; want none", v, err)
+	}
 }
