@@ -35,7 +35,7 @@ func humanSize(n int64) string {
 // syncVersionSizes makes the site_version rows of site match the versions on disk and
 // returns the size of each version on disk. The caller holds deployMu.
 func (s *Server) syncVersionSizes(ctx context.Context, site Site) (map[string]int64, error) {
-	versions, err := s.Versions(site.Name)
+	versions, err := s.Versions(ctx, site.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -154,12 +154,12 @@ func (s *Server) checkQuota(ctx context.Context, site Site, size int64) error {
 		return nil
 	}
 	keep := max(s.cfg.KeepVersions, 1)
-	versions, err := s.Versions(site.Name)
+	versions, err := s.Versions(ctx, site.Name)
 	if err != nil {
 		return err
 	}
 	if len(versions) > keep {
-		if err := s.pruneVersions(site.Name); err != nil {
+		if err := s.pruneVersions(ctx, site.Name); err != nil {
 			ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 		}
 	}
@@ -167,7 +167,7 @@ func (s *Server) checkQuota(ctx context.Context, site Site, size int64) error {
 	if err != nil {
 		return err
 	}
-	if versions, err = s.Versions(site.Name); err != nil {
+	if versions, err = s.Versions(ctx, site.Name); err != nil {
 		return err
 	}
 	after := size

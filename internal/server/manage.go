@@ -102,7 +102,7 @@ func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you may not view this site")
 		return
 	}
-	current, err := s.CurrentVersion(site.Name)
+	current, err := s.CurrentVersion(r.Context(), site.Name)
 	if err != nil {
 		internalError(w, "read current version", err)
 		return
@@ -165,7 +165,7 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	versions, current, err := s.versionsAndCurrent(site.Name)
+	versions, current, err := s.versionsAndCurrent(r.Context(), site.Name)
 	if err != nil {
 		internalError(w, "list versions", err)
 		return

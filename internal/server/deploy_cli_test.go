@@ -63,7 +63,7 @@ func TestDeployCommand(t *testing.T) {
 	if string(got) != "<h1>v2</h1>" {
 		t.Fatalf("index = %q", got)
 	}
-	if versions, _ := s.Versions("blog"); len(versions) != 2 {
+	if versions, _ := s.Versions(t.Context(), "blog"); len(versions) != 2 {
 		t.Fatalf("got versions %v, want 2", versions)
 	}
 }
@@ -103,7 +103,7 @@ func TestDeployVisibility(t *testing.T) {
 	if got := visibility("blog"); got != visAuthenticated {
 		t.Fatalf("visibility = %q, want authenticated", got)
 	}
-	if versions, _ := s.Versions("blog"); len(versions) != 3 {
+	if versions, _ := s.Versions(t.Context(), "blog"); len(versions) != 3 {
 		t.Fatalf("got versions %v, want 3", versions)
 	}
 	// Without the flag, a new site is public as before.

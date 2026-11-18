@@ -59,11 +59,16 @@ var (
 	// the reads that serve a file, which run under the visitor's request context only.
 	responseHeaderTimeout = 60 * time.Second
 	// readStallTimeout is how long a visitor's read may wait on the store for the next
-	// bytes. The whole body gets no deadline, because a slow visitor legitimately takes
-	// long and the server sets no WriteTimeout for the same reason; only the time spent
-	// waiting on the store counts, so a store that goes quiet mid-body cannot hold the
-	// request, and its connection, for ever.
+	// bytes. Only the time spent waiting on the store counts, because a slow visitor
+	// legitimately takes long and the server sets no WriteTimeout for the same reason, so a
+	// store that goes quiet mid-body cannot hold the request, and its connection, for
+	// ever. readTotalTimeout is the separate cap on the whole body.
 	readStallTimeout = 60 * time.Second
+	// readTotalTimeout caps one GET from its first byte request to its last byte read,
+	// however steadily the bytes arrive: a store that trickles a body for ever, or a
+	// visitor that never finishes reading, still gives up the connection. It is generous,
+	// because a slow visitor reading a large file legitimately takes long.
+	readTotalTimeout = 15 * time.Minute
 )
 
 // S3 keeps sites in an object store:
@@ -453,9 +458,11 @@ func (s *S3) VersionSize(ctx context.Context, site, version string) (int64, erro
 }
 
 // DeleteVersion removes the marker first, so the version disappears from Versions before
-// its objects do, then the objects.
+// its objects do, then the objects. The two steps run detached from ctx's cancellation
+// (but bounded by bulkTimeout): stopping between them would leave files no marker names,
+// which nothing would ever prune or count.
 func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
-	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
 	defer cancel()
 	if !validS3Site(site) || !VersionRe.MatchString(version) {
 		return ErrInvalid
@@ -468,8 +475,9 @@ func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
 }
 
 // DeleteSite removes .current first, so the site stops being served, then everything.
+// Like DeleteVersion it is detached from ctx's cancellation so it cannot stop half-way.
 func (s *S3) DeleteSite(ctx context.Context, site string) error {
-	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
 	defer cancel()
 	if !validS3Site(site) {
 		return ErrInvalid
@@ -570,7 +578,7 @@ func (f *s3File) Read(p []byte) (int, error) {
 	// The GET gets its own context so the watchdog can cancel it without touching the
 	// request's. The timer runs only while this call waits on the store.
 	if f.body == nil {
-		ctx, cancel := context.WithCancel(f.r.ctx)
+		ctx, cancel := context.WithTimeout(f.r.ctx, readTotalTimeout)
 		f.cancel = cancel
 		f.stalled.Store(false)
 		stop := f.watch()
@@ -607,6 +615,9 @@ func (f *s3File) watch() (stop func()) {
 func (f *s3File) readErr(err error) error {
 	if f.stalled.Load() {
 		return fmt.Errorf("s3: no data from %s for %v: %w", f.key, readStallTimeout, os.ErrDeadlineExceeded)
+	}
+	if f.r.ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("s3: reading %s took longer than %v: %w", f.key, readTotalTimeout, os.ErrDeadlineExceeded)
 	}
 	return err
 }

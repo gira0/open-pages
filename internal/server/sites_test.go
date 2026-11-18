@@ -46,11 +46,11 @@ func TestConcurrentDeploysKeepOne(t *testing.T) {
 			t.Errorf("deploy %d: %v", i, err)
 		}
 	}
-	versions, err := s.Versions("blog")
+	versions, err := s.Versions(t.Context(), "blog")
 	if err != nil || len(versions) != 1 {
 		t.Fatalf("versions = %v, %v; want exactly 1", versions, err)
 	}
-	if cur, _ := s.CurrentVersion("blog"); cur != versions[0] {
+	if cur, _ := s.CurrentVersion(t.Context(), "blog"); cur != versions[0] {
 		t.Fatalf("current = %q, versions = %v", cur, versions)
 	}
 }
@@ -103,7 +103,7 @@ func TestUploadSiteChecks(t *testing.T) {
 	expectStatus(t, post(t, other, ts.URL+"/v1/user/login", "application/json", creds), http.StatusOK)
 	expectStatus(t, post(t, other, ts.URL+"/v1/auth/sites/blog/upload", "application/zip", zipBody), http.StatusForbidden)
 
-	if v, _ := s.Versions("blog"); len(v) != 0 {
+	if v, _ := s.Versions(t.Context(), "blog"); len(v) != 0 {
 		t.Fatalf("rejected uploads created versions %v", v)
 	}
 }
@@ -139,12 +139,12 @@ func TestDeployVersionsAndPrune(t *testing.T) {
 		if err != nil || string(got) != body {
 			t.Fatalf("after deploying %s, current = %q, %v", body, got, err)
 		}
-		if cur, _ := s.CurrentVersion("blog"); cur != v {
+		if cur, _ := s.CurrentVersion(t.Context(), "blog"); cur != v {
 			t.Fatalf("CurrentVersion = %q, want %q", cur, v)
 		}
 	}
 
-	versions, err := s.Versions("blog")
+	versions, err := s.Versions(t.Context(), "blog")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,31 +153,31 @@ func TestDeployVersionsAndPrune(t *testing.T) {
 	}
 
 	// Rolling back to a kept version works; a pruned or bogus one does not.
-	if err := s.SwitchCurrent("blog", made[2]); err != nil {
+	if err := s.SwitchCurrent(t.Context(), "blog", made[2]); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(s.CurrentDir("blog"), "index.html")); string(got) != "v3" {
 		t.Fatalf("after rollback current = %q", got)
 	}
 	for _, bad := range []string{made[0], "../../etc", ""} {
-		if err := s.SwitchCurrent("blog", bad); err == nil {
+		if err := s.SwitchCurrent(t.Context(), "blog", bad); err == nil {
 			t.Errorf("SwitchCurrent(%q) succeeded", bad)
 		}
 	}
 
 	// Pruning never removes the current version, even when it is the oldest.
-	if err := s.SwitchCurrent("blog", made[2]); err != nil {
+	if err := s.SwitchCurrent(t.Context(), "blog", made[2]); err != nil {
 		t.Fatal(err)
 	}
 	s.cfg.KeepVersions = 1
 	s.deployMu.Lock()
-	err = s.pruneVersions("blog")
+	err = s.pruneVersions(t.Context(), "blog")
 	s.deployMu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	versions, _ = s.Versions("blog")
-	if cur, _ := s.CurrentVersion("blog"); cur != made[2] || !strings.Contains(strings.Join(versions, ","), made[2]) {
+	versions, _ = s.Versions(t.Context(), "blog")
+	if cur, _ := s.CurrentVersion(t.Context(), "blog"); cur != made[2] || !strings.Contains(strings.Join(versions, ","), made[2]) {
 		t.Fatalf("pruning removed the current version: cur=%q versions=%v", cur, versions)
 	}
 }

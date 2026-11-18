@@ -187,7 +187,7 @@ func TestUploadFormats(t *testing.T) {
 	mw.Close()
 	expectStatus(t, post(t, c, ts.URL+"/v1/auth/sites/blog/formupload", mw.FormDataContentType(), body.Bytes()), http.StatusOK)
 
-	versions, err := s.Versions("blog")
+	versions, err := s.Versions(t.Context(), "blog")
 	if err != nil || len(versions) != 3 {
 		t.Fatalf("got versions %v, %v; want 3", versions, err)
 	}
@@ -226,7 +226,7 @@ func TestUploadRejectsBadArchives(t *testing.T) {
 		})
 	}
 
-	if versions, _ := s.Versions("blog"); len(versions) != 0 {
+	if versions, _ := s.Versions(t.Context(), "blog"); len(versions) != 0 {
 		t.Fatalf("rejected uploads left %v behind", versions)
 	}
 	if _, err := os.Lstat(s.CurrentDir("blog")); err == nil {
