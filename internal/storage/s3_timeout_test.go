@@ -2,17 +2,17 @@ package storage
 
 import (
 	"context"
-	"path/filepath"
-
 	"errors"
-	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 // A store that accepts the connection and never answers must fail the call at its deadline
