@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -63,19 +65,19 @@ func TestS3DeployRollbackDelete(t *testing.T) {
 	s.cfg.KeepVersions = 2
 	deploySite(t, s, "blog", map[string]string{"index.html": "one"})
 	site := mustSite(t, s, "blog")
-	v1, _ := s.CurrentVersion("blog")
+	v1, _ := s.CurrentVersion(t.Context(), "blog")
 	for _, body := range []string{"two", "three"} {
 		if _, err := s.deploy(t.Context(), site, writeZip(t, map[string]string{"index.html": body})); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if vs, _ := s.Versions("blog"); len(vs) != 2 || vs[0] == v1 {
+	if vs, _ := s.Versions(t.Context(), "blog"); len(vs) != 2 || vs[0] == v1 {
 		t.Fatalf("versions = %v, want the oldest pruned", vs)
 	}
 	if w := do(s, "GET", siteHost("blog"), "/"); w.Body.String() != "three" {
 		t.Fatalf("serving %q", w.Body.String())
 	}
-	vs, _ := s.Versions("blog")
+	vs, _ := s.Versions(t.Context(), "blog")
 	if err := s.rollbackSite(t.Context(), site, vs[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,7 @@ func TestS3DeployRollbackDelete(t *testing.T) {
 	if w := do(s, "GET", siteHost("blog"), "/"); w.Code == 200 || w.Body.String() == "two" {
 		t.Fatalf("deleted site still served: %d %q", w.Code, w.Body.String())
 	}
-	if vs, _ := s.Versions("blog"); len(vs) != 0 {
+	if vs, _ := s.Versions(t.Context(), "blog"); len(vs) != 0 {
 		t.Fatalf("versions after delete: %v", vs)
 	}
 }
@@ -97,5 +99,26 @@ func TestS3Readiness(t *testing.T) {
 	s := newS3TestServer(t)
 	if w := do(s, "GET", "", "/readyz"); w.Code != 200 {
 		t.Fatalf("/readyz = %d: %s", w.Code, w.Body)
+	}
+}
+
+// The version wrappers pass the caller's context to the store, so a cancelled request
+// stops its storage calls instead of running on under context.Background().
+func TestVersionWrappersHonourContext(t *testing.T) {
+	s := newS3TestServer(t)
+	deploySite(t, s, "blog", map[string]string{"index.html": "one"})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.Versions(ctx, "blog"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Versions on a cancelled context = %v, want context.Canceled", err)
+	}
+	if _, err := s.CurrentVersion(ctx, "blog"); !errors.Is(err, context.Canceled) {
+		t.Errorf("CurrentVersion on a cancelled context = %v, want context.Canceled", err)
+	}
+	if _, _, err := s.versionsAndCurrent(ctx, "blog"); !errors.Is(err, context.Canceled) {
+		t.Errorf("versionsAndCurrent on a cancelled context = %v, want context.Canceled", err)
+	}
+	if err := s.SwitchCurrent(ctx, "blog", "d0000000000000000000"); !errors.Is(err, context.Canceled) {
+		t.Errorf("SwitchCurrent on a cancelled context = %v, want context.Canceled", err)
 	}
 }

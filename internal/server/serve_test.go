@@ -324,7 +324,7 @@ func TestSiteFollowsCurrentVersion(t *testing.T) {
 	s := newServeTestServer(t, nil)
 	deploySite(t, s, "blog", map[string]string{"index.html": "v1"})
 	host := siteHost("blog")
-	old, _ := s.CurrentVersion("blog")
+	old, _ := s.CurrentVersion(t.Context(), "blog")
 	tag1 := do(s, "GET", host, "/").Header().Get("ETag")
 
 	if _, err := deployNamed(t, s, "blog", writeZip(t, map[string]string{"index.html": "v2"})); err != nil {
@@ -334,7 +334,7 @@ func TestSiteFollowsCurrentVersion(t *testing.T) {
 	if w.Code != 200 || w.Body.String() != "v2" {
 		t.Fatalf("after deploy: %d %q", w.Code, w.Body)
 	}
-	if err := s.SwitchCurrent("blog", old); err != nil {
+	if err := s.SwitchCurrent(t.Context(), "blog", old); err != nil {
 		t.Fatal(err)
 	}
 	if got := do(s, "GET", host, "/").Body.String(); got != "v1" {

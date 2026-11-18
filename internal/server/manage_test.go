@@ -126,7 +126,7 @@ func TestDeleteSite(t *testing.T) {
 
 	// The name can be reused and starts empty.
 	createSiteVia(t, ts, c, "wiki")
-	if v, _ := s.Versions("wiki"); len(v) != 0 {
+	if v, _ := s.Versions(t.Context(), "wiki"); len(v) != 0 {
 		t.Fatalf("recreated site has versions %v", v)
 	}
 }
@@ -164,7 +164,7 @@ func TestOwnerOnlyMutations(t *testing.T) {
 	if err != nil || site.Description != "" {
 		t.Fatalf("site after rejected requests: %+v, %v", site, err)
 	}
-	if cur, _ := s.CurrentVersion("blog"); cur == v1 {
+	if cur, _ := s.CurrentVersion(t.Context(), "blog"); cur == v1 {
 		t.Fatal("non-owner rolled the site back")
 	}
 }

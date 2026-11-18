@@ -58,10 +58,10 @@ func TestSiteQuota(t *testing.T) {
 		t.Fatalf("deploy over quota = %v, want a site *quotaError naming the numbers", err)
 	}
 	noStaging(t, s)
-	if cur, _ := s.CurrentVersion("blog"); cur != v1 {
+	if cur, _ := s.CurrentVersion(t.Context(), "blog"); cur != v1 {
 		t.Fatalf("rejected deploy changed current to %q", cur)
 	}
-	if vs, _ := s.Versions("blog"); len(vs) != 1 {
+	if vs, _ := s.Versions(t.Context(), "blog"); len(vs) != 1 {
 		t.Fatalf("rejected deploy left versions %v", vs)
 	}
 	// A deploy that fits is accepted, up to exactly the limit.
@@ -83,7 +83,7 @@ func TestSiteQuotaCountsPrunedState(t *testing.T) {
 	if got := dbBytes(t, s); got != 1000 {
 		t.Fatalf("usage after replacing = %d, want 1000", got)
 	}
-	vs, _ := s.Versions("blog")
+	vs, _ := s.Versions(t.Context(), "blog")
 	if len(vs) != 2 {
 		t.Fatalf("versions = %v, want 2", vs)
 	}
@@ -403,7 +403,7 @@ func TestQuotaDoesNotCreditUndeletableVersion(t *testing.T) {
 
 	// 600 + 400 fits only by crediting v1, whose removal then fails.
 	deployFiles(t, s, payload(400))
-	if vs, _ := s.Versions("blog"); len(vs) != 2 {
+	if vs, _ := s.Versions(t.Context(), "blog"); len(vs) != 2 {
 		t.Fatalf("versions = %v, want the stuck one kept", vs)
 	}
 	if _, err := s.deploy(t.Context(), mustSite(t, s, "blog"), writeZip(t, payload(400))); err == nil {
@@ -413,7 +413,7 @@ func TestQuotaDoesNotCreditUndeletableVersion(t *testing.T) {
 
 	s.local.RemoveAll = orig
 	deployFiles(t, s, payload(400))
-	if vs, _ := s.Versions("blog"); len(vs) != 1 {
+	if vs, _ := s.Versions(t.Context(), "blog"); len(vs) != 1 {
 		t.Fatalf("versions after the delete works again = %v", vs)
 	}
 }
