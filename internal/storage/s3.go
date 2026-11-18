@@ -262,45 +262,35 @@ feed:
 		s.cleanup(ctx, prefix)
 		return firstErr
 	}
-	if err := s.putMarker(ctx, site, version, total); err != nil {
-		s.abandon(ctx, site, version, prefix)
+	marker := s.markerKey(site, version)
+	mctx, mcancel := context.WithTimeout(ctx, metaTimeout)
+	defer mcancel()
+	_, err = s.c.PutObject(mctx, &s3.PutObjectInput{
+		Bucket: &s.bucket, Key: &marker, Body: strings.NewReader(strconv.FormatInt(total, 10)),
+	})
+	if err != nil {
+		// A failed PUT does not mean the marker is absent: the store may have written it and
+		// lost the response, or timed out while the request was still being applied. A
+		// marker left behind without its files would list a version that cannot be served,
+		// so remove the marker first, then the files.
+		if cerr := s.cleanupVersion(ctx, marker, prefix); cerr != nil {
+			return fmt.Errorf("write version marker: %w (cleanup: %w)", err, cerr)
+		}
 		return fmt.Errorf("write version marker: %w", err)
 	}
 	return nil
 }
 
-// putMarker writes the marker. A PUT that fails may still have landed (the response, not
-// the request, was lost), so before giving up it reads the marker back: one that holds
-// the expected size means the version is published and the deploy has not failed. The
-// read-back is detached from ctx, which may be the reason the PUT failed.
-func (s *S3) putMarker(ctx context.Context, site, version string, total int64) error {
-	marker := s.markerKey(site, version)
-	_, err := s.c.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &s.bucket, Key: &marker, Body: strings.NewReader(strconv.FormatInt(total, 10)),
-	})
-	if err == nil {
-		return nil
-	}
-	if n, verr := s.VersionSize(context.WithoutCancel(ctx), site, version); verr == nil && n == total {
-		return nil
-	}
-	return err
-}
-
-// abandon undoes a publish that failed at the marker. The marker goes first, so the version
-// leaves Versions before its files do, as in DeleteVersion: a lost PUT response may have
-// left the marker behind, and a marker without files would be a version that cannot be
-// served. If the marker cannot be removed the files stay, so whatever the marker names
-// is still whole, and a later prune or delete cleans up both.
-func (s *S3) abandon(ctx context.Context, site, version, prefix string) {
-	ctx = context.WithoutCancel(ctx)
-	mctx, cancel := context.WithTimeout(ctx, metaTimeout)
+// cleanupVersion removes a version whose marker PUT failed. If the marker cannot be
+// removed, the files stay: a surviving marker then points at complete files, which is a
+// version nobody asked for, and not a broken one.
+func (s *S3) cleanupVersion(ctx context.Context, marker, prefix string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
 	defer cancel()
-	marker := s.markerKey(site, version)
-	if _, err := s.c.DeleteObject(mctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &marker}); err != nil && !isNotFound(err) {
-		return
+	if _, err := s.c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &marker}); err != nil && !isNotFound(err) {
+		return fmt.Errorf("delete marker: %w", err)
 	}
-	s.cleanup(ctx, prefix)
+	return s.deletePrefix(ctx, prefix)
 }
 
 // cleanup removes the objects of a failed publish. The caller's context may be the reason
