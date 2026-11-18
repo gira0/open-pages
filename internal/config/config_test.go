@@ -466,3 +466,41 @@ func TestS3SecretFromFile(t *testing.T) {
 		t.Fatalf("secret = %q", cfg.Storage.S3.SecretKey)
 	}
 }
+
+func TestLoadCustomDomains(t *testing.T) {
+	cfg, err := Load(writeRawConfig(t, validSites+"custom_domains = true\ncustom_domain_suffixes = Corp.Example., docs.example , corp.example\ncustom_domains_per_site = 3\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd := cfg.CustomDomains
+	if !cd.Enabled || cd.PerSite != 3 || len(cd.AllowedSuffixes) != 2 || cd.AllowedSuffixes[0] != "corp.example" || cd.AllowedSuffixes[1] != "docs.example" {
+		t.Errorf("CustomDomains = %+v", cd)
+	}
+	cfg, err = Load(writeRawConfig(t, validSites))
+	if err != nil || cfg.CustomDomains.Enabled {
+		t.Errorf("default: enabled=%v err=%v, want off", cfg.CustomDomains.Enabled, err)
+	}
+	// Under the app host is fine for a suffix only if it is not the app host's own tree.
+	if _, err := Load(writeRawConfig(t, validSites+"custom_domains = true\ncustom_domain_suffixes = corp\n")); err != nil {
+		t.Errorf("a one-label suffix such as corp is allowed: %v", err)
+	}
+}
+
+func TestLoadCustomDomainsErrors(t *testing.T) {
+	for name, tc := range map[string]struct{ body, want string }{
+		"no suffixes":       {"custom_domains = true\n", "custom_domain_suffixes"},
+		"suffix is app":     {"custom_domains = true\ncustom_domain_suffixes = pages.corp\n", "app_host"},
+		"under app host":    {"custom_domains = true\ncustom_domain_suffixes = x.pages.corp\n", "app_host"},
+		"under content":     {"custom_domains = true\ncustom_domain_suffixes = a.pages-content.corp\n", "content_domain"},
+		"bad suffix":        {"custom_domains = true\ncustom_domain_suffixes = *.corp\n", "bare domain"},
+		"not a bool":        {"custom_domains = yes please\n", "custom_domains"},
+		"suffix while off":  {"custom_domain_suffixes = corp.example\n", "custom_domains = true"},
+		"per site too high": {"custom_domains = true\ncustom_domain_suffixes = corp.example\ncustom_domains_per_site = 1000\n", "custom_domains_per_site"},
+		"per site zero":     {"custom_domains = true\ncustom_domain_suffixes = corp.example\ncustom_domains_per_site = 0\n", "custom_domains_per_site"},
+	} {
+		_, err := Load(writeRawConfig(t, validSites+tc.body))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", name, err, tc.want)
+		}
+	}
+}

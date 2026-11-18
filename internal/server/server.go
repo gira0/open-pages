@@ -118,6 +118,11 @@ func (s *Server) routeTable() []route {
 	handle("POST /v1/auth/sites/{name}/rollback", s.requireAuth(requireJSON(s.handleRollback)))
 	handle("POST /v1/auth/sites/{name}/upload", s.requireAuth(s.handleRawUpload))
 	handle("POST /v1/auth/sites/{name}/formupload", s.requireAuth(s.handleFormUpload))
+	if s.cfg.CustomDomains.Enabled {
+		handle("GET /v1/auth/sites/{name}/domains", s.requireAuth(s.handleDomainList))
+		handle("PUT /v1/auth/sites/{name}/domains/{domain}", s.requireAuth(s.handleDomainAdd))
+		handle("DELETE /v1/auth/sites/{name}/domains/{domain}", s.requireAuth(s.handleDomainRemove))
+	}
 	return rt
 }
 

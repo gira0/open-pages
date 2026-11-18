@@ -120,6 +120,14 @@ func (s *Server) handleSiteGet(w http.ResponseWriter, r *http.Request) {
 	if site.ExpiresAt != 0 {
 		resp["expires_at"] = time.Unix(site.ExpiresAt, 0).UTC().Format(time.RFC3339)
 	}
+	if s.cfg.CustomDomains.Enabled {
+		domains, err := s.listDomains(r.Context(), site.ID)
+		if err != nil {
+			internalError(w, "list domains", err)
+			return
+		}
+		resp["domains"] = domains
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

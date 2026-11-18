@@ -20,7 +20,7 @@ func TestManagePage(t *testing.T) {
 	for _, want := range []string{
 		`id="manage"`,
 		`data-site-origin="http://{site}.` + s.cfg.ContentDomain, // placeholder survives escaping
-		`id="create-form"`, `id="settings-form"`, `id="deploy-form"`, `id="versions-table"`, `id="delete-site"`,
+		`id="create-form"`, `id="domains-section"`, `id="settings-form"`, `id="deploy-form"`, `id="versions-table"`, `id="delete-site"`,
 		`href="/manage" class="pf-v6-c-nav__link pf-m-current"`,
 	} {
 		if !strings.Contains(body, want) {

@@ -23,7 +23,18 @@ type loginEnv struct {
 
 func newLoginEnv(t *testing.T, secure bool) *loginEnv {
 	t.Helper()
-	s := newServeTestServer(t, func(c *config.Config) { c.CookieSecure = secure })
+	return newLoginEnvWith(t, secure, nil)
+}
+
+// newLoginEnvWith is newLoginEnv with further changes to the configuration.
+func newLoginEnvWith(t *testing.T, secure bool, mutate func(*config.Config)) *loginEnv {
+	t.Helper()
+	s := newServeTestServer(t, func(c *config.Config) {
+		c.CookieSecure = secure
+		if mutate != nil {
+			mutate(c)
+		}
+	})
 	e := &loginEnv{s: s, sess: map[int64]string{}, secure: secure}
 	ctx := t.Context()
 	add := func(email string) int64 {

@@ -1314,6 +1314,138 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/auth/sites/{name}/domains:
+    get:
+      tags: [sites]
+      operationId: listSiteDomains
+      summary: List the custom domains of a site
+      description: |
+        Owner only. Registered only when `[sites] custom_domains = true`; otherwise the
+        route does not exist and answers `404`. Also returns which domains may be added
+        and how many a site may have.
+      parameters:
+        - $ref: "#/components/parameters/SiteName"
+      responses:
+        "200":
+          description: The site's domains, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site, domains, allowed_suffixes, limit]
+                properties:
+                  site:
+                    $ref: "#/components/schemas/SiteName"
+                  domains:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CustomDomain"
+                  allowed_suffixes:
+                    description: A domain must be a subdomain of one of these (`custom_domain_suffixes`).
+                    type: array
+                    items:
+                      type: string
+                  limit:
+                    description: Most domains one site may have (`custom_domains_per_site`).
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotSiteOwner"
+        "404":
+          $ref: "#/components/responses/SiteNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/sites/{name}/domains/{domain}:
+    put:
+      tags: [sites]
+      operationId: addSiteDomain
+      summary: Attach a custom domain to a site
+      description: |
+        Owner only. Registered only when `[sites] custom_domains = true`. The domain is
+        lowercased and a trailing dot is dropped. It must be a subdomain of one of the
+        configured `custom_domain_suffixes` and must not belong to the app host or the
+        content domain. Adding a domain the site already has is a no-op (`200`). The
+        reverse proxy still has to route the host to open-pages and terminate TLS for it;
+        see docs/custom-domains.md.
+      parameters:
+        - $ref: "#/components/parameters/SiteName"
+        - $ref: "#/components/parameters/Domain"
+      responses:
+        "200":
+          description: The site already had the domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteDomain"
+        "201":
+          description: Domain attached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteDomain"
+        "400":
+          description: Not a valid domain, outside the allowed suffixes, or one of open-pages' own hosts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: "`you do not own this site`, or the site has the most custom domains it may have."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/SiteNotFound"
+        "409":
+          description: "`that domain is already used by another site`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [sites]
+      operationId: removeSiteDomain
+      summary: Detach a custom domain from a site
+      description: Owner only. Registered only when `[sites] custom_domains = true`.
+      parameters:
+        - $ref: "#/components/parameters/SiteName"
+        - $ref: "#/components/parameters/Domain"
+      responses:
+        "200":
+          description: Domain detached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, site, domain]
+                properties:
+                  status:
+                    type: string
+                    const: domain removed
+                  site:
+                    $ref: "#/components/schemas/SiteName"
+                  domain:
+                    $ref: "#/components/schemas/CustomDomain"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotSiteOwner"
+        "404":
+          description: "`site not found`, or `the site has no such custom domain`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/auth/sites/{name}/audit:
     get:
       tags: [sites]
@@ -1549,6 +1681,13 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/SiteName"
+    Domain:
+      name: domain
+      in: path
+      required: true
+      description: A custom domain, for example `handbook.corp.example.com`.
+      schema:
+        $ref: "#/components/schemas/CustomDomain"
     AuditLimit:
       name: limit
       in: query
@@ -1797,6 +1936,20 @@ components:
           description: Bytes held by the kept versions of the site.
           type: integer
           format: int64
+    CustomDomain:
+      description: |
+        A lowercase host name of at least two DNS labels, at most 253 characters, without port,
+        trailing dot or IP address, and without `xn--` labels.
+      type: string
+      maxLength: 253
+    SiteDomain:
+      type: object
+      required: [site, domain]
+      properties:
+        site:
+          $ref: "#/components/schemas/SiteName"
+        domain:
+          $ref: "#/components/schemas/CustomDomain"
     Site:
       type: object
       required: [name, description, owner_id, group, visibility, current, bytes, quota_bytes]
@@ -1828,6 +1981,11 @@ components:
         expires_at:
           description: When the site will be deleted (RFC 3339). Absent for a site that does not expire.
           type: string
+        domains:
+          description: Custom domains of the site. Present only when `custom_domains` is enabled.
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomDomain"
           format: date-time
     SiteName:
       description: |
@@ -1884,6 +2042,8 @@ components:
             - site.deploy
             - site.rollback
             - site.delete
+            - site.domain_add
+            - site.domain_remove
             - group.create
             - group.delete
             - group.member_add
@@ -1901,7 +2061,7 @@ components:
             Small object. `version` for deploy and rollback; `changes` (field to
             `{from, to}`) for update; `description`, `group` and `visibility` for site create;
             `email` for member add; `user_id` and `email` for member removal; `token_id`,
-            `prefix` and `expires_in_days` for token create; `token_id` and `prefix` for revoke.
+            `prefix` and `expires_in_days` for token create; `domain` for domain add and remove; `token_id` and `prefix` for revoke.
           type: object
           additionalProperties: true
         client_ip:

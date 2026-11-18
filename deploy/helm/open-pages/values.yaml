@@ -81,6 +81,15 @@ config:
   sites:
     # Versions kept per site (they all count against the volume).
     keepVersions: 5
+    # Let sites answer to host names of their own as well (docs/custom-domains.md). The chart
+    # does not create routes for them: add an Ingress or Route per domain yourself, and a
+    # certificate for each. A custom domain must be a strict subdomain of one of the suffixes.
+    customDomains:
+      enabled: false
+      # REQUIRED when enabled, for example ["corp.example"].
+      suffixes: []
+      # Most custom domains one site may have (1 to 100).
+      perSite: 5
   quotas:
     # MiB of extracted files per site, over all kept versions. 0 is unlimited.
     siteMb: 0

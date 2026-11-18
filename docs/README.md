@@ -9,6 +9,7 @@ known limits.
 | [getting-started.md](getting-started.md) | Install, configure (every settings key), run in a container, monitor, deploy from the CLI or CI, back up |
 | [openshift.md](openshift.md) | OpenShift specifics: `restricted-v2` SCC, Routes and the wildcard Route, router settings, certificates, troubleshooting |
 | [kubernetes.md](kubernetes.md) | Install the Helm chart on Kubernetes or OpenShift: single replica and volume, wildcard DNS and TLS, secrets, NetworkPolicy |
+| [custom-domains.md](custom-domains.md) | Serve a site at a host name of its own behind your reverse proxy: settings, rules, API and CLI, security, nginx, Traefik, Ingress and OpenShift Route examples |
 | [storage.md](storage.md) | Keep site files on the local volume or in an S3-compatible bucket: settings, layout, consistency, compatible servers |
 | [api.md](api.md) | Look up a route: method, auth, request and response, status codes, `curl` example |
 | [`api/openapi.yaml`](../api/openapi.yaml) | Feed the API to tools: OpenAPI 3.1, also served at `/v1/openapi.yaml` |

@@ -76,6 +76,17 @@ address. Entries are snapshots: they stay after the user, site or group is delet
   fails with 500. For the other actions the failure is logged and the `audit` line is still
   emitted. An `audit` line is only logged after the change has been committed.
 
+## Custom domains
+
+With `[sites] custom_domains = true` a site can also be served at host names its owner
+attaches ([custom-domains.md](custom-domains.md)). They are additional **content hosts**, not
+app hosts: read-only, no API, no UI, and host-only cookies, so every domain is an origin of
+its own and the app session cookie never reaches one. Which names may be claimed is limited by
+the operator's `custom_domain_suffixes`; the app host, the content domain and anything under
+them are refused. The `Host` header is the only input that selects a site (`X-Forwarded-Host`
+is ignored), and the browser login hand-off only returns to a domain registered for the site
+being opened. TLS for these names stays with your reverse proxy.
+
 ## What the deployment must provide
 
 - **A separate content domain, ideally a separate registrable domain.** Use something like

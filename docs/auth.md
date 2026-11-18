@@ -378,6 +378,12 @@ host never sees the app session:
    to `return`. Both redirects carry `Referrer-Policy: no-referrer` and `Cache-Control:
    no-store`; a failed redeem is a plain `404`.
 
+On a site's [custom domain](custom-domains.md) the same flow runs with one addition: step 1
+adds `host=<the custom domain>` to the `site-login` URL, and step 2 sends the code to that host
+instead of `<site>.<content_domain>`, but only if the domain is registered for that very site
+(any other `host` is the same plain `404`). The cookies are host-only, so each domain has its
+own state and site cookies.
+
 The site cookie is `site_session` (`__Host-site_session` with `cookie_secure`): `HttpOnly`,
 `SameSite=Lax`, `Path=/`, host-only, `Secure` with `cookie_secure`. Its value is a random
 256-bit token unrelated to the app session; the `site_session` table keeps only its hash, the

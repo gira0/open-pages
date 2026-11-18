@@ -114,6 +114,18 @@ CREATE TABLE IF NOT EXISTS docs (
 	FOREIGN KEY (ugroup) REFERENCES groups(groupid)
 );
 
+-- Custom domains: host names, such as handbook.corp, that a reverse proxy routes to a site.
+-- A domain belongs to at most one site and goes away with it.
+CREATE TABLE IF NOT EXISTS site_domain (
+	domainid INTEGER PRIMARY KEY,
+	siteid   INTEGER NOT NULL,
+	domain   VARCHAR(253) NOT NULL UNIQUE,
+	created  BIGINT NOT NULL,
+	FOREIGN KEY (siteid) REFERENCES docs(docid) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS site_domain_site ON site_domain (siteid);
+
 -- The size in bytes of each version kept on disk, for the quotas. Rows follow the
 -- directories under op_data and are filled in lazily for versions that predate the table.
 CREATE TABLE IF NOT EXISTS site_version (
