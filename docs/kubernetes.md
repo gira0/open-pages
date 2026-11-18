@@ -188,6 +188,29 @@ asks for separate registrable domains, which a name under the cluster domain is 
 `httpRoute.enabled` renders an `HTTPRoute` with both hostnames; set `httpRoute.parentRefs`
 to your Gateway and make its listener accept both names.
 
+## Custom domains
+
+A site can answer to host names of its own (`handbook.corp.example`) in addition to
+`<site>.<contentDomain>`; see [custom-domains.md](custom-domains.md). Turn it on in the chart:
+
+```sh
+helm upgrade --install open-pages deploy/helm/open-pages -n open-pages \
+  --set config.sites.customDomains.enabled=true \
+  --set 'config.sites.customDomains.suffixes={corp.example}'
+```
+
+`suffixes` is required when enabled: a custom domain must be a strict subdomain of one of them.
+The chart renders `custom_domains*` into `settings.ini` and creates **no** routing for the
+domains, because open-pages does not terminate TLS for them and the names are chosen by site
+owners at run time. For each domain add an Ingress, an OpenShift Route or an `HTTPRoute`
+(`parentRefs` and a listener for the name) that sends the host to the chart's Service, with a
+certificate for it. Examples for nginx, Traefik, an Ingress and a Route are in
+[custom-domains.md](custom-domains.md#reverse-proxy-examples). The proxy must keep the original
+`Host` header (ingress-nginx and the OpenShift router do), and `config.trustedProxies` must list
+it for `X-Forwarded-Proto`, or `cookieSecure` (the default) makes redirects use `https`.
+
+If `networkPolicy.enabled` is on, nothing changes: the proxy already reaches the Service.
+
 ## Secrets
 
 OIDC client secret, metrics token and the SAML signing key are never written to the ConfigMap.

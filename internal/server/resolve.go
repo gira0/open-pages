@@ -30,7 +30,8 @@ func (s *Server) siteFromHost(host string) (site string, ok bool) {
 
 // dispatch sends a request to the part of the server its host belongs to:
 //   - app_host: the API, the UI and static assets, never site content;
-//   - <site>.<content_domain>: that site, read-only, and nothing else;
+//   - <site>.<content_domain>, or a custom domain mapped to a site: that site, read-only, and
+//     nothing else;
 //   - any other host: only GET and HEAD of /livez, /readyz and /healthz, so probes by IP or localhost keep working;
 //     everything else is a 404 and a stray Host header never reaches the API.
 func (s *Server) dispatch(app, probes http.Handler) http.Handler {
@@ -40,7 +41,11 @@ func (s *Server) dispatch(app, probes http.Handler) http.Handler {
 			app.ServeHTTP(w, r)
 			return
 		}
-		if site, ok := s.siteFromHost(host); ok {
+		site, ok := s.siteFromHost(host)
+		if !ok {
+			site, ok = s.siteFromCustomHost(r, host)
+		}
+		if ok {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

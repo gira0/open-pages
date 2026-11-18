@@ -307,9 +307,11 @@ func zipDir(w io.Writer, dir string) error {
 // reply is the part of an API response the CLI cares about.
 type reply struct {
 	status     int
-	Error      string `json:"error"`
-	Version    string `json:"version"`
-	Visibility string `json:"visibility"`
+	Error      string   `json:"error"`
+	Version    string   `json:"version"`
+	Visibility string   `json:"visibility"`
+	Domains    []string `json:"domains"`
+	Suffixes   []string `json:"allowed_suffixes"`
 }
 
 func (r reply) failure(what string) error {

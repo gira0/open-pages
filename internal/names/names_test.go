@@ -111,3 +111,20 @@ func TestReservedLDHAndPreviewBase(t *testing.T) {
 		}
 	}
 }
+
+func TestValidDomain(t *testing.T) {
+	for _, d := range []string{"handbook.corp", "a.b.corp.example", "x-y.corp1.example", strings.Repeat("a", 63) + ".corp"} {
+		if !ValidDomain(d) {
+			t.Errorf("ValidDomain(%q) = false, want true", d)
+		}
+	}
+	for _, d := range []string{
+		"", "corp", "localhost", "Handbook.corp", "handbook.corp.", ".corp", "a..corp", "-a.corp", "a-.corp",
+		"a.corp:8080", "a.corp/x", "a_b.corp", "10.0.0.1", "1.2.3.4.5", "xn--80ak6aa92e.corp", "ab--cd.corp",
+		strings.Repeat("a", 64) + ".corp", strings.Repeat("a.", 130) + "corp", "[::1]",
+	} {
+		if ValidDomain(d) {
+			t.Errorf("ValidDomain(%q) = true, want false", d)
+		}
+	}
+}

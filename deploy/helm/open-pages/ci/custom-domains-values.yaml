@@ -1,0 +1,8 @@
+config:
+  appHost: pages.corp.example
+  contentDomain: pages-content.corp.example
+  sites:
+    customDomains:
+      enabled: true
+      suffixes: [corp.example]
+      perSite: 3

@@ -502,6 +502,49 @@
         }
       });
     }
+    // Custom domains exist only when the server has them enabled: the routes are then
+    // missing and the section stays hidden.
+    function renderDomains(d) {
+      $('domains-section').hidden = false;
+      $('domains-help').textContent = 'A domain must end in ' + d.allowed_suffixes.join(' or ') +
+        '. A site may have up to ' + d.limit + ' domains.';
+      var body = $('domains-body');
+      body.replaceChildren();
+      $('domains-table').hidden = d.domains.length === 0;
+      d.domains.forEach(function (name) {
+        var tr = el('tr', {'class': 'pf-v6-c-table__tr'});
+        var td = el('td', {'class': 'pf-v6-c-table__td', 'data-label': 'Domain'});
+        td.appendChild(el('span', {}, name));
+        var actions = el('td', {'class': 'pf-v6-c-table__td pf-m-actions'});
+        actions.appendChild(buttonEl('Remove', 'pf-m-secondary pf-m-danger pf-m-small', function () { removeDomain(name); }));
+        tr.appendChild(td);
+        tr.appendChild(actions);
+        body.appendChild(tr);
+      });
+    }
+    async function loadDomains() {
+      var r = await callAPI('GET', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/domains');
+      if (r.ok) { $('domains-result').replaceChildren(); renderDomains(r.data); return true; }
+      if (r.status !== 404) { showAlert($('domains-result'), 'danger', 'Could not load the custom domains.', r.error); }
+      return false;
+    }
+    async function removeDomain(name) {
+      if (!confirm('Stop serving ' + siteName + ' at ' + name + '?')) { return; }
+      var r = await callAPI('DELETE', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/domains/' + encodeURIComponent(name));
+      if (!r.ok) { showAlert($('domains-result'), 'danger', 'Could not remove the domain.', r.error); return; }
+      if (await loadDomains()) { showAlert($('domains-result'), 'success', 'Domain removed.', name); }
+    }
+    function setupDomains() {
+      var form = $('domain-form');
+      form.addEventListener('submit', async function (evt) {
+        evt.preventDefault();
+        var name = form.elements.domain.value.trim().toLowerCase();
+        var r = await callAPI('PUT', '/v1/auth/sites/' + encodeURIComponent(siteName) + '/domains/' + encodeURIComponent(name));
+        if (!r.ok) { showAlert($('domains-result'), 'danger', 'Could not add the domain.', r.error); return; }
+        form.reset();
+        if (await loadDomains()) { showAlert($('domains-result'), 'success', 'Domain added.', 'Make sure the reverse proxy routes ' + name + ' to open-pages.'); }
+      });
+    }
     function setupDelete() {
       $('delete-site').addEventListener('click', async function () {
         if (!confirm('Delete ' + siteName + ' and all of its versions? This cannot be undone.')) { return; }
@@ -530,12 +573,14 @@
       renderSettings(r.data);
       show('manage-detail');
       loadVersions();
+      loadDomains();
     }
 
     (async function () {
       setupCreate();
       setupDeploy();
       setupSettings();
+      setupDomains();
       setupDelete();
       if (!await loadUser()) { return; }
       if (siteName) { await showSite(); } else { renderList(); show('manage-list'); }

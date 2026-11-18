@@ -32,6 +32,14 @@ data:
     keep_versions = {{ .Values.config.sites.keepVersions }}
     app_host = {{ include "open-pages.appHost" . }}
     content_domain = {{ include "open-pages.contentDomain" . }}
+    {{- with .Values.config.sites.customDomains }}
+    {{- if .enabled }}
+    {{- if not .suffixes }}{{ fail "config.sites.customDomains.suffixes is required when customDomains.enabled is true, for example [corp.example]" }}{{ end }}
+    custom_domains = true
+    custom_domain_suffixes = {{ join "," .suffixes }}
+    custom_domains_per_site = {{ .perSite }}
+    {{- end }}
+    {{- end }}
 
     [auth]
     local_login = {{ .Values.config.auth.localLogin }}

@@ -101,6 +101,9 @@ file written by the login call, and `$OPEN_PAGES_TOKEN` holds an API token.
 | GET | `/v1/auth/sites/{name}/versions` | any | List kept versions |
 | POST | `/v1/auth/sites/{name}/rollback` | any | Make a version live |
 | GET | `/v1/auth/sites/{name}/audit` | any | Audit log of a site (owner only) |
+| GET | `/v1/auth/sites/{name}/domains` | any | List a site's custom domains (owner only; optional) |
+| PUT | `/v1/auth/sites/{name}/domains/{domain}` | any | Attach a custom domain (owner only; optional) |
+| DELETE | `/v1/auth/sites/{name}/domains/{domain}` | any | Detach a custom domain (owner only; optional) |
 | POST | `/v1/auth/sites/{name}/upload` | any | Deploy an archive (raw body) |
 | POST | `/v1/auth/sites/{name}/formupload` | any | Deploy an archive (multipart) |
 | GET, HEAD | `<site>.<content_domain>/...` | per visibility | Serve a site (content hosts only, never on `app_host`) |
@@ -272,11 +275,13 @@ Auth: session cookie (without one it redirects to `/index?next=...` to sign in).
 the browser login for `authenticated` and `restricted` sites; the whole flow is described in
 [auth.md](auth.md#signing-in-to-a-site). Query parameters: `site` (required), `state`
 (required, 64 lowercase hex characters) and `return` (a path on the site, starting with a
-single `/`, at most 2048 bytes; anything else becomes `/`).
+single `/`, at most 2048 bytes; anything else becomes `/`) and, for a site served at one of its
+[custom domains](custom-domains.md), `host` (that domain: the code is sent back to it. Any host
+that is not a registered custom domain of that very site is a `404`).
 
 | Status | Meaning |
 |---|---|
-| 302 | To `<site>.<content_domain>/__open-pages/auth?code=...` (`Referrer-Policy: no-referrer`), or to `/index?next=...` without a session |
+| 302 | To `<site>.<content_domain>/__open-pages/auth?code=...` (or the custom domain) (`Referrer-Policy: no-referrer`), or to `/index?next=...` without a session |
 | 400 | `{"error":"invalid state"}` |
 | 404 | Plain text: invalid or unknown site, or the user may not view it (indistinguishable) |
 
@@ -683,13 +688,14 @@ positive integer). `next_before` is the `before` value for the next page, `null`
 - `actor` is the user id, `actor_email` the address the user had then. `actor_via` is
   `session` or `token:<token prefix>` (the prefix shown by `GET /v1/auth/tokens`).
 - `action` is one of `site.create`, `site.update`, `site.deploy`, `site.rollback`,
-  `site.delete`, `group.create`, `group.delete`, `group.member_add`, `group.member_remove`,
+  `site.delete`, `site.domain_add`, `site.domain_remove`, `group.create`, `group.delete`, `group.member_add`, `group.member_remove`,
   `token.create` and `token.revoke`; `target_kind` is `site`, `group` or `token` and `target`
   its name when the action happened.
 - `details` is a small object: `{"version": ...}` for deploy and rollback, `{"changes": {"visibility":
   {"from": "public", "to": "restricted"}}}` for update (fields `description`, `group`,
   `visibility`), the initial `description`, `group` and `visibility` for create,
   `{"email": ...}` for a member add, `{"user_id": ..., "email": ...}` for a member removal,
+  `{"domain": ...}` for a custom domain add or removal,
   and `{"token_id", "prefix", "expires_in_days"}` for a token create.
 - `client_ip` is the address of the connection. Behind a reverse proxy that is the proxy's
   address until forwarded-header support arrives.
@@ -697,6 +703,39 @@ positive integer). `next_before` is the `before` value for the next page, `null`
 ```sh
 curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" 'https://pages.corp/v1/auth/sites/blog/audit?limit=20'
 ```
+
+### GET /v1/auth/sites/{name}/domains
+
+Owner only. Exists only when `[sites] custom_domains = true` (otherwise `404`). Lists the
+custom domains of the site and what may be added; see [custom-domains.md](custom-domains.md).
+Errors: `401`, `403` not the owner, `404` unknown site.
+
+```json
+{"site": "handbook", "domains": ["handbook.corp.example"],
+ "allowed_suffixes": ["corp.example"], "limit": 5}
+```
+
+`GET /v1/auth/sites/{name}` also returns `"domains": [...]` when the feature is on.
+
+### PUT /v1/auth/sites/{name}/domains/{domain}
+
+Owner only; no body. Attaches the domain, lower-cased and without a trailing dot.
+
+- `201 {"site":"handbook","domain":"handbook.corp.example"}` attached; `200` with the same body if the site already had it
+- `400` not a valid domain, outside `custom_domain_suffixes`, or `app_host`, `content_domain` or anything under them
+- `403` not the owner, or the site has `custom_domains_per_site` domains already
+- `404` unknown site
+- `409 {"error":"that domain is already used by another site"}`
+
+```sh
+curl -H "Authorization: Bearer $OPEN_PAGES_TOKEN" -X PUT \
+  https://pages.corp/v1/auth/sites/handbook/domains/handbook.corp.example
+```
+
+### DELETE /v1/auth/sites/{name}/domains/{domain}
+
+Owner only. `200 {"status":"domain removed","site":...,"domain":...}`, or `404` if the site or
+the domain on it does not exist. The domain stops being served at once.
 
 ## Serving sites
 

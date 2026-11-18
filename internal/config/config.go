@@ -41,6 +41,7 @@ type Config struct {
 	DrainDelay      time.Duration  // pause between failing /readyz and closing the listener on SIGTERM
 	AppHost         string         // bare host (no port) of the API and UI
 	ContentDomain   string         // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
+	CustomDomains   CustomDomains  // optional per-site host names served behind an external TLS proxy
 	LogLevel        slog.Level     // minimum level written to the log
 	LogFormat       string         // logging.FormatText or logging.FormatJSON
 	MetricsListen   string         // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
@@ -51,6 +52,18 @@ type Config struct {
 	SAML            SAMLConfig     // optional SAML 2.0 sign-in; disabled by default
 	Storage         StorageConfig  // where the files of deployed sites are kept
 }
+
+// CustomDomains is the custom_domains* keys of [sites]. A custom domain makes a site answer
+// to a host name of its own (handbook.corp); open-pages never terminates TLS for it, the
+// reverse proxy in front does.
+type CustomDomains struct {
+	Enabled         bool
+	AllowedSuffixes []string // a domain must be a subdomain of one of these (never equal to one)
+	PerSite         int      // most domains one site may have
+}
+
+// DefaultDomainsPerSite is the limit of custom domains per site when none is configured.
+const DefaultDomainsPerSite = 5
 
 // Storage backends.
 const (
@@ -247,6 +260,10 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("sites.app_host %q: must not be under sites.content_domain %q, where site hosts live; use a separate domain for sites", cfg.AppHost, cfg.ContentDomain)
 	}
 
+	if cfg.CustomDomains, err = loadCustomDomains(sites, cfg.AppHost, cfg.ContentDomain); err != nil {
+		return cfg, err
+	}
+
 	logSec := f.Section("log")
 	if cfg.LogLevel, err = logging.ParseLevel(logSec.Key("level").MustString("info")); err != nil {
 		return cfg, err
@@ -287,6 +304,51 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("tmppath: %w", err)
 	}
 	return cfg, nil
+}
+
+// loadCustomDomains reads custom_domains, custom_domain_suffixes and custom_domains_per_site.
+// The suffixes are what keeps a user from claiming any host name the proxy happens to route
+// to open-pages, so they are required when the feature is on, and none may be, or lie under,
+// the app host or the content domain.
+func loadCustomDomains(sites *ini.Section, appHost, contentDomain string) (CustomDomains, error) {
+	cd := CustomDomains{PerSite: DefaultDomainsPerSite}
+	var err error
+	if cd.Enabled, err = strictBool(sites, "custom_domains", false); err != nil {
+		return cd, err
+	}
+	raw := sites.Key("custom_domain_suffixes").String()
+	if !cd.Enabled {
+		if strings.TrimSpace(raw) != "" || sites.HasKey("custom_domains_per_site") {
+			return cd, errors.New("sites.custom_domain_suffixes and sites.custom_domains_per_site need sites.custom_domains = true")
+		}
+		return cd, nil
+	}
+	if cd.PerSite, err = boundedInt(sites, "custom_domains_per_site", cd.PerSite, 1, 100); err != nil {
+		return cd, err
+	}
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(e)), ".")
+		if e == "" {
+			continue
+		}
+		for _, label := range strings.Split(e, ".") {
+			if !names.ValidSite(label) {
+				return cd, fmt.Errorf("sites.custom_domain_suffixes entry %q: must be a bare domain such as corp.example.com", e)
+			}
+		}
+		for _, own := range []struct{ name, host string }{{"app_host", appHost}, {"content_domain", contentDomain}} {
+			if e == own.host || strings.HasSuffix(e, "."+own.host) {
+				return cd, fmt.Errorf("sites.custom_domain_suffixes entry %q: must not be or lie under sites.%s %q, so custom domains never overlap the app or the site hosts", e, own.name, own.host)
+			}
+		}
+		if !slices.Contains(cd.AllowedSuffixes, e) {
+			cd.AllowedSuffixes = append(cd.AllowedSuffixes, e)
+		}
+	}
+	if len(cd.AllowedSuffixes) == 0 {
+		return cd, errors.New("sites.custom_domains = true needs sites.custom_domain_suffixes, a comma-separated list of the domains users may use, for example corp.example.com")
+	}
+	return cd, nil
 }
 
 // parseProxies reads server.trusted_proxies: comma-separated CIDRs (a bare address counts

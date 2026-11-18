@@ -37,6 +37,30 @@ func ReservedSite(name string) bool {
 	return reservedSites[name] || (len(name) >= 4 && name[2:4] == "--")
 }
 
+// MaxDomainLen is the longest host name a DNS name may have.
+const MaxDomainLen = 253
+
+// ValidDomain reports whether host is usable as a custom domain: lowercase, at least two
+// DNS labels, at most 253 characters, no trailing dot, no port. The last label must contain
+// a letter, so an IP address such as "10.0.0.1" never passes, and no label may be a
+// "reserved LDH" label (third and fourth characters hyphens, which covers "xn--" IDNA
+// A-labels that browsers show as Unicode, a homograph risk).
+func ValidDomain(host string) bool {
+	if len(host) > MaxDomainLen {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if !ValidSite(l) || (len(l) >= 4 && l[2:4] == "--") {
+			return false
+		}
+	}
+	return strings.ContainsFunc(labels[len(labels)-1], func(r rune) bool { return r >= 'a' && r <= 'z' })
+}
+
 // PreviewBase reports whether name has the form of a preview site, "<base>--<rest>", and
 // returns the name of the site it previews. The server only lets the owner of <base> (or a
 // member of its group) create such a name, and only while <base> exists.

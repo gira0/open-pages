@@ -23,6 +23,7 @@ erDiagram
     user ||--o{ api_token : "has"
     user ||--o{ groups : "owns (owner)"
     docs ||--o{ site_version : "has"
+    docs ||--o{ site_domain : "answers to"
     user ||--o{ docs : "owns (uowner)"
     user ||--o{ user_group : "member (uid)"
     groups ||--o{ user_group : "has (gid)"
@@ -42,6 +43,7 @@ session 1---* site_login_code  (site_login_code.sessionid, ON DELETE CASCADE)
 docs 1---* site_session        (site_session.siteid, ON DELETE CASCADE)
 docs 1---* site_login_code     (site_login_code.siteid, ON DELETE CASCADE)
 docs 1---* site_version        (site_version.docid, ON DELETE CASCADE)
+docs 1---* site_domain         (site_domain.siteid, ON DELETE CASCADE)
 user 1---* api_token      (api_token.userid)
 user 1---* groups         (groups.owner, nullable)
 user 1---* docs           (docs.uowner, nullable)
@@ -212,6 +214,21 @@ Primary key `(docid, version)`. A site's usage is the sum of its rows. The rows 
 directories on disk: the server (at start, and before checking a quota) measures any version
 directory without a row by walking it, and deletes rows whose directory is gone, so a
 database that predates the table is filled in by its first start.
+
+### site_domain
+
+Custom domains: host names a site answers to besides `<site>.<content_domain>` (see
+[custom-domains.md](custom-domains.md)). The table exists whether or not the feature is on;
+rows are only read when `[sites] custom_domains = true`.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `domainid` | INTEGER | PRIMARY KEY | |
+| `siteid` | INTEGER | NOT NULL, FK `docs(docid)` ON DELETE CASCADE | The site; deleting it deletes its domains |
+| `domain` | VARCHAR(253) | NOT NULL, UNIQUE | Lower-case host name, no trailing dot. A domain belongs to one site |
+| `created` | BIGINT | NOT NULL | Unix time |
+
+Index `site_domain_site` on `siteid`.
 
 ### audit_log
 

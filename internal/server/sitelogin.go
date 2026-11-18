@@ -150,6 +150,9 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request, site st
 	}
 	s.setCookie(w, siteStateCookie, "/", state, int(siteLoginStateTTL.Seconds()))
 	q := url.Values{"site": {site}, "return": {siteReturnPath(r.URL.RequestURI())}, "state": {state}}
+	if host := normalizeHost(r.Host); host != site+"."+s.cfg.ContentDomain {
+		q.Set("host", host) // a custom domain: the code must come back to this host
+	}
 	noStoreRedirect(w, s.originFor(s.cfg.AppHost, r)+siteLoginPath+"?"+q.Encode())
 }
 
@@ -163,6 +166,24 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 		notFoundNoStore(w, r)
 		return
 	}
+	// The host to send the code to: the site's own, or one of its custom domains. Any other
+	// value would make this endpoint an open redirect that hands a login code to a stranger.
+	target := site + "." + s.cfg.ContentDomain
+	if host := q.Get("host"); host != "" {
+		ok := false
+		if s.cfg.CustomDomains.Enabled && names.ValidDomain(host) {
+			var err error
+			if ok, err = s.siteHasDomain(r.Context(), site, host); err != nil {
+				internalError(w, "check custom domain", err)
+				return
+			}
+		}
+		if !ok {
+			notFoundNoStore(w, r)
+			return
+		}
+		target = host
+	}
 	if !validState(state) {
 		w.Header().Set("Cache-Control", "no-store")
 		writeError(w, http.StatusBadRequest, "invalid state")
@@ -175,7 +196,11 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if uid == 0 {
 		// Come back through the UI: its script follows next after signing in.
-		back := siteLoginPath + "?" + url.Values{"site": {site}, "return": {ret}, "state": {state}}.Encode()
+		bq := url.Values{"site": {site}, "return": {ret}, "state": {state}}
+		if h := q.Get("host"); h != "" {
+			bq.Set("host", h)
+		}
+		back := siteLoginPath + "?" + bq.Encode()
 		noStoreRedirect(w, "/index?next="+url.QueryEscape(back))
 		return
 	}
@@ -226,7 +251,7 @@ func (s *Server) handleSiteLogin(w http.ResponseWriter, r *http.Request) {
 		notFoundNoStore(w, r)
 		return
 	}
-	noStoreRedirect(w, s.originFor(site+"."+s.cfg.ContentDomain, r)+siteRedeemPath+"?"+url.Values{"code": {code}}.Encode())
+	noStoreRedirect(w, s.originFor(target, r)+siteRedeemPath+"?"+url.Values{"code": {code}}.Encode())
 }
 
 func validState(s string) bool {

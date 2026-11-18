@@ -28,6 +28,8 @@ const (
 	auditSiteDeploy   = "site.deploy"
 	auditSiteRollback = "site.rollback"
 	auditSiteDelete   = "site.delete"
+	auditDomainAdd    = "site.domain_add"
+	auditDomainRemove = "site.domain_remove"
 	auditGroupCreate  = "group.create"
 	auditGroupDelete  = "group.delete"
 	auditMemberAdd    = "group.member_add"

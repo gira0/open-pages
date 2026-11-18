@@ -147,6 +147,10 @@ rejected with 400. Make sure a reverse proxy in front allows bodies of at least
 | `app_host` | none, required | Bare host name of the API and UI (for example `pages.corp`). Lower-cased, one trailing dot removed; no scheme, port or path. See [URLs and hosts](#urls-and-hosts) |
 | `content_domain` | none, required | Bare domain whose subdomains serve the sites: a site `blog` is at `https://blog.<content_domain>/` (for example `pages-content.corp`). Same format as `app_host`. Neither `app_host` nor `content_domain` may equal the other or be a subdomain of the other, at any depth |
 
+| `custom_domains` | `false` | Let a site answer to host names of its own as well, behind your reverse proxy. See [custom domains](custom-domains.md) |
+| `custom_domain_suffixes` | none, required when `custom_domains` is on | Domains users may use: a custom domain must be a strict subdomain of one of these (comma-separated). May not be, or lie under, `app_host` or `content_domain` |
+| `custom_domains_per_site` | `5` | Most custom domains one site may have (1 to 100) |
+
 `url_mode` and `base_domain` no longer exist; a settings file that still sets either fails
 startup with a message pointing here.
 
@@ -283,6 +287,7 @@ Two kinds of host, never mixed:
 |---|---|---|
 | `app_host` | The API, the test page and its static assets, the probes, and `/metrics` when enabled. Never site content, whatever the path | `https://pages.corp/` |
 | `<site>.<content_domain>` | One site, read-only (`GET` and `HEAD`; any other method is `405` with `Allow: GET, HEAD`). Nothing of the API or UI. A label that is not a valid site name is a 404 | `https://blog.pages-content.corp/` |
+| a custom domain of a site | The same as the site's own host, when [custom domains](custom-domains.md) are enabled and the domain is attached to that site | `https://handbook.corp.example/` |
 | anything else | `404` for every request except `GET /healthz` (see below) | |
 
 Root-absolute links (`<link href="/css/app.css">`) work in sites, because each site owns
