@@ -52,19 +52,19 @@ func DomainCommand(ctx context.Context, args []string, getenv func(string) strin
 		return err
 	}
 	rest := fl.Args()
-	if len(rest) < 2 {
+	if len(rest) < 2 || len(rest) > 3 {
 		return errors.New(domainUsageMsg)
 	}
 	action, site := rest[0], rest[1]
 	want := map[string]int{"list": 2, "add": 3, "remove": 3}[action]
-	if want == 0 || len(rest) != want {
+	if want != len(rest) {
 		return errors.New(domainUsageMsg)
 	}
 	if !names.ValidSite(site) {
 		return fmt.Errorf("invalid site name %q: use a DNS label (lowercase letters, digits, hyphens)", site)
 	}
 	domain := ""
-	if want == 3 {
+	if len(rest) == 3 {
 		domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rest[2]), "."))
 		if !names.ValidDomain(domain) {
 			return fmt.Errorf("invalid domain %q: use a lowercase host name such as handbook.corp.example", rest[2])

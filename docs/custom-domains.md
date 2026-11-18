@@ -107,6 +107,16 @@ The site's manage page shows the same list with an add form and *Remove* buttons
 - **Same content, several hosts.** A site is served on its own host and on each custom domain
   at once. Access is checked per request on every host, so changing visibility, group or
   membership takes effect on all of them immediately.
+- **Suffixes are checked when a domain is attached, not on every request.** Removing a suffix
+  from `custom_domain_suffixes` does not stop domains already attached under it from being
+  served; remove those domains too.
+- **Cookie tossing on shared suffixes.** Custom domains under one suffix (`a.corp.example`,
+  `b.corp.example`) are same-site. Cookies stay host-only and the session cookies are `__Host-`
+  prefixed with `cookie_secure`, which stops one site overwriting another's. But any site on
+  `corp.example`, or another service there, can set a `Domain=corp.example` cookie that browsers
+  send to all of them (without the `__Host-` prefix, which only open-pages' own cookies carry).
+  Do not rely on cookies you set yourself in hosted pages, and prefer a dedicated zone
+  (`docs.corp.example`) as the suffix.
 - **Hijack on removal.** A removed or deleted domain stops being served at once, but DNS and
   the proxy route usually remain. Remove those too, or the name may later be claimed by another
   site (it will then serve that site's content under a certificate you issued).
