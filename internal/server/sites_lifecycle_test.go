@@ -62,7 +62,7 @@ func TestDeployAfterDeleteIsRejected(t *testing.T) {
 	if _, err := s.deploy(t.Context(), stale, writeZip(t, late)); !errors.Is(err, errSiteNotFound) {
 		t.Fatalf("stale deploy into reused name = %v, want errSiteNotFound", err)
 	}
-	if v, _ := s.Versions("blog"); len(v) != 0 {
+	if v, _ := s.Versions(t.Context(), "blog"); len(v) != 0 {
 		t.Fatalf("stale deploy created versions %v", v)
 	}
 }
@@ -112,7 +112,7 @@ func TestUpdateSiteWritesOnlyGivenColumns(t *testing.T) {
 func TestVersionsAndCurrentSnapshot(t *testing.T) {
 	_, s := newTestServer(t)
 	v1 := deployFiles(t, s, map[string]string{"index.html": "1"})
-	versions, current, err := s.versionsAndCurrent("blog")
+	versions, current, err := s.versionsAndCurrent(t.Context(), "blog")
 	if err != nil || current != v1 || len(versions) != 1 || versions[0] != v1 {
 		t.Fatalf("snapshot = %v %q %v", versions, current, err)
 	}

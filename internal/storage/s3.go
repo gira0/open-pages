@@ -59,11 +59,16 @@ var (
 	// the reads that serve a file, which run under the visitor's request context only.
 	responseHeaderTimeout = 60 * time.Second
 	// readStallTimeout is how long a visitor's read may wait on the store for the next
-	// bytes. The whole body gets no deadline, because a slow visitor legitimately takes
-	// long and the server sets no WriteTimeout for the same reason; only the time spent
-	// waiting on the store counts, so a store that goes quiet mid-body cannot hold the
-	// request, and its connection, for ever.
+	// bytes. Only the time spent waiting on the store counts, because a slow visitor
+	// legitimately takes long and the server sets no WriteTimeout for the same reason, so a
+	// store that goes quiet mid-body cannot hold the request, and its connection, for
+	// ever. readTotalTimeout is the separate cap on the whole body.
 	readStallTimeout = 60 * time.Second
+	// readTotalTimeout caps one GET from its first byte request to its last byte read,
+	// however steadily the bytes arrive: a store that trickles a body for ever, or a
+	// visitor that never finishes reading, still gives up the connection. It is generous,
+	// because a slow visitor reading a large file legitimately takes long.
+	readTotalTimeout = 15 * time.Minute
 )
 
 // S3 keeps sites in an object store:
@@ -257,15 +262,45 @@ feed:
 		s.cleanup(ctx, prefix)
 		return firstErr
 	}
-	marker := s.markerKey(site, version)
-	_, err = s.c.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &s.bucket, Key: &marker, Body: strings.NewReader(strconv.FormatInt(total, 10)),
-	})
-	if err != nil {
-		s.cleanup(ctx, prefix)
+	if err := s.putMarker(ctx, site, version, total); err != nil {
+		s.abandon(ctx, site, version, prefix)
 		return fmt.Errorf("write version marker: %w", err)
 	}
 	return nil
+}
+
+// putMarker writes the marker. A PUT that fails may still have landed (the response, not
+// the request, was lost), so before giving up it reads the marker back: one that holds
+// the expected size means the version is published and the deploy has not failed. The
+// read-back is detached from ctx, which may be the reason the PUT failed.
+func (s *S3) putMarker(ctx context.Context, site, version string, total int64) error {
+	marker := s.markerKey(site, version)
+	_, err := s.c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &s.bucket, Key: &marker, Body: strings.NewReader(strconv.FormatInt(total, 10)),
+	})
+	if err == nil {
+		return nil
+	}
+	if n, verr := s.VersionSize(context.WithoutCancel(ctx), site, version); verr == nil && n == total {
+		return nil
+	}
+	return err
+}
+
+// abandon undoes a publish that failed at the marker. The marker goes first, so the version
+// leaves Versions before its files do, as in DeleteVersion: a lost PUT response may have
+// left the marker behind, and a marker without files would be a version that cannot be
+// served. If the marker cannot be removed the files stay, so whatever the marker names
+// is still whole, and a later prune or delete cleans up both.
+func (s *S3) abandon(ctx context.Context, site, version, prefix string) {
+	ctx = context.WithoutCancel(ctx)
+	mctx, cancel := context.WithTimeout(ctx, metaTimeout)
+	defer cancel()
+	marker := s.markerKey(site, version)
+	if _, err := s.c.DeleteObject(mctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &marker}); err != nil && !isNotFound(err) {
+		return
+	}
+	s.cleanup(ctx, prefix)
 }
 
 // cleanup removes the objects of a failed publish. The caller's context may be the reason
@@ -550,7 +585,7 @@ func (f *s3File) Read(p []byte) (int, error) {
 	// The GET gets its own context so the watchdog can cancel it without touching the
 	// request's. The timer runs only while this call waits on the store.
 	if f.body == nil {
-		ctx, cancel := context.WithCancel(f.r.ctx)
+		ctx, cancel := context.WithTimeout(f.r.ctx, readTotalTimeout)
 		f.cancel = cancel
 		f.stalled.Store(false)
 		stop := f.watch()
@@ -587,6 +622,9 @@ func (f *s3File) watch() (stop func()) {
 func (f *s3File) readErr(err error) error {
 	if f.stalled.Load() {
 		return fmt.Errorf("s3: no data from %s for %v: %w", f.key, readStallTimeout, os.ErrDeadlineExceeded)
+	}
+	if f.r.ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("s3: reading %s took longer than %v: %w", f.key, readTotalTimeout, os.ErrDeadlineExceeded)
 	}
 	return err
 }

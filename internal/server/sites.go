@@ -695,10 +695,10 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		// Not fatal: the next quota check or restart measures the directory instead.
 		ctxLogger(ctx).Warn("record version size", "site", site.Name, "err", err)
 	}
-	if err := s.switchCurrent(site.Name, version); err != nil {
+	if err := s.switchCurrent(ctx, site.Name, version); err != nil {
 		return "", err
 	}
-	if err := s.pruneVersions(site.Name); err != nil {
+	if err := s.pruneVersions(ctx, site.Name); err != nil {
 		ctxLogger(ctx).Warn("prune old versions", "site", site.Name, "err", err)
 	}
 	if _, err := s.syncVersionSizes(acct, site); err != nil {
@@ -716,10 +716,10 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 
 // SwitchCurrent atomically points the site's current link at an existing version,
 // for example to roll back. It returns errVersionAbsent if the version is not on disk.
-func (s *Server) SwitchCurrent(site, version string) error {
+func (s *Server) SwitchCurrent(ctx context.Context, site, version string) error {
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
-	return s.switchCurrent(site, version)
+	return s.switchCurrent(ctx, site, version)
 }
 
 // rollbackSite makes version the live one of site and records it, all under deployMu so
@@ -731,7 +731,7 @@ func (s *Server) rollbackSite(ctx context.Context, site Site, version string) er
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return err
 	}
-	if err := s.switchCurrent(site.Name, version); err != nil {
+	if err := s.switchCurrent(ctx, site.Name, version); err != nil {
 		return err
 	}
 	s.audit(ctx, s.db, auditEvent{
@@ -742,51 +742,51 @@ func (s *Server) rollbackSite(ctx context.Context, site Site, version string) er
 }
 
 // switchCurrent does the work of SwitchCurrent; the caller holds deployMu.
-func (s *Server) switchCurrent(site, version string) error {
+func (s *Server) switchCurrent(ctx context.Context, site, version string) error {
 	if !names.ValidSite(site) {
 		return errors.New("invalid site name")
 	}
-	return s.store.SetCurrent(context.Background(), site, version)
+	return s.store.SetCurrent(ctx, site, version)
 }
 
 // versionsAndCurrent reads the version list and the live version as one snapshot,
 // under deployMu so no deploy or rollback can land between the two reads.
-func (s *Server) versionsAndCurrent(site string) (versions []string, current string, err error) {
+func (s *Server) versionsAndCurrent(ctx context.Context, site string) (versions []string, current string, err error) {
 	s.deployMu.Lock()
 	defer s.deployMu.Unlock()
-	if versions, err = s.Versions(site); err != nil {
+	if versions, err = s.Versions(ctx, site); err != nil {
 		return nil, "", err
 	}
-	if current, err = s.CurrentVersion(site); err != nil {
+	if current, err = s.CurrentVersion(ctx, site); err != nil {
 		return nil, "", err
 	}
 	return versions, current, nil
 }
 
 // Versions lists the site's versions in the store, oldest first.
-func (s *Server) Versions(site string) ([]string, error) {
+func (s *Server) Versions(ctx context.Context, site string) ([]string, error) {
 	if !names.ValidSite(site) {
 		return nil, errors.New("invalid site name")
 	}
-	return s.store.Versions(context.Background(), site)
+	return s.store.Versions(ctx, site)
 }
 
 // CurrentVersion returns the version the site currently serves, or "" if never deployed.
-func (s *Server) CurrentVersion(site string) (string, error) {
+func (s *Server) CurrentVersion(ctx context.Context, site string) (string, error) {
 	if !names.ValidSite(site) {
 		return "", errors.New("invalid site name")
 	}
-	return s.store.Current(context.Background(), site)
+	return s.store.Current(ctx, site)
 }
 
 // pruneVersions removes the oldest versions beyond cfg.KeepVersions, never the current
 // one. The caller holds deployMu.
-func (s *Server) pruneVersions(site string) error {
-	versions, err := s.Versions(site)
+func (s *Server) pruneVersions(ctx context.Context, site string) error {
+	versions, err := s.Versions(ctx, site)
 	if err != nil {
 		return err
 	}
-	current, err := s.CurrentVersion(site)
+	current, err := s.CurrentVersion(ctx, site)
 	if err != nil {
 		return err
 	}
@@ -799,7 +799,7 @@ func (s *Server) pruneVersions(site string) error {
 		if v == current {
 			continue
 		}
-		if err := s.store.DeleteVersion(context.Background(), site, v); err != nil {
+		if err := s.store.DeleteVersion(ctx, site, v); err != nil {
 			errs = append(errs, err)
 			continue
 		}

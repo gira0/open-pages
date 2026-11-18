@@ -120,3 +120,54 @@ func TestS3SlowSteadyReadSucceeds(t *testing.T) {
 		t.Fatalf("ReadAll = %d bytes, %v", len(b), err)
 	}
 }
+
+// A body that keeps arriving, so the stall timeout never fires, still ends at the total
+// timeout: a store that trickles for ever cannot hold the request.
+func TestS3ReadTotalTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		if r.Method == http.MethodHead {
+			return
+		}
+		w.WriteHeader(http.StatusPartialContent)
+		for range 1000 {
+			if _, err := w.Write([]byte("x")); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-release:
+				return
+			}
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	oldStall, oldTotal := readStallTimeout, readTotalTimeout
+	readStallTimeout, readTotalTimeout = 5*time.Second, 400*time.Millisecond
+	t.Cleanup(func() { readStallTimeout, readTotalTimeout = oldStall, oldTotal })
+
+	s, err := NewS3(t.Context(), S3Config{
+		Endpoint: srv.URL, Region: "us-east-1", Bucket: "b", PathStyle: true,
+		AccessKey: "a", SecretKey: "s", StagingDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &s3Root{s: s, ctx: t.Context(), prefix: "sites/blog/v1/"}
+	f, err := root.Open("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	start := time.Now()
+	_, err = io.ReadAll(f)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("ReadAll = %v, want a deadline error", err)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("read took %v, want it to stop near the 400ms total timeout", took)
+	}
+}
