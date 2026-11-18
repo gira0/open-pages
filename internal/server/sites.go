@@ -695,7 +695,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		// Not fatal: the next quota check or restart measures the directory instead.
 		ctxLogger(ctx).Warn("record version size", "site", site.Name, "err", err)
 	}
-	if err := s.switchCurrent(ctx, site.Name, version); err != nil {
+	if err := s.switchCurrent(acct, site.Name, version); err != nil {
 		return "", err
 	}
 	if err := s.pruneVersions(ctx, site.Name); err != nil {

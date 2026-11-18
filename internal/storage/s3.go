@@ -458,9 +458,11 @@ func (s *S3) VersionSize(ctx context.Context, site, version string) (int64, erro
 }
 
 // DeleteVersion removes the marker first, so the version disappears from Versions before
-// its objects do, then the objects.
+// its objects do, then the objects. The two steps run detached from ctx's cancellation
+// (but bounded by bulkTimeout): stopping between them would leave files no marker names,
+// which nothing would ever prune or count.
 func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
-	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
 	defer cancel()
 	if !validS3Site(site) || !VersionRe.MatchString(version) {
 		return ErrInvalid
@@ -473,8 +475,9 @@ func (s *S3) DeleteVersion(ctx context.Context, site, version string) error {
 }
 
 // DeleteSite removes .current first, so the site stops being served, then everything.
+// Like DeleteVersion it is detached from ctx's cancellation so it cannot stop half-way.
 func (s *S3) DeleteSite(ctx context.Context, site string) error {
-	ctx, cancel := context.WithTimeout(ctx, bulkTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bulkTimeout)
 	defer cancel()
 	if !validS3Site(site) {
 		return ErrInvalid

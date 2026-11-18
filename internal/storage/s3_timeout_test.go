@@ -1,7 +1,12 @@
 package storage
 
 import (
+	"context"
+	"path/filepath"
+
 	"errors"
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,5 +174,45 @@ func TestS3ReadTotalTimeout(t *testing.T) {
 	}
 	if took := time.Since(start); took > 10*time.Second {
 		t.Fatalf("read took %v, want it to stop near the 400ms total timeout", took)
+	}
+}
+
+// Deleting a version removes the marker and then the files; a cancelled caller must not
+// stop between the two and strand files that no marker names.
+func TestS3DeleteVersionSurvivesCancelledContext(t *testing.T) {
+	backend := s3mem.New()
+	if err := backend.CreateBucket("pages"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(gofakes3.New(backend).Server())
+	t.Cleanup(srv.Close)
+	s, err := NewS3(t.Context(), S3Config{
+		Endpoint: srv.URL, Region: "us-east-1", Bucket: "pages", PathStyle: true,
+		AccessKey: "a", SecretKey: "s", StagingDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, n := range []string{"index.html", "a.css"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const v = "d0000000000000000000"
+	if err := s.Publish(t.Context(), "blog", v, dir); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := s.DeleteVersion(ctx, "blog", v); err != nil {
+		t.Fatalf("DeleteVersion with a cancelled context = %v", err)
+	}
+	var keys []string
+	if err := s.list(t.Context(), s.siteKey("blog"), func(k string) error { keys = append(keys, k); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("objects left after DeleteVersion: %v", keys)
 	}
 }
