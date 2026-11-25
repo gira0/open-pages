@@ -530,3 +530,27 @@ func TestLocalLoginDefaultsOffWithSSO(t *testing.T) {
 		}
 	}
 }
+
+// The shipped sample is what the Dockerfile installs and what people copy, so it must not set
+// local_login itself: an explicit value would defeat the default that applies once SSO is on.
+func TestShippedSettingsLocalLoginDefault(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "settings.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := string(raw)
+	if strings.Contains(sample, "\nlocal_login") {
+		t.Fatal("deploy/settings.ini must leave local_login commented out")
+	}
+	// The first "enabled = false" in the sample belongs to [oidc].
+	sso := strings.Replace(sample, "enabled = false", "enabled = true\nissuer = https://idp.example\nclient_id = c\nclient_secret = s\nredirect_url = https://p.example/v1/auth/oidc/callback", 1)
+	for name, body := range map[string]string{"plain": sample, "sso": sso} {
+		cfg, err := Load(writeRawConfig(t, body))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if want := name == "plain"; cfg.LocalLogin != want {
+			t.Errorf("%s: LocalLogin = %v, want %v", name, cfg.LocalLogin, want)
+		}
+	}
+}
