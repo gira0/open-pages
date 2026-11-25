@@ -42,7 +42,9 @@ data:
     {{- end }}
 
     [auth]
+    {{- if not (kindIs "invalid" .Values.config.auth.localLogin) }}
     local_login = {{ .Values.config.auth.localLogin }}
+    {{- end }}
 
     [audit]
     retention_days = {{ .Values.config.audit.retentionDays }}
