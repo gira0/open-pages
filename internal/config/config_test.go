@@ -504,3 +504,29 @@ func TestLoadCustomDomainsErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalLoginDefaultsOffWithSSO(t *testing.T) {
+	oidc := "[oidc]\nenabled = true\nissuer = https://idp.example\nclient_id = c\nclient_secret = s\nredirect_url = https://p.example/v1/auth/oidc/callback\n"
+	saml := "[saml]\nenabled = true\nidp_metadata_url = https://idp.example/metadata\nentity_id = sp\nacs_url = https://p.example/v1/auth/saml/acs\n"
+	cases := []struct {
+		name, ini string
+		want      bool
+	}{
+		{"no SSO", "", true},
+		{"oidc unset", oidc, false},
+		{"saml unset", saml, false},
+		{"oidc explicit true", "[auth]\nlocal_login = true\n" + oidc, true},
+		{"saml explicit true", "[auth]\nlocal_login = true\n" + saml, true},
+		{"explicit false", "[auth]\nlocal_login = false\n" + oidc, false},
+		{"no SSO explicit true", "[auth]\nlocal_login = true\n", true},
+	}
+	for _, c := range cases {
+		cfg, err := Load(writeConfig(t, c.ini))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if cfg.LocalLogin != c.want {
+			t.Errorf("%s: LocalLogin = %v, want %v", c.name, cfg.LocalLogin, c.want)
+		}
+	}
+}

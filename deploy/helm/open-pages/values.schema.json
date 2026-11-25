@@ -208,7 +208,7 @@
           "type": "object",
           "properties": {
             "localLogin": {
-              "type": "boolean"
+              "type": ["boolean", "null"]
             }
           },
           "additionalProperties": false
