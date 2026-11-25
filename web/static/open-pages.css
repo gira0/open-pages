@@ -44,3 +44,21 @@
   flex-wrap: wrap;
   gap: var(--pf-t--global--spacer--sm);
 }
+
+/* A section that app.js hides, e.g. the sign-in form once someone is signed in. */
+.pf-v6-c-page__main-section[hidden] {
+  display: none;
+}
+
+/* The signed-in user in the masthead. */
+#user-menu {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-t--global--spacer--sm);
+}
+#user-menu[hidden] {
+  display: none;
+}
+.op-user {
+  overflow-wrap: anywhere;
+}

@@ -59,6 +59,21 @@ tags:
     description: Sites, deploys and versions.
 
 paths:
+  /:
+    get:
+      tags: [service]
+      operationId: getRoot
+      summary: HTML test page (same as /index)
+      description: The app host's root serves the same page as `/index`.
+      security: []
+      responses:
+        "200":
+          description: The page.
+          content:
+            text/html:
+              schema:
+                type: string
+
   /index:
     get:
       tags: [service]

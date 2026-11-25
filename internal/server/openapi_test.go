@@ -51,7 +51,8 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 	// OpenAPI has no wildcard segments, so "{path...}" is documented as "{path}".
 	var registered []string
 	for _, r := range s.routeTable() {
-		registered = append(registered, strings.ReplaceAll(r.pattern, "...}", "}"))
+		// "{$}" anchors a pattern to the exact path, so "GET /{$}" is documented as "GET /".
+		registered = append(registered, strings.ReplaceAll(strings.ReplaceAll(r.pattern, "...}", "}"), "{$}", ""))
 	}
 	documented := specOperations(t)
 
