@@ -195,7 +195,7 @@ to anyone who can reach it, so bind it to loopback or a monitoring network.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `local_login` | `true` | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for single sign-on only setups and requires `[oidc] enabled = true` or `[saml] enabled = true`, otherwise startup fails. Must be `true` or `false` |
+| `local_login` | `true`, or `false` when `[oidc]` or `[saml]` is enabled | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for single sign-on only setups and requires `[oidc] enabled = true` or `[saml] enabled = true`, otherwise startup fails. With SSO enabled you must set `true` explicitly to keep local accounts: registration is open and email addresses are not verified, so anyone could register a colleague's address before their first SSO sign-in. Must be `true` or `false` |
 
 ### [audit]
 

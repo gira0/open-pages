@@ -67,6 +67,7 @@ func (s *Server) routeTable() []route {
 	handle := func(pattern string, h http.Handler) { rt = append(rt, route{pattern, h}) }
 	handleFunc := func(pattern string, h http.HandlerFunc) { handle(pattern, h) }
 
+	handleFunc("GET /{$}", s.handleIndex) // the bare app host shows the UI too
 	handleFunc("GET /index", s.handleIndex)
 	handleFunc("GET /manage", s.handleManage)
 	handleFunc("GET /static/{hash}/{path...}", s.handleStatic)
@@ -160,7 +161,10 @@ type indexSite struct {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
-		"title": "Sites", "nav": "sites", "localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil, "saml": s.saml != nil,
+		"title": "Sites", "nav": "sites",
+		// The script swaps in the site name where it finds the "{site}" placeholder.
+		"siteOrigin": s.originFor("{site}."+s.cfg.ContentDomain, r),
+		"localLogin": s.cfg.LocalLogin, "oidc": s.oidc != nil, "saml": s.saml != nil,
 	}
 	sites, err := s.listPublicSites(r.Context())
 	if err != nil {

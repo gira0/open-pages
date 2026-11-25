@@ -173,7 +173,11 @@ func TestAppHostNeverServesSites(t *testing.T) {
 	for _, host := range []string{testAppHost, "PAGES.corp.", "pages.corp:8080"} {
 		expectStatus(t, do(s, "GET", host, "/v1/ping").Code, http.StatusOK)
 		expectStatus(t, do(s, "GET", host, "/index").Code, http.StatusOK)
-		for _, target := range []string{"/blog/", "/blog/app.css", "/blog", "/app.css", "/v1/other", "/v1/ping/", "/"} {
+		// The root is the UI, the same page as /index, not a site's index.html.
+		if w := do(s, "GET", host, "/"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `id="upload-form"`) {
+			t.Errorf("%s /: %d, want the UI page", host, w.Code)
+		}
+		for _, target := range []string{"/blog/", "/blog/app.css", "/blog", "/app.css", "/v1/other", "/v1/ping/"} {
 			w := do(s, "GET", host, target)
 			if w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "blog") || strings.Contains(w.Body.String(), "evil") {
 				t.Errorf("%s %s: %d %q, want a plain 404", host, target, w.Code, w.Body)

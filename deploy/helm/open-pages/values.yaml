@@ -101,8 +101,10 @@ config:
     # Days to keep audit log entries. 0 keeps them for ever.
     retentionDays: 365
   auth:
-    # Serve local registration and login. Set false for SSO-only (needs oidc or saml enabled).
-    localLogin: true
+    # Serve local registration and login. Unset (null) means true, or false when oidc or saml
+    # is enabled. Set true explicitly to keep local accounts next to SSO (registration is open
+    # and unverified). false needs oidc or saml enabled.
+    localLogin: null
   log:
     # debug, info, warn or error.
     level: info
