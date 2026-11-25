@@ -504,3 +504,53 @@ func TestLoadCustomDomainsErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalLoginDefaultsOffWithSSO(t *testing.T) {
+	oidc := "[oidc]\nenabled = true\nissuer = https://idp.example\nclient_id = c\nclient_secret = s\nredirect_url = https://p.example/v1/auth/oidc/callback\n"
+	saml := "[saml]\nenabled = true\nidp_metadata_url = https://idp.example/metadata\nentity_id = sp\nacs_url = https://p.example/v1/auth/saml/acs\n"
+	cases := []struct {
+		name, ini string
+		want      bool
+	}{
+		{"no SSO", "", true},
+		{"oidc unset", oidc, false},
+		{"saml unset", saml, false},
+		{"oidc explicit true", "[auth]\nlocal_login = true\n" + oidc, true},
+		{"saml explicit true", "[auth]\nlocal_login = true\n" + saml, true},
+		{"explicit false", "[auth]\nlocal_login = false\n" + oidc, false},
+		{"no SSO explicit true", "[auth]\nlocal_login = true\n", true},
+	}
+	for _, c := range cases {
+		cfg, err := Load(writeConfig(t, c.ini))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if cfg.LocalLogin != c.want {
+			t.Errorf("%s: LocalLogin = %v, want %v", c.name, cfg.LocalLogin, c.want)
+		}
+	}
+}
+
+// The shipped sample is what the Dockerfile installs and what people copy, so it must not set
+// local_login itself: an explicit value would defeat the default that applies once SSO is on.
+func TestShippedSettingsLocalLoginDefault(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "settings.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := string(raw)
+	if strings.Contains(sample, "\nlocal_login") {
+		t.Fatal("deploy/settings.ini must leave local_login commented out")
+	}
+	// The first "enabled = false" in the sample belongs to [oidc].
+	sso := strings.Replace(sample, "enabled = false", "enabled = true\nissuer = https://idp.example\nclient_id = c\nclient_secret = s\nredirect_url = https://p.example/v1/auth/oidc/callback", 1)
+	for name, body := range map[string]string{"plain": sample, "sso": sso} {
+		cfg, err := Load(writeRawConfig(t, body))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if want := name == "plain"; cfg.LocalLogin != want {
+			t.Errorf("%s: LocalLogin = %v, want %v", name, cfg.LocalLogin, want)
+		}
+	}
+}

@@ -15,6 +15,13 @@ account name; there is no separate username. Two kinds exist:
 - **OIDC and SAML accounts**, created at first sign-in through the identity provider (see
   below). They have no password, so local login always fails for them.
 
+Local registration never verifies the email address, and groups and the SSO first sign-in
+both go by email. With local login on next to SSO, anyone who can reach the server can
+register a colleague's address first, get added to that colleague's groups, and lock them out
+of their own SSO sign-in. So when `[oidc]` or `[saml]` is enabled and `local_login` is not
+set, it defaults to `false`; setting it to `true` explicitly keeps local accounts (the
+server logs a warning at startup).
+
 Setting `[auth] local_login = false` removes the register and login routes, for setups where
 everyone signs in through single sign-on. It requires `[oidc] enabled = true` or
 `[saml] enabled = true`, or the server refuses to start. Existing sessions and API tokens keep working. The setting accepts only `true` or

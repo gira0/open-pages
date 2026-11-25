@@ -293,6 +293,15 @@ func Load(path string) (Config, error) {
 	if cfg.SAML, err = loadSAMLConfig(f.Section("saml")); err != nil {
 		return cfg, err
 	}
+	sso := cfg.OIDC.Enabled || cfg.SAML.Enabled
+	if sso && !f.Section("auth").HasKey("local_login") {
+		// Local registration accepts any email address unverified, so with SSO on it would let
+		// anyone squat a colleague's address (group membership is granted by email). Turning it
+		// on next to SSO has to be an explicit choice.
+		cfg.LocalLogin = false
+	} else if sso && cfg.LocalLogin {
+		slog.Warn("auth.local_login = true with SSO enabled: anyone can register a local account with any unverified email address, including a colleague's, and group membership is granted by email; see docs/auth.md")
+	}
 	if !cfg.LocalLogin && !cfg.OIDC.Enabled && !cfg.SAML.Enabled {
 		return cfg, errors.New("auth.local_login = false needs [oidc] or [saml] enabled = true, or nobody could sign in")
 	}
