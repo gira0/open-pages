@@ -59,8 +59,32 @@
     show();
   }
 
+  var networkError = 'Could not reach the server. Check your connection and try again.';
+
+  // friendlyError turns an error response into a sentence for people: the server's own
+  // message when it sent one ({"error": "..."}), else a generic one for the status. Raw
+  // JSON or HTML is never shown.
+  function friendlyError(status, text) {
+    var msg = '';
+    try {
+      var d = JSON.parse(text);
+      if (d && typeof d.error === 'string') { msg = d.error; }
+    } catch (e) { /* not JSON */ }
+    if (!msg) {
+      var plain = (text || '').trim();
+      if (status === 401) { msg = 'You are not signed in.'; }
+      else if (status === 403) { msg = 'You are not allowed to do that.'; }
+      else if (status === 413) { msg = 'That is too large.'; }
+      else if (status >= 500) { msg = 'The server had a problem. Try again later.'; }
+      else if (plain && plain.length <= 200 && !/^[<{\[]/.test(plain)) { msg = plain; }
+      else { msg = 'The request failed (HTTP ' + status + ').'; }
+    }
+    msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+    return /[.!?]$/.test(msg) ? msg : msg + '.';
+  }
+
   // Shows a PatternFly inline alert in container, replacing the previous one. kind is
-  // 'danger' or 'success'. The text is set with textContent, never as HTML.
+  // 'danger' or 'success'. detail is text (set with textContent, never as HTML) or a node.
   var alertIcons = {danger: 'fa-exclamation-circle', success: 'fa-check-circle'};
   var alertLabels = {danger: 'Danger alert:', success: 'Success alert:'};
   function showAlert(container, kind, title, detail) {
@@ -85,7 +109,7 @@
     if (detail) {
       var desc = document.createElement('div');
       desc.className = 'pf-v6-c-alert__description';
-      desc.textContent = detail;
+      if (typeof detail === 'string') { desc.textContent = detail; } else { desc.appendChild(detail); }
       alert.appendChild(desc);
     }
     container.replaceChildren(alert);
@@ -142,12 +166,12 @@
         });
       } catch (e) {
         progress.hidden = true;
-        showAlert(result, 'danger', 'Creating the site failed.', 'Network error');
+        showAlert(result, 'danger', 'Creating the site failed.', networkError);
         return;
       }
       if (!created.ok && created.status !== 409) {
         progress.hidden = true;
-        showAlert(result, 'danger', 'Creating the site failed.', await created.text());
+        showAlert(result, 'danger', 'Creating the site failed.', friendlyError(created.status, await created.text()));
         return;
       }
       var data = new FormData();
@@ -160,17 +184,48 @@
       xhr.onload = function () {
         if (xhr.status >= 200 && xhr.status < 300) {
           setProgress(100);
-          showAlert(result, 'success', 'Upload complete.', xhr.responseText);
+          var link = null;
+          var origin = form.getAttribute('data-site-origin');
+          if (origin) {
+            var url = origin.replace('{site}', name) + '/';
+            link = document.createElement('span');
+            link.appendChild(document.createTextNode('Your site is at '));
+            link.appendChild(el('a', {href: url}, url));
+            link.appendChild(document.createTextNode('.'));
+          }
+          showAlert(result, 'success', 'Uploaded ' + name + '.', link || undefined);
         } else {
           progress.hidden = true;
-          showAlert(result, 'danger', 'Upload failed (' + xhr.status + ').', xhr.responseText);
+          showAlert(result, 'danger', 'Upload failed.', friendlyError(xhr.status, xhr.responseText));
         }
       };
       xhr.onerror = function () {
         progress.hidden = true;
-        showAlert(result, 'danger', 'Upload failed.', 'Network error');
+        showAlert(result, 'danger', 'Upload failed.', networkError);
       };
       xhr.send(data);
+    });
+  }
+
+  // Masthead: who is signed in, and a way to sign out. Also hides the sign-in form once
+  // someone is signed in, since the index page is rendered the same for everyone.
+  function setupSession() {
+    var menu = document.getElementById('user-menu');
+    if (!menu) { return; }
+    fetch('/v1/auth/user').then(function (r) { return r.ok ? r.json() : null; }).then(function (u) {
+      if (!u || !u.email) { return; }
+      document.getElementById('user-email').textContent = u.email;
+      menu.hidden = false;
+      var signIn = document.getElementById('sign-in');
+      if (signIn) { signIn.hidden = true; }
+    }).catch(function () { /* signed out, or the server is unreachable */ });
+    var button = document.getElementById('sign-out');
+    button.addEventListener('click', async function () {
+      button.disabled = true;
+      var r = await callAPI('POST', '/v1/auth/logout');
+      if (r.ok) { location.assign('/index'); return; }
+      button.disabled = false;
+      alert('Could not sign out. ' + r.error);
     });
   }
 
@@ -215,10 +270,10 @@
           body: JSON.stringify({email: form.elements.email.value, password: form.elements.password.value})
         });
       } catch (e) {
-        showAlert(result, 'danger', 'Sign-in failed.', 'Network error');
+        showAlert(result, 'danger', 'Sign-in failed.', networkError);
         return;
       }
-      if (resp.ok) { goNext(next); } else { showAlert(result, 'danger', 'Sign-in failed.', await resp.text()); }
+      if (resp.ok) { goNext(next); } else { showAlert(result, 'danger', 'Sign-in failed.', friendlyError(resp.status, await resp.text())); }
     });
   }
 
@@ -258,11 +313,11 @@
       resp = await fetch(url, init);
       text = await resp.text();
     } catch (e) {
-      return {ok: false, status: 0, error: 'Network error'};
+      return {ok: false, status: 0, error: networkError};
     }
     var data = null;
     try { data = JSON.parse(text); } catch (e) { /* not JSON */ }
-    var error = resp.ok ? '' : (data && data.error) || text || 'HTTP ' + resp.status;
+    var error = resp.ok ? '' : friendlyError(resp.status, text);
     return {ok: resp.ok, status: resp.status, data: data, error: error};
   }
 
@@ -460,20 +515,20 @@
         xhr.onload = function () {
           if (xhr.status >= 200 && xhr.status < 300) {
             setProgress(100);
-            showAlert(result, 'success', 'Upload complete.', xhr.responseText);
+            showAlert(result, 'success', 'Upload complete.', 'The new version is live.');
             form.reset();
             loadVersions();
             showUsage();
           } else {
             progress.hidden = true;
-            showAlert(result, 'danger', 'Upload failed (' + xhr.status + ').', xhr.responseText);
+            showAlert(result, 'danger', 'Upload failed.', friendlyError(xhr.status, xhr.responseText));
             // A rejected deploy can still have pruned old versions (quota check).
             if (xhr.status === 413) { loadVersions(); showUsage(); }
           }
         };
         xhr.onerror = function () {
           progress.hidden = true;
-          showAlert(result, 'danger', 'Upload failed.', 'Network error');
+          showAlert(result, 'danger', 'Upload failed.', networkError);
         };
         xhr.send(data);
       });
@@ -589,6 +644,7 @@
 
   setupTheme();
   setupNav();
+  setupSession();
   setupLogin();
   setupUpload();
   setupManage();
