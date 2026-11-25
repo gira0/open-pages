@@ -217,7 +217,15 @@
       document.getElementById('user-email').textContent = u.email;
       menu.hidden = false;
       var signIn = document.getElementById('sign-in');
-      if (signIn) { signIn.hidden = true; }
+      if (signIn) {
+        signIn.hidden = true;
+        // Sent here by a site that needs a sign-in, and already signed in: go straight back.
+        // (Returning from single sign-on is handled by setupLogin.)
+        if (new URLSearchParams(location.search).has('next')) {
+          var next = takeNext();
+          if (next) { goNext(next); }
+        }
+      }
     }).catch(function () { /* signed out, or the server is unreachable */ });
     var button = document.getElementById('sign-out');
     button.addEventListener('click', async function () {
