@@ -196,6 +196,9 @@ to anyone who can reach it, so bind it to loopback or a monitoring network.
 | Key | Default | Meaning |
 |---|---|---|
 | `local_login` | `true`, or `false` when `[oidc]` or `[saml]` is enabled | Serve `POST /v1/user/register` and `/v1/user/login`. `false` is for single sign-on only setups and requires `[oidc] enabled = true` or `[saml] enabled = true`, otherwise startup fails. With SSO enabled you must set `true` explicitly to keep local accounts: registration is open and email addresses are not verified, so anyone could register a colleague's address before their first SSO sign-in. Must be `true` or `false` |
+| `api_token_default_days` | `90` | Lifetime of an API token created without `expires_in_days`, 0 to 3650 days. Raised or lowered to `api_token_max_days` when that is set and smaller; 0 means never expire when there is no maximum |
+| `api_token_max_days` | `365` | Longest lifetime of a new API token, 0 to 3650 days; 0 means no maximum |
+| `sso_reauth_days` | `30` | API tokens of OIDC or SAML users stop working when their last sign-in through the provider is older than this many days; 0 turns the check off |
 
 ### [audit]
 

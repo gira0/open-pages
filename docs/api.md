@@ -410,8 +410,9 @@ Session only: an API token cannot create, list or revoke tokens.
 ### POST /v1/auth/tokens
 
 Body: `{"name": "ci", "expires_in_days": 90}`. `name` is required, at most 64 bytes.
-`expires_in_days` is optional: 0 or absent means the token never expires, otherwise 1 to
-3650.
+`expires_in_days` is optional: absent means `auth.api_token_default_days` (90 by default), and
+the largest value is `auth.api_token_max_days` (365 by default). With no maximum configured
+(`0`), an explicit 0 means the token never expires and the largest value is 3650.
 
 | Status | Body |
 |---|---|

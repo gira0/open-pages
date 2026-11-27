@@ -22,35 +22,38 @@ import (
 
 // Config holds all runtime settings, read from settings.ini.
 type Config struct {
-	Listen          string         // address to bind, e.g. ":8080"
-	DataPath        string         // absolute base dir; sites live in <DataPath>/op_data
-	TmpPath         string         // absolute base dir; uploads are staged in <TmpPath>/tmp
-	CookieSecure    bool           // set the Secure flag on the session cookie (enable behind HTTPS)
-	MaxUploadBytes  int64          // max size of an uploaded archive
-	MaxExtractSize  int64          // max total uncompressed size of an archive
-	MaxExtractFile  int            // max number of entries in an archive
-	MaxDeploys      int            // uploads extracted at once; more get 503 with Retry-After
-	DeployTimeout   time.Duration  // time budget for extracting one upload
-	KeepVersions    int            // versions kept on disk per site, including the current one
-	SiteQuota       int64          // max bytes on disk of one site, over all kept versions; 0 means unlimited
-	UserQuota       int64          // max bytes on disk over all sites of one user; 0 means unlimited
-	SitesPerUser    int            // max sites one user may own; 0 means unlimited
-	CORSOrigins     []string       // allowed cross-origin callers; empty means same-origin only
-	TrustedProxies  []netip.Prefix // peers whose X-Forwarded-For/-Proto are believed; empty trusts nobody
-	ShutdownTimeout time.Duration  // how long in-flight requests get to finish after SIGTERM
-	DrainDelay      time.Duration  // pause between failing /readyz and closing the listener on SIGTERM
-	AppHost         string         // bare host (no port) of the API and UI
-	ContentDomain   string         // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
-	CustomDomains   CustomDomains  // optional per-site host names served behind an external TLS proxy
-	LogLevel        slog.Level     // minimum level written to the log
-	LogFormat       string         // logging.FormatText or logging.FormatJSON
-	MetricsListen   string         // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
-	MetricsToken    string         // bearer token for /metrics on the main listener; empty disables it there
-	AuditRetention  int            // days audit log entries are kept; 0 keeps them for ever
-	LocalLogin      bool           // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
-	OIDC            OIDCConfig     // optional OpenID Connect sign-in; disabled by default
-	SAML            SAMLConfig     // optional SAML 2.0 sign-in; disabled by default
-	Storage         StorageConfig  // where the files of deployed sites are kept
+	Listen           string         // address to bind, e.g. ":8080"
+	DataPath         string         // absolute base dir; sites live in <DataPath>/op_data
+	TmpPath          string         // absolute base dir; uploads are staged in <TmpPath>/tmp
+	CookieSecure     bool           // set the Secure flag on the session cookie (enable behind HTTPS)
+	MaxUploadBytes   int64          // max size of an uploaded archive
+	MaxExtractSize   int64          // max total uncompressed size of an archive
+	MaxExtractFile   int            // max number of entries in an archive
+	MaxDeploys       int            // uploads extracted at once; more get 503 with Retry-After
+	DeployTimeout    time.Duration  // time budget for extracting one upload
+	KeepVersions     int            // versions kept on disk per site, including the current one
+	SiteQuota        int64          // max bytes on disk of one site, over all kept versions; 0 means unlimited
+	UserQuota        int64          // max bytes on disk over all sites of one user; 0 means unlimited
+	SitesPerUser     int            // max sites one user may own; 0 means unlimited
+	CORSOrigins      []string       // allowed cross-origin callers; empty means same-origin only
+	TrustedProxies   []netip.Prefix // peers whose X-Forwarded-For/-Proto are believed; empty trusts nobody
+	ShutdownTimeout  time.Duration  // how long in-flight requests get to finish after SIGTERM
+	DrainDelay       time.Duration  // pause between failing /readyz and closing the listener on SIGTERM
+	AppHost          string         // bare host (no port) of the API and UI
+	ContentDomain    string         // bare domain whose subdomains serve the sites: <site>.<ContentDomain>
+	CustomDomains    CustomDomains  // optional per-site host names served behind an external TLS proxy
+	LogLevel         slog.Level     // minimum level written to the log
+	LogFormat        string         // logging.FormatText or logging.FormatJSON
+	MetricsListen    string         // dedicated address for /metrics, e.g. "127.0.0.1:9100"; empty means none
+	MetricsToken     string         // bearer token for /metrics on the main listener; empty disables it there
+	AuditRetention   int            // days audit log entries are kept; 0 keeps them for ever
+	TokenMaxDays     int            // longest lifetime of a new API token in days; 0 means no maximum
+	TokenDefaultDays int            // lifetime of a new API token that names none, in days; 0 means never
+	SSOReauthDays    int            // days an SSO user's API tokens work after their last SSO sign-in; 0 means no limit
+	LocalLogin       bool           // serve /v1/user/register and /v1/user/login; false for OIDC-only setups
+	OIDC             OIDCConfig     // optional OpenID Connect sign-in; disabled by default
+	SAML             SAMLConfig     // optional SAML 2.0 sign-in; disabled by default
+	Storage          StorageConfig  // where the files of deployed sites are kept
 }
 
 // CustomDomains is the custom_domains* keys of [sites]. A custom domain makes a site answer
@@ -126,21 +129,24 @@ const minMetricsTokenLen = 16
 // Default returns the settings used when settings.ini leaves a key out.
 func Default() Config {
 	return Config{
-		Listen:          ":8080",
-		DataPath:        ".",
-		TmpPath:         ".",
-		MaxUploadBytes:  100 << 20,
-		MaxExtractSize:  500 << 20,
-		MaxExtractFile:  10000,
-		MaxDeploys:      2,
-		DeployTimeout:   10 * time.Minute,
-		KeepVersions:    5,
-		ShutdownTimeout: 30 * time.Second,
-		LogLevel:        slog.LevelInfo,
-		LogFormat:       logging.FormatText,
-		AuditRetention:  365,
-		LocalLogin:      true,
-		Storage:         StorageConfig{Type: StorageLocal, S3: S3Config{Region: "us-east-1"}},
+		Listen:           ":8080",
+		DataPath:         ".",
+		TmpPath:          ".",
+		MaxUploadBytes:   100 << 20,
+		MaxExtractSize:   500 << 20,
+		MaxExtractFile:   10000,
+		MaxDeploys:       2,
+		DeployTimeout:    10 * time.Minute,
+		KeepVersions:     5,
+		ShutdownTimeout:  30 * time.Second,
+		LogLevel:         slog.LevelInfo,
+		LogFormat:        logging.FormatText,
+		AuditRetention:   365,
+		TokenMaxDays:     365,
+		TokenDefaultDays: 90,
+		SSOReauthDays:    30,
+		LocalLogin:       true,
+		Storage:          StorageConfig{Type: StorageLocal, S3: S3Config{Region: "us-east-1"}},
 	}
 }
 
@@ -284,6 +290,19 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 
+	authSec := f.Section("auth")
+	if cfg.TokenMaxDays, err = boundedInt(authSec, "api_token_max_days", cfg.TokenMaxDays, 0, 3650); err != nil {
+		return cfg, err
+	}
+	if cfg.TokenDefaultDays, err = boundedInt(authSec, "api_token_default_days", cfg.TokenDefaultDays, 0, 3650); err != nil {
+		return cfg, err
+	}
+	if cfg.TokenMaxDays > 0 && (cfg.TokenDefaultDays == 0 || cfg.TokenDefaultDays > cfg.TokenMaxDays) {
+		cfg.TokenDefaultDays = cfg.TokenMaxDays // a default may not outlive the maximum
+	}
+	if cfg.SSOReauthDays, err = boundedInt(authSec, "sso_reauth_days", cfg.SSOReauthDays, 0, 3650); err != nil {
+		return cfg, err
+	}
 	if cfg.LocalLogin, err = strictBool(f.Section("auth"), "local_login", cfg.LocalLogin); err != nil {
 		return cfg, err
 	}

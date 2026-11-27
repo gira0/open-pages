@@ -232,3 +232,49 @@ func TestOpenMakesDatabaseGroupWritable(t *testing.T) {
 		t.Errorf("data.db mode = %v, want group read and write", fi.Mode().Perm())
 	}
 }
+
+// A database from before last_sso_login gets the column, and its existing SSO users start
+// from now (so their API tokens keep working after the upgrade) but only once.
+func TestOpenBackfillsLastSSOLoginOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE user (userid INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL, password BINARY(60) NOT NULL,
+		oidc_issuer TEXT NULL, oidc_subject TEXT NULL);
+		INSERT INTO user (email, password, oidc_issuer, oidc_subject) VALUES ('sso@example.com', '', 'i', 's'), ('local@example.com', 'x', NULL, NULL);`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+	read := func() (sso, local sql.NullInt64) {
+		db, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if err := db.QueryRow("SELECT last_sso_login FROM user WHERE email = 'sso@example.com'").Scan(&sso); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow("SELECT last_sso_login FROM user WHERE email = 'local@example.com'").Scan(&local); err != nil {
+			t.Fatal(err)
+		}
+		return sso, local
+	}
+	sso, local := read()
+	if !sso.Valid || local.Valid {
+		t.Fatalf("after upgrade: sso %v, local %v; want the SSO user stamped and the local user not", sso, local)
+	}
+	// Make it old; a restart must not refresh it.
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE user SET last_sso_login = 5 WHERE oidc_subject = 's'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if sso, _ = read(); sso.Int64 != 5 {
+		t.Fatalf("a restart refreshed last_sso_login to %d", sso.Int64)
+	}
+}

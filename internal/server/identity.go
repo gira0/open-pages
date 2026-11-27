@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gira0/open-pages/internal/names"
 )
@@ -47,6 +48,17 @@ type federatedIdentity struct {
 // on issuer plus subject only. An email that already belongs to a different account, local
 // or from another identity, is refused: it is never taken over or linked automatically.
 func (s *Server) federatedUser(ctx context.Context, id federatedIdentity) (int64, error) {
+	uid, err := s.findOrCreateFederatedUser(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE user SET last_sso_login = ? WHERE userid = ?", time.Now().Unix(), uid); err != nil {
+		return 0, fmt.Errorf("record sign-in: %w", err)
+	}
+	return uid, nil
+}
+
+func (s *Server) findOrCreateFederatedUser(ctx context.Context, id federatedIdentity) (int64, error) {
 	lookup := func() (int64, error) {
 		var uid int64
 		err := s.db.QueryRowContext(ctx,

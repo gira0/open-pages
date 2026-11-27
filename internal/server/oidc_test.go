@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
@@ -664,5 +665,24 @@ func TestIndexShowsEnabledSignInMethods(t *testing.T) {
 	_, body, _ := oidcGet(t, browser(t), ts.URL+"/index")
 	if strings.Contains(body, "oidc/login") || !strings.Contains(body, `action="/v1/user/login"`) {
 		t.Error("default server must show only the local form")
+	}
+}
+
+// Signing in through the provider records the time, which keeps the user's API tokens alive.
+func TestOIDCSignInRecordsLastLogin(t *testing.T) {
+	idp := newFakeIDP(t)
+	ts, s := newOIDCTestServer(t, idp, nil)
+	before := time.Now().Add(-time.Second).Unix()
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var at sql.NullInt64
+	if err := s.db.QueryRow("SELECT last_sso_login FROM user WHERE oidc_subject = 'sub-1'").Scan(&at); err != nil || !at.Valid || at.Int64 < before {
+		t.Fatalf("last_sso_login = %v (%v), want a time from just now", at, err)
+	}
+	if _, err := s.db.Exec("UPDATE user SET last_sso_login = 1"); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	if err := s.db.QueryRow("SELECT last_sso_login FROM user WHERE oidc_subject = 'sub-1'").Scan(&at); err != nil || at.Int64 < before {
+		t.Fatalf("last_sso_login after a second sign-in = %v (%v)", at, err)
 	}
 }

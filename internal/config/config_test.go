@@ -554,3 +554,23 @@ func TestShippedSettingsLocalLoginDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthTokenSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validSites))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenDefaultDays != 90 || cfg.TokenMaxDays != 365 || cfg.SSOReauthDays != 30 {
+		t.Fatalf("defaults = %d, %d, %d", cfg.TokenDefaultDays, cfg.TokenMaxDays, cfg.SSOReauthDays)
+	}
+	cfg, err = Load(writeConfig(t, validSites+"[auth]\napi_token_default_days = 400\napi_token_max_days = 100\nsso_reauth_days = 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenDefaultDays != 100 || cfg.TokenMaxDays != 100 || cfg.SSOReauthDays != 0 {
+		t.Fatalf("settings = %d, %d, %d; the default must not outlive the maximum", cfg.TokenDefaultDays, cfg.TokenMaxDays, cfg.SSOReauthDays)
+	}
+	if _, err := Load(writeConfig(t, validSites+"[auth]\napi_token_max_days = -1\n")); err == nil {
+		t.Fatal("a negative maximum was accepted")
+	}
+}
