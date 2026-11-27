@@ -61,9 +61,20 @@ func (s *Server) tokenUser(ctx context.Context, token string) (int64, error) {
 	want := hashToken(token)
 	var uid int64
 	var stored string
+	// Tokens of a federated (SSO) user also need a sign-in through the provider within
+	// sso_reauth_days: that is when group memberships are refreshed and when somebody the
+	// provider no longer lets in stops getting new access. A user that has none recorded
+	// counts as stale.
+	now := time.Now()
+	reauth := int64(0)
+	if s.cfg.SSOReauthDays > 0 {
+		reauth = now.AddDate(0, 0, -s.cfg.SSOReauthDays).Unix()
+	}
 	err := s.db.QueryRowContext(ctx,
-		"SELECT userid, hash FROM api_token WHERE hash = ? AND (expires IS NULL OR expires > ?)",
-		want, time.Now().Unix()).Scan(&uid, &stored)
+		`SELECT t.userid, t.hash FROM api_token t JOIN user u ON u.userid = t.userid
+		 WHERE t.hash = ? AND (t.expires IS NULL OR t.expires > ?)
+		   AND (u.oidc_subject IS NULL OR ? = 0 OR u.last_sso_login >= ?)`,
+		want, now.Unix(), reauth, reauth).Scan(&uid, &stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -97,7 +108,7 @@ func (s *Server) requireSession(next http.HandlerFunc) http.Handler {
 
 type tokenCreate struct {
 	Name          string `json:"name"`
-	ExpiresInDays int    `json:"expires_in_days"` // 0 or absent: never expires
+	ExpiresInDays *int   `json:"expires_in_days"` // absent: the configured default; 0: never expires (if allowed)
 }
 
 type tokenInfo struct {
@@ -127,8 +138,20 @@ func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required and must be at most "+strconv.Itoa(maxTokenNameLen)+" characters")
 		return
 	}
-	if d.ExpiresInDays < 0 || d.ExpiresInDays > maxTokenDays {
-		writeError(w, http.StatusBadRequest, "expires_in_days must be between 0 (never) and "+strconv.Itoa(maxTokenDays))
+	days := s.cfg.TokenDefaultDays
+	if d.ExpiresInDays != nil {
+		days = *d.ExpiresInDays
+	}
+	limit := maxTokenDays
+	if s.cfg.TokenMaxDays > 0 {
+		limit = s.cfg.TokenMaxDays
+	}
+	if days < 0 || days > limit || (days == 0 && s.cfg.TokenMaxDays > 0) {
+		if s.cfg.TokenMaxDays > 0 {
+			writeError(w, http.StatusBadRequest, "expires_in_days must be between 1 and "+strconv.Itoa(limit))
+		} else {
+			writeError(w, http.StatusBadRequest, "expires_in_days must be between 0 (never) and "+strconv.Itoa(limit))
+		}
 		return
 	}
 
@@ -143,8 +166,8 @@ func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	var expires any
 	info := tokenInfo{Name: d.Name, Prefix: prefix, Created: formatUnix(now.Unix())}
-	if d.ExpiresInDays > 0 {
-		exp := now.AddDate(0, 0, d.ExpiresInDays).Unix()
+	if days > 0 {
+		exp := now.AddDate(0, 0, days).Unix()
 		expires = exp
 		e := formatUnix(exp)
 		info.Expires = &e
@@ -176,7 +199,7 @@ func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), s.db, auditEvent{
 		action: auditTokenCreate, targetKind: targetToken, target: d.Name,
-		details: map[string]any{"token_id": info.ID, "prefix": prefix, "expires_in_days": d.ExpiresInDays},
+		details: map[string]any{"token_id": info.ID, "prefix": prefix, "expires_in_days": days},
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, tokenCreated{tokenInfo: info, Token: token})

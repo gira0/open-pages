@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gira0/open-pages/internal/names"
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" database/sql driver
@@ -22,7 +23,8 @@ CREATE TABLE IF NOT EXISTS user (
 	email    VARCHAR(255) NOT NULL,
 	password BINARY(60) NOT NULL,
 	oidc_issuer  TEXT NULL,
-	oidc_subject TEXT NULL
+	oidc_subject TEXT NULL,
+	last_sso_login BIGINT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS user_email ON user (email);
@@ -237,6 +239,23 @@ func migrate(db *sql.DB) error {
 		{"user_group", "oidc", "oidc INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := addColumn(ctx, db, col.table, col.name, col.ddl); err != nil {
+			return err
+		}
+	}
+	// last_sso_login is when a federated user last signed in through the provider; API tokens
+	// of such users stop working when it gets too old (auth.sso_reauth_days). Existing
+	// federated users start from now, so an upgrade does not lock their tokens out.
+	var hadSSOLogin int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('user') WHERE name = 'last_sso_login'").Scan(&hadSSOLogin); err != nil {
+		return err
+	}
+	if err := addColumn(ctx, db, "user", "last_sso_login", "last_sso_login BIGINT NULL"); err != nil {
+		return err
+	}
+	if hadSSOLogin == 0 {
+		if _, err := db.ExecContext(ctx,
+			"UPDATE user SET last_sso_login = ? WHERE oidc_subject IS NOT NULL", time.Now().Unix()); err != nil {
 			return err
 		}
 	}

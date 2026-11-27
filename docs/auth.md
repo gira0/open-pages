@@ -60,8 +60,14 @@ For CI pipelines and scripts. A token authenticates as the user who created it a
 of that user's rights. There are no scopes and no per-site tokens.
 
 - Create one while logged in with a session: `POST /v1/auth/tokens` with a name and an
-  optional `expires_in_days` (1 to 3650; absent or 0 means no expiry). The `opt_...` value
-  is in the response and cannot be retrieved again.
+  optional `expires_in_days`. Absent means `[auth] api_token_default_days` (default 90); the
+  longest allowed is `api_token_max_days` (default 365, at most 3650), and when that is
+  `0` (no maximum) an explicit `0` means the token never expires. The `opt_...` value is in the
+  response and cannot be retrieved again. Tokens created before these limits keep their expiry.
+- Tokens of users who signed in through OIDC or SAML also need a sign-in through the provider
+  within `[auth] sso_reauth_days` (default 30, `0` turns the check off). That sign-in also
+  refreshes their group memberships, so someone removed at the provider, or offboarded, loses
+  access through their tokens after at most that many days. Sessions last 7 days.
 - Only a SHA-256 hash and a display prefix (`opt_` plus 8 characters) are stored. At most 50
   tokens per user; expired ones are deleted when the owner creates another and do not count.
 - Send it as `Authorization: Bearer opt_...` on any "any" route in [api.md](api.md), and

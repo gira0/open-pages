@@ -49,7 +49,7 @@ func TestTokenLifecycle(t *testing.T) {
 	if !strings.HasPrefix(token, tokenPrefix) || len(token) != len(tokenPrefix)+64 {
 		t.Fatalf("unexpected token shape %q", token)
 	}
-	if prefix != token[:len(tokenPrefix)+tokenShownChars] || m["expires"] != nil {
+	if prefix != token[:len(tokenPrefix)+tokenShownChars] || m["expires"] == nil { // expires after the default lifetime
 		t.Fatalf("prefix %q, expires %v", prefix, m["expires"])
 	}
 
@@ -234,4 +234,70 @@ func TestBareBearerSchemeNeverFallsBackToCookie(t *testing.T) {
 	}
 	// The rejected requests didn't log the session out.
 	expectStatus(t, get(t, c, ts.URL+"/v1/auth/user"), http.StatusOK)
+}
+
+func TestTokenLifetimeLimits(t *testing.T) {
+	ts, s := newTestServer(t)
+	s.cfg.TokenDefaultDays, s.cfg.TokenMaxDays = 30, 90
+	c := loggedInClient(t, ts)
+	create := func(body string) (int, map[string]any) {
+		return doJSON(t, c, http.MethodPost, ts.URL+"/v1/auth/tokens", body)
+	}
+	daysLeft := func(m map[string]any) int {
+		exp, err := time.Parse(time.RFC3339, m["expires"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return int(time.Until(exp).Hours()/24 + 0.5)
+	}
+	status, m := create(`{"name":"a"}`)
+	expectStatus(t, status, http.StatusCreated)
+	if d := daysLeft(m); d != 30 {
+		t.Errorf("default lifetime = %d days, want 30", d)
+	}
+	status, m = create(`{"name":"b","expires_in_days":90}`)
+	expectStatus(t, status, http.StatusCreated)
+	if d := daysLeft(m); d != 90 {
+		t.Errorf("lifetime = %d days, want 90", d)
+	}
+	for _, body := range []string{`{"name":"c","expires_in_days":91}`, `{"name":"d","expires_in_days":0}`, `{"name":"e","expires_in_days":-1}`} {
+		status, _ = create(body)
+		expectStatus(t, status, http.StatusBadRequest)
+	}
+	// With no maximum configured, 0 still means never.
+	s.cfg.TokenMaxDays = 0
+	status, m = create(`{"name":"f","expires_in_days":0}`)
+	expectStatus(t, status, http.StatusCreated)
+	if m["expires"] != nil {
+		t.Errorf("expires = %v, want never", m["expires"])
+	}
+}
+
+// An SSO user's API tokens stop working when their last sign-in through the provider is
+// older than sso_reauth_days, and work again after the next one. Local users are unaffected.
+func TestTokenNeedsRecentSSOLogin(t *testing.T) {
+	ts, s := newTestServer(t)
+	s.cfg.SSOReauthDays = 30
+	token := tokenPrefix + strings.Repeat("c", 64)
+	if _, err := s.db.Exec(`INSERT INTO user (userid, email, password, oidc_issuer, oidc_subject, last_sso_login)
+		VALUES (7, 'sso@example.com', '', 'https://idp', 'sub', ?)`, time.Now().AddDate(0, 0, -31).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("INSERT INTO api_token (userid, name, prefix, hash, created) VALUES (7, 'ci', 'opt_cccccccc', ?, ?)",
+		hashToken(token), time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	auth := "Bearer " + token
+	expectStatus(t, bearerStatus(t, http.MethodGet, ts.URL+"/v1/auth/user", auth, nil), http.StatusUnauthorized)
+	if _, err := s.db.Exec("UPDATE user SET last_sso_login = ? WHERE userid = 7", time.Now().AddDate(0, 0, -29).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, bearerStatus(t, http.MethodGet, ts.URL+"/v1/auth/user", auth, nil), http.StatusOK)
+	// No recorded sign-in counts as stale; turning the limit off lifts it.
+	if _, err := s.db.Exec("UPDATE user SET last_sso_login = NULL WHERE userid = 7"); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, bearerStatus(t, http.MethodGet, ts.URL+"/v1/auth/user", auth, nil), http.StatusUnauthorized)
+	s.cfg.SSOReauthDays = 0
+	expectStatus(t, bearerStatus(t, http.MethodGet, ts.URL+"/v1/auth/user", auth, nil), http.StatusOK)
 }

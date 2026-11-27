@@ -785,7 +785,10 @@ paths:
                   description: Required, at most 64 bytes (UTF-8).
                   type: string
                 expires_in_days:
-                  description: 0 or absent means the token never expires.
+                  description: |
+                    Absent means the server's `auth.api_token_default_days` (90 by default). At most
+                    `auth.api_token_max_days` (365 by default); when the server has no maximum, 0
+                    means the token never expires.
                   type: integer
                   minimum: 0
                   maximum: 3650
