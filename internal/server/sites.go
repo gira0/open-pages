@@ -554,7 +554,7 @@ func (s *Server) narrowPreviews(ctx context.Context, tx *sql.Tx, base, visibilit
 }
 
 // checkSiteLive returns errSiteNotFound unless the database still has this exact site:
-// same id, name and owner. The caller holds deployMu, which deleteSite also takes, so
+// same id, name and owner. The caller holds the site lock, which deleteSite also takes, so
 // the answer stays true until the caller releases it.
 func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 	var one int
@@ -575,7 +575,7 @@ func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 // next run, and updateSite treats a site carrying it as gone.
 const deletingMarker int64 = 1
 
-// deleteSite removes a site's files and then its database row, under deployMu so it
+// deleteSite removes a site's files and then its database row, under the site lock so it
 // cannot interleave with a deploy's publish step. It returns errSiteNotFound if the
 // site was already deleted or replaced by another with the same name. A failure removing
 // the files leaves the row, so the delete can be retried.
@@ -586,19 +586,18 @@ func (s *Server) deleteSite(ctx context.Context, site Site) error {
 // deleteSiteWith is deleteSite with details added to the site.delete audit entry, for
 // example the reason for a delete nobody asked for. A non-zero expiredBy makes the delete
 // conditional: the site must still have an expiry at or before that Unix time, checked
-// under the database write lock that is then held until the delete commits, so a renewal
-// that lands first keeps the site (errNotExpired, nothing removed) and one that comes
-// later waits and finds the site gone.
+// and claimed in a short transaction before the files are removed, so a renewal that lands
+// first keeps the site (errNotExpired, nothing removed) and one that comes later finds the
+// site marked as being deleted and sees it as gone.
 func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[string]any, expiredBy int64) error {
 	if !names.ValidSite(site.Name) {
 		return errors.New("invalid site name")
 	}
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
+	defer s.siteLocks.lock(site.Name)()
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return err
 	}
-	// The audit entry goes in the same transaction as the delete (and under deployMu), so
+	// The audit entry goes in the same transaction as the delete (and under the site lock), so
 	// it always precedes the site.create of a site that reuses the name and row id.
 	if expiredBy != 0 {
 		// Claim the site in a short transaction of its own: if it is still expired, mark
@@ -676,20 +675,21 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		return "", err
 	}
 
-	// Publishing, switching and pruning happen under one lock, so a concurrent deploy's
-	// prune can never remove a version that this deploy has published but not yet made
-	// current. Extraction above stays outside the lock. The quota check is inside it, so two
-	// deploys cannot both fit into the same headroom.
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
+	// Publishing, switching and pruning happen under the site's own lock, so a concurrent
+	// deploy's prune can never remove a version that this deploy has published but not yet
+	// made current, while other sites are not held up by a slow upload. Extraction above
+	// stays outside the lock. The quota check takes the short global quotaMu and reserves
+	// the deploy's bytes, so two deploys cannot both fit into the same headroom.
+	defer s.siteLocks.lock(site.Name)()
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return "", err
 	}
-	if err := s.checkQuota(ctx, site, size); err != nil {
+	if err := s.reserveQuota(ctx, site, size); err != nil {
 		// checkQuota may have pruned versions and reconciled rows even when it rejects.
 		s.refreshStoredBytes(context.WithoutCancel(ctx))
 		return "", err
 	}
+	defer s.releaseQuota(site)
 	version := xid.New().String() // time-sortable, so lexical order is deploy order
 	if err := s.store.Publish(ctx, site.Name, version, staging); err != nil {
 		return "", err
@@ -710,7 +710,7 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 		ctxLogger(ctx).Warn("sync version sizes", "site", site.Name, "err", err)
 	}
 	s.refreshStoredBytes(acct)
-	// Recorded while deployMu is held, so a delete and re-create of the site cannot slip
+	// Recorded while the site lock is held, so a delete and re-create of the site cannot slip
 	// in first, and independent of whether the client is still connected.
 	s.audit(ctx, s.db, auditEvent{
 		action: auditSiteDeploy, targetKind: targetSite, target: site.Name, siteID: site.ID,
@@ -722,17 +722,15 @@ func (s *Server) deploy(ctx context.Context, site Site, src *os.File) (string, e
 // SwitchCurrent atomically points the site's current link at an existing version,
 // for example to roll back. It returns errVersionAbsent if the version is not on disk.
 func (s *Server) SwitchCurrent(ctx context.Context, site, version string) error {
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
+	defer s.siteLocks.lock(site)()
 	return s.switchCurrent(ctx, site, version)
 }
 
-// rollbackSite makes version the live one of site and records it, all under deployMu so
+// rollbackSite makes version the live one of site and records it, all under the site lock so
 // the entry cannot land after a delete and re-create of the site. It returns
 // errSiteNotFound if the site is gone and errVersionAbsent if the version is not on disk.
 func (s *Server) rollbackSite(ctx context.Context, site Site, version string) error {
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
+	defer s.siteLocks.lock(site.Name)()
 	if err := s.checkSiteLive(ctx, site); err != nil {
 		return err
 	}
@@ -746,7 +744,7 @@ func (s *Server) rollbackSite(ctx context.Context, site Site, version string) er
 	return nil
 }
 
-// switchCurrent does the work of SwitchCurrent; the caller holds deployMu.
+// switchCurrent does the work of SwitchCurrent; the caller holds the site lock.
 func (s *Server) switchCurrent(ctx context.Context, site, version string) error {
 	if !names.ValidSite(site) {
 		return errors.New("invalid site name")
@@ -755,10 +753,9 @@ func (s *Server) switchCurrent(ctx context.Context, site, version string) error 
 }
 
 // versionsAndCurrent reads the version list and the live version as one snapshot,
-// under deployMu so no deploy or rollback can land between the two reads.
+// under the site lock so no deploy or rollback can land between the two reads.
 func (s *Server) versionsAndCurrent(ctx context.Context, site string) (versions []string, current string, err error) {
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
+	defer s.siteLocks.lock(site)()
 	if versions, err = s.Versions(ctx, site); err != nil {
 		return nil, "", err
 	}
@@ -785,7 +782,7 @@ func (s *Server) CurrentVersion(ctx context.Context, site string) (string, error
 }
 
 // pruneVersions removes the oldest versions beyond cfg.KeepVersions, never the current
-// one. The caller holds deployMu.
+// one. The caller holds the site lock.
 func (s *Server) pruneVersions(ctx context.Context, site string) error {
 	versions, err := s.Versions(ctx, site)
 	if err != nil {

@@ -13,8 +13,10 @@ import (
 // directories: versions that predate the table are measured once, by walking the directory
 // (at startup, or at the site's next deploy), and rows of removed versions are dropped.
 //
-// Checks run under deployMu, the lock every deploy and delete holds, so two deploys cannot
-// both pass on the same headroom.
+// Checks run under quotaMu, a short global lock that is never held while files are
+// uploaded. A deploy that passes reserves its bytes until it has recorded them, and other
+// checks count the reservations of the same owner, so two deploys cannot both pass on the
+// same headroom. Each site's versions are serialized by its own lock (siteLocks).
 
 // quotaError marks a deploy refused because it would exceed a quota.
 type quotaError struct{ msg string }
@@ -33,7 +35,7 @@ func humanSize(n int64) string {
 }
 
 // syncVersionSizes makes the site_version rows of site match the versions on disk and
-// returns the size of each version on disk. The caller holds deployMu.
+// returns the size of each version on disk. The caller holds the site's lock.
 func (s *Server) syncVersionSizes(ctx context.Context, site Site) (map[string]int64, error) {
 	versions, err := s.Versions(ctx, site.Name)
 	if err != nil {
@@ -115,7 +117,7 @@ func (s *Server) otherSitesBytes(ctx context.Context, owner, except int64) (int6
 }
 
 // syncOtherSites reconciles the version sizes of the other sites site's owner has. The
-// caller holds deployMu.
+// caller holds quotaMu.
 func (s *Server) syncOtherSites(ctx context.Context, site Site) error {
 	rows, err := s.db.QueryContext(ctx, "SELECT docid, name FROM docs WHERE uowner = ? AND docid != ?", site.OwnerID, site.ID)
 	if err != nil {
@@ -148,7 +150,7 @@ func (s *Server) syncOtherSites(ctx context.Context, site Site) error {
 // remove is not counted. If the site holds more than keep_versions versions, because an
 // earlier prune failed, it first tries to prune; whatever is left over is counted in full,
 // with no credit. A failure to measure anything is an error, never a pass. It returns a
-// *quotaError if the deploy does not fit. The caller holds deployMu.
+// *quotaError if the deploy does not fit. The caller holds the site's lock and quotaMu.
 func (s *Server) checkQuota(ctx context.Context, site Site, size int64) error {
 	if s.cfg.SiteQuota == 0 && s.cfg.UserQuota == 0 {
 		return nil
@@ -191,12 +193,36 @@ func (s *Server) checkQuota(ctx context.Context, site Site, size int64) error {
 		if err != nil {
 			return fmt.Errorf("query user usage: %w", err)
 		}
+		others += s.reserved.ownerBytes(site.OwnerID, site.ID)
 		if others+after > q {
 			return &quotaError{fmt.Sprintf("user quota exceeded: your sites would hold %s after this deploy, over the limit of %s in total",
 				humanSize(others+after), humanSize(q))}
 		}
 	}
 	return nil
+}
+
+// reserveQuota runs checkQuota under quotaMu and, if the deploy fits, reserves its bytes
+// until releaseQuota. The caller holds the site's lock.
+func (s *Server) reserveQuota(ctx context.Context, site Site, size int64) error {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	if err := s.checkQuota(ctx, site, size); err != nil {
+		return err
+	}
+	if s.reserved == nil {
+		s.reserved = reservations{}
+	}
+	s.reserved[site.ID] = reservation{owner: site.OwnerID, bytes: size}
+	return nil
+}
+
+// releaseQuota drops the site's reservation; by then the deploy's size is recorded (or the
+// deploy failed and its bytes are no longer needed).
+func (s *Server) releaseQuota(site Site) {
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
+	delete(s.reserved, site.ID)
 }
 
 // siteBytes returns the bytes held by the kept versions of the site with the given id.
@@ -247,10 +273,11 @@ func (s *Server) backfillVersionSizes(ctx context.Context) error {
 		return fmt.Errorf("list sites: %w", err)
 	}
 	_ = rows.Close()
-	s.deployMu.Lock()
-	defer s.deployMu.Unlock()
 	for _, site := range all {
-		if _, err := s.syncVersionSizes(ctx, site); err != nil {
+		unlock := s.siteLocks.lock(site.Name)
+		_, err := s.syncVersionSizes(ctx, site)
+		unlock()
+		if err != nil {
 			ctxLogger(ctx).Warn("measure site", "site", site.Name, "err", err)
 		}
 	}

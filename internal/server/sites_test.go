@@ -170,9 +170,9 @@ func TestDeployVersionsAndPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.cfg.KeepVersions = 1
-	s.deployMu.Lock()
+	unlock := s.siteLocks.lock("blog")
 	err = s.pruneVersions(t.Context(), "blog")
-	s.deployMu.Unlock()
+	unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
