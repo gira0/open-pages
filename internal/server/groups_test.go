@@ -37,6 +37,21 @@ func newGroupVia(t *testing.T, ts *httptest.Server, c *http.Client, name string)
 	return int64(id)
 }
 
+// newManagedGroup creates an ownerless group, the kind sign-in group mapping fills, and
+// returns its id.
+func newManagedGroup(t *testing.T, s *Server, name string) int64 {
+	t.Helper()
+	res, err := s.db.Exec("INSERT INTO groups (name, name_key, owner) VALUES (?, ?, NULL)", name, names.GroupKey(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func groupURL(ts *httptest.Server, id int64, rest string) string {
 	return ts.URL + "/v1/auth/groups/" + strconv.FormatInt(id, 10) + rest
 }

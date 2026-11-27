@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/gira0/open-pages/internal/config"
 	"github.com/gira0/open-pages/internal/jwt"
+	"github.com/gira0/open-pages/internal/names"
 )
 
 const (
@@ -422,10 +424,9 @@ func TestOIDCGroupMapping(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
 
-	// An admin creates the groups; the provider only maps people into them.
-	admin := loggedInClient(t, ts)
-	eng := newGroupVia(t, ts, admin, "Eng")
-	ops := newGroupVia(t, ts, admin, "ops")
+	// The groups are provider-managed (ownerless); the provider only maps people into them.
+	eng := newManagedGroup(t, s, "Eng")
+	ops := newManagedGroup(t, s, "ops")
 
 	idp.update(func(s *idpSettings) { s.groups = []string{"eng", "no-such-group", "  "} })
 	c := browser(t)
@@ -476,7 +477,7 @@ func TestOIDCGroupMapping(t *testing.T) {
 func TestOIDCMappingOffKeepsManagedMemberships(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "" })
-	eng := newGroupVia(t, ts, loggedInClient(t, ts), "eng")
+	eng := newManagedGroup(t, s, "eng")
 	idp.update(func(s *idpSettings) { s.groups = []string{"eng"} })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
 	var uid int64
@@ -497,7 +498,7 @@ func TestOIDCMappingOffKeepsManagedMemberships(t *testing.T) {
 func TestOIDCGroupsClaimAsString(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.GroupsClaim = "roles" })
-	newGroupVia(t, ts, loggedInClient(t, ts), "admins")
+	newManagedGroup(t, s, "admins")
 	idp.update(func(s *idpSettings) { s.tweak = func(c map[string]any) { c["roles"] = "admins" } })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
 	var n int
@@ -617,25 +618,36 @@ func TestOIDCConcurrentEmailVariants(t *testing.T) {
 	}
 }
 
-func TestManualAddKeepsMembershipAcrossSync(t *testing.T) {
+// A user who creates a group named like an IdP group first does not get it mapped, so
+// they cannot own the membership of everyone the provider puts in it.
+func TestOIDCDoesNotMapUserOwnedGroups(t *testing.T) {
 	idp := newFakeIDP(t)
 	ts, s := newOIDCTestServer(t, idp, nil)
-	owner := loggedInClient(t, ts)
-	gid := newGroupVia(t, ts, owner, "eng")
-	idp.update(func(s *idpSettings) { s.groups = []string{"eng"} })
-	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
-
-	// The owner adds the provider-managed member by hand; the membership becomes manual.
-	code, _ := doJSON(t, owner, http.MethodPost, groupURL(ts, gid, "/members"), `{"email":"ann@corp.example"}`)
-	expectStatus(t, code, http.StatusOK)
-
-	idp.update(func(s *idpSettings) { s.groups = nil })
+	squat := newGroupVia(t, ts, loggedInClient(t, ts), "Finance")
+	idp.update(func(s *idpSettings) { s.groups = []string{"finance"} })
 	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
 	var n int
-	if err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM user_group WHERE gid = ? AND oidc = 0 AND uid IN (SELECT userid FROM user WHERE oidc_subject = 'sub-1')",
-		gid).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("manual membership survivors = %d (%v), want 1", n, err)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_group WHERE gid = ? AND oidc = 1", squat).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("provider-mapped members of a user-owned group = %d (%v), want 0", n, err)
+	}
+}
+
+// Groups named by managed_groups exist from start, without an owner, so a user cannot
+// create them first and the API cannot change their members.
+func TestManagedGroupsFromConfig(t *testing.T) {
+	idp := newFakeIDP(t)
+	ts, s := newOIDCTestServer(t, idp, func(c *config.Config) { c.OIDC.ManagedGroups = []string{"Finance"} })
+	var owner sql.NullInt64
+	if err := s.db.QueryRow("SELECT owner FROM groups WHERE name_key = ?", names.GroupKey("finance")).Scan(&owner); err != nil || owner.Valid {
+		t.Fatalf("managed group owner = %v (%v), want an ownerless group", owner, err)
+	}
+	code, _ := doJSON(t, loggedInClient(t, ts), http.MethodPost, ts.URL+"/v1/auth/groups", `{"name":"finance"}`)
+	expectStatus(t, code, http.StatusConflict)
+	idp.update(func(s *idpSettings) { s.groups = []string{"FINANCE"} })
+	expectStatus(t, signIn(t, ts, idp, browser(t)), http.StatusOK)
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_group WHERE oidc = 1").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("provider-mapped memberships = %d (%v), want 1", n, err)
 	}
 }
 

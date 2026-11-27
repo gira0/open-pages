@@ -326,6 +326,10 @@ func New(cfg config.Config) (*Server, error) {
 		_ = s.db.Close()
 		return nil, fmt.Errorf("measure existing sites: %w", err)
 	}
+	if err := s.ensureManagedGroups(context.Background()); err != nil {
+		_ = s.db.Close()
+		return nil, err
+	}
 	s.startAuditPruner()
 	return s, nil
 }
