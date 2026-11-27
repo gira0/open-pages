@@ -163,8 +163,16 @@ dependency.
 list of strings or a single string. Setting it empty turns mapping off; memberships an earlier sign-in added are then left as
 they are.
 
-- Names are matched to **existing** open-pages groups with the same name, ignoring case.
-  Names that match no group are ignored. Groups are never created from a token.
+- Names are matched to **provider-managed** open-pages groups with the same name, ignoring
+  case. A group is provider-managed when it has no owner: the groups named in `managed_groups`
+  (a comma-separated list, also available in `[saml]`), which are created without an owner when
+  the server starts, and groups from before owners existed. Groups that users created are
+  never mapped, so nobody can claim an IdP group's name first and own its membership; if a user
+  already owns a group with a name you list, the server logs an error and skips it until you
+  delete or rename that group. Names that match no managed group are ignored, and groups are
+  never created from a token.
+- The API cannot change an ownerless group, so its members are exactly those the provider
+  asserts (plus any added directly in the database).
 - At every sign-in the user is added to the matching groups, and removed from groups that an
   earlier sign-in added (`user_group.oidc = 1`) but the token no longer lists.
 - Memberships added by hand through the API are never removed by a sync. If a group owner
@@ -279,8 +287,8 @@ XML parsing and signature verification are done by
 
 `groups_attribute` (default `groups`; empty turns mapping off and leaves memberships an earlier sign-in added
 as they are) names the attribute whose
-values are group names. The rules are those of [OIDC group mapping](#group-mapping): existing
-groups only, matched ignoring case, provider-managed memberships follow each sign-in, manual
+values are group names. The rules are those of [OIDC group mapping](#group-mapping): provider-managed
+groups only (`managed_groups` in `[saml]`), matched ignoring case, provider-managed memberships follow each sign-in, manual
 ones are never removed, at most 500 names are read. OIDC and SAML share the same marker, so
 with both enabled each sign-in replaces the provider-managed memberships with those it asserts.
 

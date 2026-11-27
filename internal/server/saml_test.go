@@ -450,9 +450,9 @@ func TestSAMLHappyPath(t *testing.T) {
 				}
 			})
 			s := ts.s
-			admin := loggedInClient(t, ts.ts)
-			eng := newGroupVia(t, ts.ts, admin, "Eng")
-			newGroupVia(t, ts.ts, admin, "ops")
+			loggedInClient(t, ts.ts) // a local account, to check sign-in adds exactly one more user
+			eng := newManagedGroup(t, s, "Eng")
+			newManagedGroup(t, s, "ops")
 			idp.update(func(s *samlSettings) { s.groups = []string{"eng", "no-such-group"} })
 
 			c := browser(t)
@@ -768,7 +768,7 @@ func TestSAMLNameIDAttributeWithTransientNameID(t *testing.T) {
 func TestSAMLMappingOffKeepsManagedMemberships(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.GroupsAttribute = "" })
-	eng := newGroupVia(t, ts.ts, loggedInClient(t, ts.ts), "eng")
+	eng := newManagedGroup(t, ts.s, "eng")
 	idp.update(func(s *samlSettings) { s.groups = []string{"eng"} })
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
 	var uid int64
@@ -789,9 +789,8 @@ func TestSAMLMappingOffKeepsManagedMemberships(t *testing.T) {
 func TestSAMLGroupsAttributeMultiValued(t *testing.T) {
 	idp := newFakeSAMLIdP(t)
 	ts := newSAMLTestServer(t, idp, func(c *config.Config) { c.SAML.GroupsAttribute = "memberOf" })
-	admin := loggedInClient(t, ts.ts)
-	newGroupVia(t, ts.ts, admin, "a")
-	newGroupVia(t, ts.ts, admin, "b")
+	newManagedGroup(t, ts.s, "a")
+	newManagedGroup(t, ts.s, "b")
 	idp.update(func(s *samlSettings) { s.attrs = []samlAttr{{"memberOf", []string{"a", "b", ""}}} })
 	expectStatus(t, ts.signIn(t, browser(t)), http.StatusOK)
 	var n int

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"slices"
 	"strings"
@@ -86,8 +87,12 @@ func (s *Server) federatedUser(ctx context.Context, id federatedIdentity) (int64
 }
 
 // syncFederatedGroups makes the user's provider-managed memberships match the group names in
-// the identity provider's assertion. Only existing groups are mapped (matched like group names everywhere: ignoring
-// case); unknown names are ignored. Memberships added by hand (oidc = 0) are never removed.
+// the identity provider's assertion. Only provider-managed groups are mapped: groups with
+// no owner, which are the ones created from the managed_groups setting and those that predate
+// group owners. Groups users created are never mapped, so nobody can claim an IdP group's
+// name first and own its membership. Names are matched like group names everywhere (ignoring
+// case); unknown, owned and unmanaged names are ignored. Memberships added by hand (oidc = 0)
+// are never removed.
 func (s *Server) syncFederatedGroups(ctx context.Context, uid int64, groupNames []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -102,7 +107,7 @@ func (s *Server) syncFederatedGroups(ctx context.Context, uid int64, groupNames 
 			continue
 		}
 		var gid int64
-		err := tx.QueryRowContext(ctx, "SELECT groupid FROM groups WHERE name_key = ?", names.GroupKey(name)).Scan(&gid)
+		err := tx.QueryRowContext(ctx, "SELECT groupid FROM groups WHERE name_key = ? AND owner IS NULL", names.GroupKey(name)).Scan(&gid)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -145,4 +150,33 @@ func (s *Server) syncFederatedGroups(ctx context.Context, uid int64, groupNames 
 		}
 	}
 	return tx.Commit()
+}
+
+// ensureManagedGroups creates the groups named by managed_groups (OIDC and SAML) without an
+// owner, so the provider alone decides their members: the API cannot change an ownerless
+// group. A name already taken by a group a user owns is not touched and is logged, because
+// that group will not be mapped until an operator deletes or renames it.
+func (s *Server) ensureManagedGroups(ctx context.Context) error {
+	var want []string
+	want = append(want, s.cfg.OIDC.ManagedGroups...)
+	want = append(want, s.cfg.SAML.ManagedGroups...)
+	for _, raw := range want {
+		name, ok := validGroupName(raw)
+		if !ok {
+			return fmt.Errorf("managed_groups: invalid group name %q", raw)
+		}
+		key := names.GroupKey(name)
+		if _, err := s.db.ExecContext(ctx,
+			"INSERT INTO groups (name, name_key, owner) VALUES (?, ?, NULL) ON CONFLICT DO NOTHING", name, key); err != nil {
+			return fmt.Errorf("create managed group %q: %w", name, err)
+		}
+		var owner sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, "SELECT owner FROM groups WHERE name_key = ?", key).Scan(&owner); err != nil {
+			return fmt.Errorf("check managed group %q: %w", name, err)
+		}
+		if owner.Valid {
+			slog.Error("managed group name is taken by a group a user owns, so sign-in will not map it; delete or rename that group", "group", name)
+		}
+	}
+	return nil
 }
