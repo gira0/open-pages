@@ -89,8 +89,12 @@ type samlClient struct {
 type samlPending struct {
 	cookie   string // random value held by the browser that started the attempt
 	returnTo string
+	ip       string // client address that started the attempt
 	expires  time.Time
 }
+
+func (p samlPending) owner() string       { return p.ip }
+func (p samlPending) deadline() time.Time { return p.expires }
 
 func newSAMLClient(cfg config.SAMLConfig) (*samlClient, error) {
 	c := &samlClient{
@@ -277,8 +281,9 @@ type samlProviders struct {
 }
 
 // begin records a login attempt for the AuthnRequest id and returns the cookie value that
-// binds it to the browser. It returns false when too many attempts are pending.
-func (c *samlClient) begin(id, returnTo string) (cookie string, ok bool) {
+// binds it to the browser. When the map is full the oldest attempt is dropped instead of
+// refusing (see makePendingRoom). It returns false only if no cookie could be generated.
+func (c *samlClient) begin(id, returnTo, ip string) (cookie string, ok bool) {
 	cookie, err := generateToken()
 	if err != nil {
 		return "", false
@@ -286,17 +291,8 @@ func (c *samlClient) begin(id, returnTo string) (cookie string, ok bool) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.pending) >= samlMaxPending { // expired attempts are only swept when the map is full
-		for k, p := range c.pending {
-			if now.After(p.expires) {
-				delete(c.pending, k)
-			}
-		}
-		if len(c.pending) >= samlMaxPending {
-			return "", false
-		}
-	}
-	c.pending[id] = samlPending{cookie: cookie, returnTo: returnTo, expires: now.Add(samlLoginTTL)}
+	makePendingRoom(c.pending, ip, samlMaxPending, now)
+	c.pending[id] = samlPending{cookie: cookie, returnTo: returnTo, ip: ip, expires: now.Add(samlLoginTTL)}
 	return cookie, true
 }
 
@@ -401,9 +397,9 @@ func (s *Server) handleSAMLLogin(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "saml authn request", errors.New("build failed"))
 		return
 	}
-	cookie, ok := s.saml.begin(reqID, returnTo)
+	cookie, ok := s.saml.begin(reqID, returnTo, s.clientIP(r))
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "too many sign-in attempts, try again later")
+		internalError(w, "saml login", errors.New("could not start sign-in"))
 		return
 	}
 	s.setSAMLCookie(w, cookie, int(samlLoginTTL.Seconds()))

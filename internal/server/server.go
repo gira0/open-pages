@@ -41,7 +41,9 @@ type Server struct {
 	local  *storage.Local // set when store is the local backend; nil otherwise
 	tmp    string         // staging directory for extraction
 
-	deployMu  sync.Mutex    // serializes switching and pruning versions
+	siteLocks siteLocks     // one lock per site: publishing, switching, pruning and deleting its versions
+	quotaMu   sync.Mutex    // short: quota checks and the reservations below, never held during uploads
+	reserved  reservations  // bytes of in-flight deploys, by site id; guarded by quotaMu
 	deploySem chan struct{} // one token per running extraction; cap is cfg.MaxDeploys
 	metrics   *metrics.Collector
 	health    healthProbe
