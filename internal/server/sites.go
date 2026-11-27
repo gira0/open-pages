@@ -451,6 +451,9 @@ func (s *Server) updateSiteExpiring(ctx context.Context, site Site, description 
 	if err != nil {
 		return Site{}, fmt.Errorf("read site: %w", err)
 	}
+	if exp.Valid && exp.Int64 == deletingMarker {
+		return Site{}, errSiteNotFound // the expiry reaper is removing this site
+	}
 	before.Description, before.GroupID, before.ExpiresAt = desc.String, grp.Int64, exp.Int64
 	out := site
 	err = tx.QueryRowContext(ctx,
@@ -567,6 +570,11 @@ func (s *Server) checkSiteLive(ctx context.Context, site Site) error {
 	return nil
 }
 
+// deletingMarker is the expires_at value of a site the expiry reaper has claimed and is
+// removing. It lies in the distant past, so a delete that fails half-way is retried at the
+// next run, and updateSite treats a site carrying it as gone.
+const deletingMarker int64 = 1
+
 // deleteSite removes a site's files and then its database row, under deployMu so it
 // cannot interleave with a deploy's publish step. It returns errSiteNotFound if the
 // site was already deleted or replaced by another with the same name. A failure removing
@@ -592,18 +600,17 @@ func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[stri
 	}
 	// The audit entry goes in the same transaction as the delete (and under deployMu), so
 	// it always precedes the site.create of a site that reuses the name and row id.
-	var tx *sql.Tx
 	if expiredBy != 0 {
-		var err error
-		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
-			return fmt.Errorf("begin: %w", err)
-		}
-		defer func() { _ = tx.Rollback() }() // no-op after Commit
-		res, err := tx.ExecContext(ctx,
-			"UPDATE docs SET docid = docid WHERE docid = ? AND name = ? AND uowner IS ? AND expires_at IS NOT NULL AND expires_at <= ?",
-			site.ID, site.Name, nullableID(site.OwnerID), expiredBy)
+		// Claim the site in a short transaction of its own: if it is still expired, mark
+		// it as being deleted and commit. The slow file removal below then runs without
+		// holding the database write lock, so other writes are not blocked meanwhile.
+		// A renewal that lands first makes the claim match nothing (errNotExpired); one
+		// that comes later finds the marker and sees the site as gone (see updateSite).
+		res, err := s.db.ExecContext(ctx,
+			"UPDATE docs SET expires_at = ? WHERE docid = ? AND name = ? AND uowner IS ? AND expires_at IS NOT NULL AND expires_at <= ?",
+			deletingMarker, site.ID, site.Name, nullableID(site.OwnerID), expiredBy)
 		if err != nil {
-			return fmt.Errorf("lock site: %w", err)
+			return fmt.Errorf("claim site: %w", err)
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return errNotExpired
@@ -612,13 +619,11 @@ func (s *Server) deleteSiteWith(ctx context.Context, site Site, details map[stri
 	if err := s.store.DeleteSite(ctx, site.Name); err != nil {
 		return fmt.Errorf("remove site files: %w", err)
 	}
-	if tx == nil {
-		var err error
-		if tx, err = s.db.BeginTx(ctx, nil); err != nil {
-			return fmt.Errorf("begin: %w", err)
-		}
-		defer func() { _ = tx.Rollback() }() // no-op after Commit
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	res, err := tx.ExecContext(ctx, "DELETE FROM docs WHERE docid = ? AND name = ? AND uowner IS ?",
 		site.ID, site.Name, nullableID(site.OwnerID))
 	if err != nil {

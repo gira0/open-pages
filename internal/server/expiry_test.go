@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gira0/open-pages/internal/cli"
+	"github.com/gira0/open-pages/internal/storage"
 )
 
 func TestExpiryFromDays(t *testing.T) {
@@ -536,5 +537,67 @@ func TestPreviewCeilingHoldsAgainstConcurrentNarrowing(t *testing.T) {
 	}
 	if got, _ := s.getSite(t.Context(), "blog--y"); got.Visibility != visRestricted {
 		t.Errorf("preview visibility = %s, want restricted", got.Visibility)
+	}
+}
+
+// slowDeleteStore makes DeleteSite signal that it has started and wait for release.
+type slowDeleteStore struct {
+	storage.Store
+	started chan struct{}
+	release chan struct{}
+}
+
+func (st slowDeleteStore) DeleteSite(ctx context.Context, site string) error {
+	close(st.started)
+	<-st.release
+	return st.Store.DeleteSite(ctx, site)
+}
+
+// Reaping an expired site must not hold the database write lock while its files are
+// removed, and a renewal that arrives meanwhile must not resurrect the site.
+func TestReapDoesNotHoldWriteLock(t *testing.T) {
+	_, s := newTestServer(t)
+	owner := testOwner(t, s)
+	site, err := s.createSite(t.Context(), "slow", "", owner, 0, visPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployNamedFiles(t, s, "slow")
+	now := time.Now()
+	if err := setExpiry(t, s, site, now.Add(-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	st := slowDeleteStore{Store: s.store, started: make(chan struct{}), release: make(chan struct{})}
+	s.store = st
+
+	done := make(chan int, 1)
+	go func() { n, _ := s.reapExpired(t.Context(), now); done <- n }()
+	<-st.started
+
+	// Another write goes through while the files are still being deleted.
+	wrote := make(chan error, 1)
+	go func() {
+		_, err := s.db.ExecContext(t.Context(),
+			"INSERT INTO user (email, password) VALUES ('other@example.com', 'x')")
+		wrote <- err
+	}()
+	select {
+	case err := <-wrote:
+		if err != nil {
+			t.Fatalf("write during reap: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("write blocked while the reaper deletes files")
+	}
+	// Renewing the claimed site fails.
+	if err := setExpiry(t, s, site, now.Add(time.Hour).Unix()); !errors.Is(err, errSiteNotFound) {
+		t.Errorf("renewal during reap = %v, want errSiteNotFound", err)
+	}
+	close(st.release)
+	if n := <-done; n != 1 {
+		t.Errorf("reaped %d, want 1", n)
+	}
+	if _, err := s.getSite(t.Context(), "slow"); !errors.Is(err, errSiteNotFound) {
+		t.Errorf("site remains: %v", err)
 	}
 }
