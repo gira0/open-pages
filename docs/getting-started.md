@@ -221,6 +221,7 @@ sign-in flow, provider setup and identity rules are in [auth.md](auth.md#oidc-si
 | `scopes` | `openid email profile` | Space- or comma-separated; `openid` is always added |
 | `email_claim` | `email` | ID token claim holding the email address |
 | `groups_claim` | `groups` | Claim holding group names; empty turns group mapping off |
+| `managed_groups` | empty | Comma-separated names of provider-managed groups, created at start without an owner; only these (and ownerless groups) are mapped |
 | `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
 
 ### [saml]
@@ -237,6 +238,7 @@ flow, IdP setup and identity rules are in [auth.md](auth.md#saml-sign-in).
 | `acs_url` | none, required | Absolute URL of `/v1/auth/saml/acs` on this server, as registered at the IdP. `https` only (`http` for localhost) |
 | `email_attribute` | `email` | Assertion attribute holding the email address. If it is missing, a NameID in the email-address format is used |
 | `groups_attribute` | `groups` | Attribute holding group names; empty turns group mapping off |
+| `managed_groups` | empty | Comma-separated names of provider-managed groups, created at start without an owner; only these (and ownerless groups) are mapped |
 | `nameid_attribute` | empty | When set, the user is identified by this attribute instead of the NameID |
 | `allowed_email_domain` | empty | Only emails in this domain may sign in; a leading `@` is ignored; empty allows any |
 | `key_file`, `cert_file` | empty | PEM RSA private key (ECDSA is not supported) and certificate used to sign AuthnRequests. Set both or neither; without them requests are unsigned. The certificate is published in the SP metadata |

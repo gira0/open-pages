@@ -114,6 +114,7 @@ client_secret = from-file
 redirect_url = https://pages.example/v1/auth/oidc/callback
 scopes = profile, email
 groups_claim = roles
+managed_groups = Finance, Platform Team,, 
 allowed_email_domain = @Corp.Example
 `
 	path := writeConfig(t, ini)
@@ -123,7 +124,7 @@ allowed_email_domain = @Corp.Example
 	}
 	o := cfg.OIDC
 	if !o.Enabled || o.ClientSecret != "from-file" || o.GroupsClaim != "roles" || o.EmailClaim != "email" ||
-		o.AllowedEmailDomain != "corp.example" || !slices.Equal(o.Scopes, []string{"openid", "profile", "email"}) {
+		o.AllowedEmailDomain != "corp.example" || !slices.Equal(o.ManagedGroups, []string{"Finance", "Platform Team"}) || !slices.Equal(o.Scopes, []string{"openid", "profile", "email"}) {
 		t.Fatalf("unexpected OIDC config: %+v", o)
 	}
 	t.Setenv("OPEN_PAGES_OIDC_CLIENT_SECRET", "from-env")

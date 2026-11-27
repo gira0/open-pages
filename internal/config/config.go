@@ -95,16 +95,17 @@ type S3Config struct {
 // SAMLConfig is the [saml] section.
 type SAMLConfig struct {
 	Enabled            bool
-	IDPMetadataURL     string // https URL of the identity provider's metadata; exclusive with IDPMetadataFile
-	IDPMetadataFile    string // absolute path of the provider's metadata XML
-	EntityID           string // this service's entity ID (the audience assertions must name)
-	ACSURL             string // absolute URL of /v1/auth/saml/acs as registered at the provider
-	EmailAttribute     string // assertion attribute holding the email address
-	GroupsAttribute    string // assertion attribute holding the group names; empty disables group mapping
-	NameIDAttribute    string // when set, the user's subject is this attribute instead of the NameID
-	AllowedEmailDomain string // when set, only emails in this domain may sign in
-	KeyFile            string // absolute path of the PEM key that signs AuthnRequests; empty means unsigned requests
-	CertFile           string // absolute path of the matching PEM certificate
+	IDPMetadataURL     string   // https URL of the identity provider's metadata; exclusive with IDPMetadataFile
+	IDPMetadataFile    string   // absolute path of the provider's metadata XML
+	EntityID           string   // this service's entity ID (the audience assertions must name)
+	ACSURL             string   // absolute URL of /v1/auth/saml/acs as registered at the provider
+	EmailAttribute     string   // assertion attribute holding the email address
+	GroupsAttribute    string   // assertion attribute holding the group names; empty disables group mapping
+	ManagedGroups      []string // names of the groups the provider manages; created without an owner at start
+	NameIDAttribute    string   // when set, the user's subject is this attribute instead of the NameID
+	AllowedEmailDomain string   // when set, only emails in this domain may sign in
+	KeyFile            string   // absolute path of the PEM key that signs AuthnRequests; empty means unsigned requests
+	CertFile           string   // absolute path of the matching PEM certificate
 }
 
 // OIDCConfig is the [oidc] section.
@@ -117,6 +118,7 @@ type OIDCConfig struct {
 	Scopes             []string // always includes "openid"
 	EmailClaim         string   // ID token claim holding the email address
 	GroupsClaim        string   // ID token claim holding the group names; empty disables group mapping
+	ManagedGroups      []string // names of the groups the provider manages; created without an owner at start
 	AllowedEmailDomain string   // when set, only emails in this domain may sign in
 }
 
@@ -495,6 +497,18 @@ func optionalString(sec *ini.Section, name, def string) string {
 	return strings.TrimSpace(sec.Key(name).String())
 }
 
+// managedGroups reads managed_groups, a comma-separated list of group names. Names may
+// contain spaces; empty items are dropped.
+func managedGroups(sec *ini.Section) []string {
+	var out []string
+	for _, n := range strings.Split(sec.Key("managed_groups").String(), ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	enabled, err := strictBool(sec, "enabled", false)
 	if err != nil {
@@ -513,6 +527,7 @@ func loadOIDCConfig(sec *ini.Section) (OIDCConfig, error) {
 	if !c.Enabled {
 		return OIDCConfig{}, nil
 	}
+	c.ManagedGroups = managedGroups(sec)
 	c.Scopes = strings.Fields(strings.ReplaceAll(sec.Key("scopes").MustString("openid email profile"), ",", " "))
 	if !slices.Contains(c.Scopes, "openid") {
 		c.Scopes = append([]string{"openid"}, c.Scopes...)
@@ -550,6 +565,7 @@ func loadSAMLConfig(sec *ini.Section) (SAMLConfig, error) {
 		KeyFile:            strings.TrimSpace(sec.Key("key_file").String()),
 		CertFile:           strings.TrimSpace(sec.Key("cert_file").String()),
 	}
+	c.ManagedGroups = managedGroups(sec)
 	if c.EntityID == "" || c.ACSURL == "" {
 		return c, errors.New("saml: entity_id and acs_url are required when enabled")
 	}
