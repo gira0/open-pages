@@ -73,8 +73,12 @@ type pendingLogin struct {
 	nonce    string
 	verifier string
 	returnTo string
+	ip       string // client address that started the attempt
 	expires  time.Time
 }
+
+func (p pendingLogin) owner() string       { return p.ip }
+func (p pendingLogin) deadline() time.Time { return p.expires }
 
 func newOIDCClient(cfg config.OIDCConfig) *oidcClient {
 	return &oidcClient{
@@ -274,9 +278,11 @@ func (c *oidcClient) exchangeCode(ctx context.Context, meta *oidcMeta, code, ver
 	return tok.IDToken, nil
 }
 
-// begin records a login attempt and returns its state value and the provider URL to send
-// the browser to. It returns false when too many attempts are pending.
-func (c *oidcClient) begin(meta *oidcMeta, returnTo string) (state, redirect string, ok bool) {
+// begin records a login attempt from the client address ip and returns its state value and
+// the provider URL to send the browser to. When the map is full the oldest attempt is
+// dropped instead of refusing (see makePendingRoom). It returns false only if it cannot
+// build the request.
+func (c *oidcClient) begin(meta *oidcMeta, returnTo, ip string) (state, redirect string, ok bool) {
 	state, err1 := generateToken()
 	nonce, err2 := generateToken()
 	verifier, err3 := generateToken()
@@ -285,16 +291,8 @@ func (c *oidcClient) begin(meta *oidcMeta, returnTo string) (state, redirect str
 	}
 	now := time.Now()
 	c.mu.Lock()
-	for k, p := range c.pending {
-		if now.After(p.expires) {
-			delete(c.pending, k)
-		}
-	}
-	if len(c.pending) >= oidcMaxPending {
-		c.mu.Unlock()
-		return "", "", false
-	}
-	c.pending[state] = pendingLogin{nonce: nonce, verifier: verifier, returnTo: returnTo, expires: now.Add(oidcLoginTTL)}
+	makePendingRoom(c.pending, ip, oidcMaxPending, now)
+	c.pending[state] = pendingLogin{nonce: nonce, verifier: verifier, returnTo: returnTo, ip: ip, expires: now.Add(oidcLoginTTL)}
 	c.mu.Unlock()
 
 	challenge := sha256.Sum256([]byte(verifier))
@@ -346,9 +344,9 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		oidcUnavailable(w, "oidc discovery")
 		return
 	}
-	state, redirect, ok := s.oidc.begin(meta, returnTo)
+	state, redirect, ok := s.oidc.begin(meta, returnTo, s.clientIP(r))
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "too many sign-in attempts, try again later")
+		internalError(w, "oidc login", errors.New("could not start sign-in"))
 		return
 	}
 	// The cookie ties the attempt to this browser; the rest of it stays on the server.

@@ -1096,22 +1096,26 @@ func TestSAMLBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < samlMaxPending; i++ {
-		if _, ok := c.begin(fmt.Sprint("id", i), ""); !ok {
+		if _, ok := c.begin(fmt.Sprint("id", i), "", fmt.Sprint("ip", i)); !ok {
 			t.Fatalf("attempt %d refused", i)
 		}
 	}
-	if _, ok := c.begin("one-too-many", ""); ok {
-		t.Fatal("pending attempts are not bounded")
+	// A full map evicts its oldest attempt rather than refusing a new one.
+	if _, ok := c.begin("one-too-many", "", "newcomer"); !ok {
+		t.Fatal("a new attempt was refused when the map was full")
+	}
+	if len(c.pending) != samlMaxPending {
+		t.Fatalf("pending attempts = %d, want the cap %d", len(c.pending), samlMaxPending)
 	}
 	// An attempt taken with the wrong cookie stays; with the right one it is used up once.
-	if _, ok := c.take("id1", "wrong"); ok {
+	if _, ok := c.take("one-too-many", "wrong"); ok {
 		t.Fatal("took an attempt with the wrong cookie")
 	}
-	cookie := c.pending["id1"].cookie
-	if _, ok := c.take("id1", cookie); !ok {
+	cookie := c.pending["one-too-many"].cookie
+	if _, ok := c.take("one-too-many", cookie); !ok {
 		t.Fatal("could not take the attempt with its own cookie")
 	}
-	if _, ok := c.take("id1", cookie); ok {
+	if _, ok := c.take("one-too-many", cookie); ok {
 		t.Fatal("attempt taken twice")
 	}
 	// Expired attempts are not usable.
@@ -1148,7 +1152,7 @@ func TestSAMLBounds(t *testing.T) {
 		p.expires = time.Now().Add(-time.Second)
 		c.pending[k] = p
 	}
-	if _, ok := c.begin("fresh", ""); !ok {
+	if _, ok := c.begin("fresh", "", "x"); !ok {
 		t.Fatal("a full pending map of expired attempts refused a new one")
 	}
 }
@@ -1175,5 +1179,31 @@ func TestIndexShowsSAMLSignIn(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
 		}
+	}
+}
+
+// One client address cannot fill the pending map: past its own share it only displaces its
+// own oldest attempts, so other users can still sign in.
+func TestSAMLPendingPerClient(t *testing.T) {
+	c, err := newSAMLClient(config.SAMLConfig{Enabled: true, IDPMetadataURL: "https://idp.example/m", EntityID: "sp", ACSURL: "https://p.example/acs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.begin("victim", "", "198.51.100.1"); !ok {
+		t.Fatal("victim refused")
+	}
+	for i := 0; i < 3*samlMaxPending; i++ {
+		if _, ok := c.begin(fmt.Sprint("a", i), "", "203.0.113.9"); !ok {
+			t.Fatalf("attacker attempt %d refused", i)
+		}
+	}
+	if n := len(c.pending); n > pendingPerIP+1 {
+		t.Fatalf("one address holds %d attempts, want at most %d", n-1, pendingPerIP)
+	}
+	if _, ok := c.pending["victim"]; !ok {
+		t.Fatal("another client's attempt was evicted")
+	}
+	if _, ok := c.begin("late", "", "198.51.100.2"); !ok {
+		t.Fatal("a new user could not start sign-in")
 	}
 }

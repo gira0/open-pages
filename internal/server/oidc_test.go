@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -664,5 +665,39 @@ func TestIndexShowsEnabledSignInMethods(t *testing.T) {
 	_, body, _ := oidcGet(t, browser(t), ts.URL+"/index")
 	if strings.Contains(body, "oidc/login") || !strings.Contains(body, `action="/v1/user/login"`) {
 		t.Error("default server must show only the local form")
+	}
+}
+
+// Starting a sign-in needs no login. A flood from one address must not keep other users
+// from signing in, and a full map evicts its oldest attempt instead of refusing.
+func TestOIDCPendingBounds(t *testing.T) {
+	c := newOIDCClient(config.OIDCConfig{ClientID: "id", RedirectURL: "https://p.example/cb", Scopes: []string{"openid"}})
+	meta := &oidcMeta{AuthorizationEndpoint: "https://idp.example/auth"}
+	victim, _, ok := c.begin(meta, "", "198.51.100.1")
+	if !ok {
+		t.Fatal("victim refused")
+	}
+	for i := 0; i < 3*oidcMaxPending; i++ {
+		if _, _, ok := c.begin(meta, "", "203.0.113.9"); !ok {
+			t.Fatalf("attacker attempt %d refused", i)
+		}
+	}
+	if n := len(c.pending); n > pendingPerIP+1 {
+		t.Fatalf("one address holds %d attempts, want at most %d", n-1, pendingPerIP)
+	}
+	if _, ok := c.take(victim); !ok {
+		t.Fatal("another client's attempt was evicted")
+	}
+	// Many distinct addresses fill the map; the next attempt still goes through.
+	for i := 0; i < oidcMaxPending; i++ {
+		if _, _, ok := c.begin(meta, "", fmt.Sprint("ip", i)); !ok {
+			t.Fatalf("attempt %d refused", i)
+		}
+	}
+	if _, _, ok := c.begin(meta, "", "newcomer"); !ok {
+		t.Fatal("a new attempt was refused when the map was full")
+	}
+	if len(c.pending) > oidcMaxPending {
+		t.Fatalf("pending attempts = %d, over the cap", len(c.pending))
 	}
 }
