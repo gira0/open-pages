@@ -15,10 +15,10 @@ type pendingEntry interface {
 
 // makePendingRoom drops expired attempts from m and then makes room for one more from ip:
 // when ip already has pendingPerIP attempts, its oldest is dropped, and when m is still at
-// max entries, the oldest of all is dropped. A new attempt is therefore never refused, and a
+// limit entries, the oldest of all is dropped. A new attempt is therefore never refused, and a
 // client can only push out its own attempts (apart from the global cap, which one address
 // cannot reach alone). The caller holds the lock guarding m.
-func makePendingRoom[V pendingEntry](m map[string]V, ip string, max int, now time.Time) {
+func makePendingRoom[V pendingEntry](m map[string]V, ip string, limit int, now time.Time) {
 	var (
 		mine                      int
 		oldestMine, oldestAny     string
@@ -45,7 +45,7 @@ func makePendingRoom[V pendingEntry](m map[string]V, ip string, max int, now tim
 			oldestAny = ""
 		}
 	}
-	if len(m) >= max && oldestAny != "" {
+	if len(m) >= limit && oldestAny != "" {
 		delete(m, oldestAny)
 	}
 }
